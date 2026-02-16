@@ -239,6 +239,11 @@ body {
   justify-content: flex-end;
 }
 
+.row-system {
+  justify-content: center;
+  margin: 8px 0;
+}
+
 .bubble {
   max-width: 78%;
   color: var(--text);
@@ -328,6 +333,17 @@ body {
   background: var(--visitor-bg);
   border-radius: 20px;
   padding: 10px 14px;
+}
+
+.system-pill {
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.08);
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.2;
+  padding: 6px 10px;
+  text-align: center;
+  max-width: 90%;
 }
 
 .mini-icon {

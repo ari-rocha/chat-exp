@@ -274,14 +274,20 @@ export default function App() {
                 key={m.id}
                 className={`row row-${m.sender} row-open-animate`}
               >
-                {m.sender === "agent" && <span className="mini-icon">a</span>}
-                <div className={`bubble bubble-${m.sender}`}>
-                  <div className="md-content">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {String(m.text ?? "")}
-                    </ReactMarkdown>
-                  </div>
-                </div>
+                {m.sender === "system" ? (
+                  <div className="system-pill">{String(m.text ?? "")}</div>
+                ) : (
+                  <>
+                    {m.sender === "agent" && <span className="mini-icon">a</span>}
+                    <div className={`bubble bubble-${m.sender}`}>
+                      <div className="md-content">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {String(m.text ?? "")}
+                        </ReactMarkdown>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             ))}
             {agentTyping && (

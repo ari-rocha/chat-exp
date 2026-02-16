@@ -698,29 +698,37 @@ export default function App() {
               <ScrollArea className="h-full p-4">
                 <div className="space-y-3">
                   {messages.map((message) => (
-                    <article
-                      key={message.id}
-                      className={`max-w-[72%] rounded-xl border px-3 py-2 text-sm ${
-                        message.sender === "agent"
-                          ? "ml-auto border-blue-200 bg-blue-600 text-white"
-                          : "border-slate-200 bg-white text-slate-900"
-                      }`}
-                    >
-                      <div
-                        className={`dashboard-md ${message.sender === "agent" ? "dashboard-md-agent" : ""}`}
-                      >
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    message.sender === "system" ? (
+                      <div key={message.id} className="flex justify-center py-1">
+                        <span className="rounded-full bg-slate-200 px-3 py-1 text-xs text-slate-600">
                           {String(message.text ?? "")}
-                        </ReactMarkdown>
+                        </span>
                       </div>
-                      <time
-                        className={`mt-1 block text-right text-[11px] ${
-                          message.sender === "agent" ? "text-blue-100" : "text-slate-400"
+                    ) : (
+                      <article
+                        key={message.id}
+                        className={`max-w-[72%] rounded-xl border px-3 py-2 text-sm ${
+                          message.sender === "agent"
+                            ? "ml-auto border-blue-200 bg-blue-600 text-white"
+                            : "border-slate-200 bg-white text-slate-900"
                         }`}
                       >
-                        {formatTime(message.createdAt)}
-                      </time>
-                    </article>
+                        <div
+                          className={`dashboard-md ${message.sender === "agent" ? "dashboard-md-agent" : ""}`}
+                        >
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {String(message.text ?? "")}
+                          </ReactMarkdown>
+                        </div>
+                        <time
+                          className={`mt-1 block text-right text-[11px] ${
+                            message.sender === "agent" ? "text-blue-100" : "text-slate-400"
+                          }`}
+                        >
+                          {formatTime(message.createdAt)}
+                        </time>
+                      </article>
+                    )
                   ))}
 
                   {activeId && visitorDraftBySession[activeId] && (

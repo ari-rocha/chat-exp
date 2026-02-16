@@ -768,11 +768,12 @@ async fn set_session_handover(
     state: &Arc<AppState>,
     session_id: &str,
     active: bool,
-) -> Option<SessionSummary> {
+) -> Option<(SessionSummary, bool)> {
     let mut sessions = state.sessions.write().await;
     let session = sessions.get_mut(session_id)?;
+    let changed = session.handover_active != active;
     session.handover_active = active;
-    Some(session_summary(session))
+    Some((session_summary(session), changed))
 }
 
 async fn recent_session_context(state: &Arc<AppState>, session_id: &str, limit: usize) -> String {
@@ -971,8 +972,17 @@ async fn execute_flow(state: Arc<AppState>, session_id: String, flow: ChatFlow, 
                 let decision = generate_ai_reply(state.clone(), &session_id, &prompt, &visitor_text).await;
                 send_flow_agent_message(state.clone(), &session_id, &decision.reply, delay_ms).await;
                 if decision.handover {
-                    if let Some(summary) = set_session_handover(&state, &session_id, true).await {
+                    if let Some((summary, changed)) = set_session_handover(&state, &session_id, true).await {
                         emit_session_update(&state, summary).await;
+                        if changed {
+                            let _ = add_message(
+                                state.clone(),
+                                &session_id,
+                                "system",
+                                "Conversation transferred to a human agent",
+                            )
+                            .await;
+                        }
                     }
                     break;
                 }
@@ -1013,8 +1023,17 @@ async fn execute_flow(state: Arc<AppState>, session_id: String, flow: ChatFlow, 
 
 async fn run_flow_for_visitor_message(state: Arc<AppState>, session_id: String, visitor_text: String) {
     if has_handover_intent(&visitor_text) {
-        if let Some(summary) = set_session_handover(&state, &session_id, true).await {
+        if let Some((summary, changed)) = set_session_handover(&state, &session_id, true).await {
             emit_session_update(&state, summary).await;
+            if changed {
+                let _ = add_message(
+                    state.clone(),
+                    &session_id,
+                    "system",
+                    "Conversation transferred to a human agent",
+                )
+                .await;
+            }
         }
         send_flow_agent_message(
             state,
@@ -1077,8 +1096,17 @@ async fn run_flow_for_visitor_message(state: Arc<AppState>, session_id: String, 
             let decision = generate_ai_reply(state.clone(), &session_id, &flow_prompt, &visitor_text).await;
             send_flow_agent_message(state.clone(), &session_id, &decision.reply, 700).await;
             if decision.handover {
-                if let Some(summary) = set_session_handover(&state, &session_id, true).await {
+                if let Some((summary, changed)) = set_session_handover(&state, &session_id, true).await {
                     emit_session_update(&state, summary).await;
+                    if changed {
+                        let _ = add_message(
+                            state.clone(),
+                            &session_id,
+                            "system",
+                            "Conversation transferred to a human agent",
+                        )
+                        .await;
+                    }
                 }
             }
         }
@@ -1558,12 +1586,21 @@ async fn patch_session_handover(
         return err.into_response();
     }
 
-    let mut sessions = state.sessions.write().await;
-    let Some(session) = sessions.get_mut(&session_id) else {
+    let Some((summary, changed)) = set_session_handover(&state, &session_id, body.active).await else {
         return (StatusCode::NOT_FOUND, Json(json!({ "error": "session not found" }))).into_response();
     };
-    session.handover_active = body.active;
-    (StatusCode::OK, Json(json!({ "session": session_summary(session) }))).into_response()
+
+    if changed && body.active {
+        let _ = add_message(
+            state.clone(),
+            &session_id,
+            "system",
+            "Conversation transferred to a human agent",
+        )
+        .await;
+    }
+
+    (StatusCode::OK, Json(json!({ "session": summary }))).into_response()
 }
 
 async fn get_flows(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
