@@ -1,0 +1,16 @@
+{
+  "name": "chat-exp",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "widget-client",
+    "agent-dashboard"
+  ],
+  "scripts": {
+    "dev:server": "cargo run --manifest-path server/Cargo.toml",
+    "dev:widget": "bun run --cwd widget-client dev",
+    "dev:agent": "bun run --cwd agent-dashboard dev",
+    "build:server": "cargo build --manifest-path server/Cargo.toml",
+    "build": "bun run build:server && bun run --cwd widget-client build && bun run --cwd agent-dashboard build"
+  }
+}

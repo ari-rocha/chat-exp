@@ -1,0 +1,151 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", Tahoma, sans-serif;
+  background: #171717;
+  color: #f4f4f4;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  height: 100vh;
+}
+
+.sessions {
+  border-right: 1px solid #2f2f2f;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.sessions h1 {
+  margin: 0 0 14px;
+  font-size: 18px;
+}
+
+.session {
+  width: 100%;
+  border: 1px solid #333;
+  border-radius: 10px;
+  background: #1f1f1f;
+  color: #ececec;
+  text-align: left;
+  padding: 10px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  display: grid;
+  gap: 4px;
+}
+
+.session.active {
+  border-color: #e4b84f;
+  background: #28230f;
+}
+
+.session span {
+  font-size: 12px;
+  color: #bdbdbd;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat {
+  display: grid;
+  grid-template-rows: 54px 1fr 68px;
+}
+
+.chat header {
+  border-bottom: 1px solid #2d2d2d;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  font-weight: 600;
+}
+
+.messages {
+  padding: 16px;
+  overflow-y: auto;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.msg {
+  max-width: 520px;
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.msg span {
+  display: block;
+  font-size: 11px;
+  opacity: 0.75;
+  text-transform: uppercase;
+}
+
+.msg p {
+  margin: 2px 0 0;
+}
+
+.msg.agent {
+  background: #2f2a19;
+  border: 1px solid #6f5d2d;
+}
+
+.msg.visitor {
+  background: #252525;
+  border: 1px solid #3d3d3d;
+}
+
+.msg-draft {
+  border-style: dashed;
+  opacity: 0.92;
+}
+
+.input-row {
+  border-top: 1px solid #2d2d2d;
+  padding: 12px 16px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.input-row input {
+  flex: 1;
+  border: 1px solid #3a3a3a;
+  background: #1f1f1f;
+  color: #fff;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.input-row button {
+  border: 0;
+  border-radius: 8px;
+  background: #e4b84f;
+  color: #1f1f1f;
+  font-weight: 600;
+  padding: 0 14px;
+  cursor: pointer;
+}
+
+.input-row button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+  .shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: 230px 1fr;
+  }
+
+  .sessions {
+    border-right: 0;
+    border-bottom: 1px solid #2f2f2f;
+  }
+}
