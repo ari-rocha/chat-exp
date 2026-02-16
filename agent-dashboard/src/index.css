@@ -113,3 +113,81 @@
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
 }
+
+.dashboard-md {
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    line-height: 1.24;
+}
+
+.dashboard-md :is(p, ul, ol, pre, blockquote) {
+    margin: 0;
+}
+
+.dashboard-md :is(p + p, ul, ol, pre, blockquote) {
+    margin-top: 6px;
+}
+
+.dashboard-md :is(h1, h2, h3, h4, h5, h6) {
+    margin: 0;
+    font-size: 1.04em;
+    line-height: 1.24;
+    font-weight: 700;
+}
+
+.dashboard-md :is(h1, h2, h3, h4, h5, h6) + * {
+    margin-top: 6px;
+}
+
+.dashboard-md :is(ul, ol) {
+    margin: 3px 0 0;
+    padding-inline-start: 16px;
+}
+
+.dashboard-md p + :is(ul, ol) {
+    margin-top: 10px;
+}
+
+.dashboard-md :is(ul, ol) + p {
+    margin-top: 10px;
+}
+
+.dashboard-md li {
+    margin: 0;
+    line-height: 1.22;
+}
+
+.dashboard-md li + li {
+    margin-top: 2px;
+}
+
+.dashboard-md li > p {
+    margin: 0;
+}
+
+.dashboard-md li :is(ul, ol) {
+    margin-top: 2px;
+}
+
+.dashboard-md hr {
+    margin: 6px 0;
+    border: 0;
+    border-top: 1px solid rgba(15, 23, 42, 0.2);
+}
+
+.dashboard-md pre {
+    margin-top: 6px;
+    overflow-x: auto;
+    border-radius: 8px;
+    padding: 8px;
+    background: rgba(15, 23, 42, 0.08);
+}
+
+.dashboard-md-agent hr {
+    border-top-color: rgba(255, 255, 255, 0.32);
+}
+
+.dashboard-md-agent pre {
+    background: rgba(255, 255, 255, 0.16);
+}

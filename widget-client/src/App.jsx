@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:4000/ws";
@@ -273,7 +275,13 @@ export default function App() {
                 className={`row row-${m.sender} row-open-animate`}
               >
                 {m.sender === "agent" && <span className="mini-icon">a</span>}
-                <div className={`bubble bubble-${m.sender}`}>{m.text}</div>
+                <div className={`bubble bubble-${m.sender}`}>
+                  <div className="md-content">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {String(m.text ?? "")}
+                    </ReactMarkdown>
+                  </div>
+                </div>
               </div>
             ))}
             {agentTyping && (
