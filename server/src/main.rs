@@ -12,11 +12,12 @@ use axum::{
         ws::{Message, WebSocket},
         Path, State, WebSocketUpgrade,
     },
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    routing::{get, post},
+    routing::{get, patch, post},
     Json, Router,
 };
+use bcrypt::{hash, verify, DEFAULT_COST};
 use chrono::Utc;
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
@@ -41,6 +42,10 @@ struct Session {
     created_at: String,
     updated_at: String,
     messages: Vec<ChatMessage>,
+    channel: String,
+    assignee_agent_id: Option<String>,
+    inbox_id: Option<String>,
+    team_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -51,6 +56,54 @@ struct SessionSummary {
     updated_at: String,
     last_message: Option<ChatMessage>,
     message_count: usize,
+    channel: String,
+    assignee_agent_id: Option<String>,
+    inbox_id: Option<String>,
+    team_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentProfile {
+    id: String,
+    name: String,
+    email: String,
+    status: String,
+    team_ids: Vec<String>,
+    inbox_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct AgentRecord {
+    profile: AgentProfile,
+    password_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Team {
+    id: String,
+    name: String,
+    agent_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Inbox {
+    id: String,
+    name: String,
+    channels: Vec<String>,
+    agent_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConversationNote {
+    id: String,
+    session_id: String,
+    agent_id: String,
+    text: String,
+    created_at: String,
 }
 
 #[derive(Default)]
@@ -67,6 +120,11 @@ struct RealtimeState {
 
 struct AppState {
     sessions: RwLock<HashMap<String, Session>>,
+    notes_by_session: RwLock<HashMap<String, Vec<ConversationNote>>>,
+    agents: RwLock<HashMap<String, AgentRecord>>,
+    tokens: RwLock<HashMap<String, String>>,
+    teams: RwLock<HashMap<String, Team>>,
+    inboxes: RwLock<HashMap<String, Inbox>>,
     realtime: Mutex<RealtimeState>,
     next_client_id: AtomicUsize,
 }
@@ -75,6 +133,76 @@ struct AppState {
 #[serde(rename_all = "camelCase")]
 struct SendMessageBody {
     sender: Option<String>,
+    text: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RegisterBody {
+    name: String,
+    email: String,
+    password: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LoginBody {
+    email: String,
+    password: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StatusBody {
+    status: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateTeamBody {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateInboxBody {
+    name: String,
+    channels: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AssignBody {
+    agent_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionAssigneeBody {
+    agent_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionChannelBody {
+    channel: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionInboxBody {
+    inbox_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionTeamBody {
+    team_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NoteBody {
     text: String,
 }
 
@@ -96,11 +224,51 @@ fn session_summary(session: &Session) -> SessionSummary {
         updated_at: session.updated_at.clone(),
         last_message: session.messages.last().cloned(),
         message_count: session.messages.len(),
+        channel: session.channel.clone(),
+        assignee_agent_id: session.assignee_agent_id.clone(),
+        inbox_id: session.inbox_id.clone(),
+        team_id: session.team_id.clone(),
     }
 }
 
 fn event_payload<T: Serialize>(event: &str, data: T) -> Option<String> {
     serde_json::to_string(&json!({ "event": event, "data": data })).ok()
+}
+
+fn bearer_token(headers: &HeaderMap) -> Option<String> {
+    let header = headers.get("authorization")?.to_str().ok()?;
+    let token = header.strip_prefix("Bearer ")?;
+    Some(token.trim().to_string())
+}
+
+async fn auth_agent_from_headers(
+    state: &Arc<AppState>,
+    headers: &HeaderMap,
+) -> Result<AgentProfile, (StatusCode, Json<Value>)> {
+    let token = bearer_token(headers).ok_or((
+        StatusCode::UNAUTHORIZED,
+        Json(json!({ "error": "missing bearer token" })),
+    ))?;
+
+    let agent_id = {
+        let tokens = state.tokens.read().await;
+        tokens.get(&token).cloned()
+    }
+    .ok_or((
+        StatusCode::UNAUTHORIZED,
+        Json(json!({ "error": "invalid token" })),
+    ))?;
+
+    let profile = {
+        let agents = state.agents.read().await;
+        agents.get(&agent_id).map(|a| a.profile.clone())
+    }
+    .ok_or((
+        StatusCode::UNAUTHORIZED,
+        Json(json!({ "error": "agent not found" })),
+    ))?;
+
+    Ok(profile)
 }
 
 async fn emit_to_client<T: Serialize>(state: &Arc<AppState>, client_id: usize, event: &str, data: T) {
@@ -343,6 +511,10 @@ async fn ensure_session(state: Arc<AppState>, session_id: &str) -> Session {
                 created_at: now.clone(),
                 updated_at: now,
                 messages: vec![],
+                channel: "web".to_string(),
+                assignee_agent_id: None,
+                inbox_id: None,
+                team_id: None,
             };
             sessions.insert(session_id.to_string(), session.clone());
             session
@@ -487,6 +659,431 @@ async fn post_message(
     (StatusCode::CREATED, Json(json!({ "message": message }))).into_response()
 }
 
+async fn register_agent(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<RegisterBody>,
+) -> impl IntoResponse {
+    let email = body.email.trim().to_lowercase();
+    let name = body.name.trim().to_string();
+    if email.is_empty() || name.is_empty() || body.password.trim().len() < 6 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invalid registration payload" })),
+        )
+            .into_response();
+    }
+
+    {
+        let agents = state.agents.read().await;
+        if agents.values().any(|agent| agent.profile.email == email) {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({ "error": "email already registered" })),
+            )
+                .into_response();
+        }
+    }
+
+    let password_hash = match hash(body.password, DEFAULT_COST) {
+        Ok(v) => v,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "unable to hash password" })),
+            )
+                .into_response()
+        }
+    };
+
+    let profile = AgentProfile {
+        id: Uuid::new_v4().to_string(),
+        name,
+        email,
+        status: "online".to_string(),
+        team_ids: vec![],
+        inbox_ids: vec![],
+    };
+
+    let token = Uuid::new_v4().to_string();
+    {
+        let mut agents = state.agents.write().await;
+        agents.insert(
+            profile.id.clone(),
+            AgentRecord {
+                profile: profile.clone(),
+                password_hash,
+            },
+        );
+    }
+    {
+        let mut tokens = state.tokens.write().await;
+        tokens.insert(token.clone(), profile.id.clone());
+    }
+
+    (
+        StatusCode::CREATED,
+        Json(json!({
+            "token": token,
+            "agent": profile
+        })),
+    )
+        .into_response()
+}
+
+async fn login_agent(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<LoginBody>,
+) -> impl IntoResponse {
+    let email = body.email.trim().to_lowercase();
+    let found = {
+        let agents = state.agents.read().await;
+        agents
+            .values()
+            .find(|agent| agent.profile.email == email)
+            .cloned()
+    };
+
+    let Some(agent) = found else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "invalid credentials" })),
+        )
+            .into_response();
+    };
+
+    let valid = verify(body.password, &agent.password_hash).unwrap_or(false);
+    if !valid {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "invalid credentials" })),
+        )
+            .into_response();
+    }
+
+    let token = Uuid::new_v4().to_string();
+    {
+        let mut tokens = state.tokens.write().await;
+        tokens.insert(token.clone(), agent.profile.id.clone());
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "token": token,
+            "agent": agent.profile
+        })),
+    )
+        .into_response()
+}
+
+async fn get_me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
+    match auth_agent_from_headers(&state, &headers).await {
+        Ok(agent) => (StatusCode::OK, Json(json!({ "agent": agent }))).into_response(),
+        Err(err) => err.into_response(),
+    }
+}
+
+async fn patch_agent_status(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<StatusBody>,
+) -> impl IntoResponse {
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(agent) => agent,
+        Err(err) => return err.into_response(),
+    };
+
+    {
+        let mut agents = state.agents.write().await;
+        if let Some(record) = agents.get_mut(&agent.id) {
+            record.profile.status = body.status.trim().to_string();
+        }
+    }
+
+    let updated = {
+        let agents = state.agents.read().await;
+        agents.get(&agent.id).map(|a| a.profile.clone())
+    };
+
+    (StatusCode::OK, Json(json!({ "agent": updated }))).into_response()
+}
+
+async fn get_teams(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let teams = {
+        let teams = state.teams.read().await;
+        teams.values().cloned().collect::<Vec<_>>()
+    };
+    (StatusCode::OK, Json(json!({ "teams": teams }))).into_response()
+}
+
+async fn create_team(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<CreateTeamBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let name = body.name.trim().to_string();
+    if name.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "name required" }))).into_response();
+    }
+    let team = Team {
+        id: Uuid::new_v4().to_string(),
+        name,
+        agent_ids: vec![],
+    };
+    {
+        let mut teams = state.teams.write().await;
+        teams.insert(team.id.clone(), team.clone());
+    }
+    (StatusCode::CREATED, Json(json!({ "team": team }))).into_response()
+}
+
+async fn add_member_to_team(
+    Path(team_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<AssignBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let agent_id = body.agent_id.trim().to_string();
+    {
+        let mut teams = state.teams.write().await;
+        let Some(team) = teams.get_mut(&team_id) else {
+            return (StatusCode::NOT_FOUND, Json(json!({ "error": "team not found" }))).into_response();
+        };
+        if !team.agent_ids.contains(&agent_id) {
+            team.agent_ids.push(agent_id.clone());
+        }
+    }
+    {
+        let mut agents = state.agents.write().await;
+        if let Some(agent) = agents.get_mut(&agent_id) {
+            if !agent.profile.team_ids.contains(&team_id) {
+                agent.profile.team_ids.push(team_id.clone());
+            }
+        }
+    }
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
+async fn get_inboxes(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let inboxes = {
+        let inboxes = state.inboxes.read().await;
+        inboxes.values().cloned().collect::<Vec<_>>()
+    };
+    (StatusCode::OK, Json(json!({ "inboxes": inboxes }))).into_response()
+}
+
+async fn get_agents(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let agents = {
+        let agents = state.agents.read().await;
+        agents
+            .values()
+            .map(|record| record.profile.clone())
+            .collect::<Vec<_>>()
+    };
+    (StatusCode::OK, Json(json!({ "agents": agents }))).into_response()
+}
+
+async fn create_inbox(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<CreateInboxBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let name = body.name.trim().to_string();
+    if name.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "name required" }))).into_response();
+    }
+    let inbox = Inbox {
+        id: Uuid::new_v4().to_string(),
+        name,
+        channels: body.channels,
+        agent_ids: vec![],
+    };
+    {
+        let mut inboxes = state.inboxes.write().await;
+        inboxes.insert(inbox.id.clone(), inbox.clone());
+    }
+    (StatusCode::CREATED, Json(json!({ "inbox": inbox }))).into_response()
+}
+
+async fn assign_agent_to_inbox(
+    Path(inbox_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<AssignBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let agent_id = body.agent_id.trim().to_string();
+    {
+        let mut inboxes = state.inboxes.write().await;
+        let Some(inbox) = inboxes.get_mut(&inbox_id) else {
+            return (StatusCode::NOT_FOUND, Json(json!({ "error": "inbox not found" }))).into_response();
+        };
+        if !inbox.agent_ids.contains(&agent_id) {
+            inbox.agent_ids.push(agent_id.clone());
+        }
+    }
+    {
+        let mut agents = state.agents.write().await;
+        if let Some(agent) = agents.get_mut(&agent_id) {
+            if !agent.profile.inbox_ids.contains(&inbox_id) {
+                agent.profile.inbox_ids.push(inbox_id.clone());
+            }
+        }
+    }
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
+async fn patch_session_assignee(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<SessionAssigneeBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let mut sessions = state.sessions.write().await;
+    let Some(session) = sessions.get_mut(&session_id) else {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": "session not found" }))).into_response();
+    };
+    session.assignee_agent_id = body.agent_id;
+    (StatusCode::OK, Json(json!({ "session": session_summary(session) }))).into_response()
+}
+
+async fn patch_session_channel(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<SessionChannelBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let channel = body.channel.trim().to_string();
+    if channel.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "channel required" }))).into_response();
+    }
+    let mut sessions = state.sessions.write().await;
+    let Some(session) = sessions.get_mut(&session_id) else {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": "session not found" }))).into_response();
+    };
+    session.channel = channel;
+    (StatusCode::OK, Json(json!({ "session": session_summary(session) }))).into_response()
+}
+
+async fn patch_session_inbox(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<SessionInboxBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let mut sessions = state.sessions.write().await;
+    let Some(session) = sessions.get_mut(&session_id) else {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": "session not found" }))).into_response();
+    };
+    session.inbox_id = body.inbox_id;
+    (StatusCode::OK, Json(json!({ "session": session_summary(session) }))).into_response()
+}
+
+async fn patch_session_team(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<SessionTeamBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let mut sessions = state.sessions.write().await;
+    let Some(session) = sessions.get_mut(&session_id) else {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": "session not found" }))).into_response();
+    };
+    session.team_id = body.team_id;
+    (StatusCode::OK, Json(json!({ "session": session_summary(session) }))).into_response()
+}
+
+async fn add_note(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<NoteBody>,
+) -> impl IntoResponse {
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(agent) => agent,
+        Err(err) => return err.into_response(),
+    };
+    let text = body.text.trim().to_string();
+    if text.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "text required" }))).into_response();
+    }
+
+    let note = ConversationNote {
+        id: Uuid::new_v4().to_string(),
+        session_id: session_id.clone(),
+        agent_id: agent.id,
+        text,
+        created_at: now_iso(),
+    };
+
+    {
+        let mut notes = state.notes_by_session.write().await;
+        notes.entry(session_id).or_default().push(note.clone());
+    }
+
+    (StatusCode::CREATED, Json(json!({ "note": note }))).into_response()
+}
+
+async fn get_notes(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let notes = {
+        let notes_map = state.notes_by_session.read().await;
+        notes_map.get(&session_id).cloned().unwrap_or_default()
+    };
+    (StatusCode::OK, Json(json!({ "notes": notes }))).into_response()
+}
+
+async fn list_channels(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    (
+        StatusCode::OK,
+        Json(json!({
+            "channels": ["web", "whatsapp", "sms", "instagram", "email"]
+        })),
+    )
+        .into_response()
+}
+
 async fn health() -> impl IntoResponse {
     Json(json!({ "ok": true, "now": now_iso() }))
 }
@@ -555,11 +1152,32 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 }
             }
             "agent:join" => {
-                {
+                let token = envelope
+                    .data
+                    .get("token")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+
+                let is_valid = {
+                    let tokens = state.tokens.read().await;
+                    tokens.contains_key(&token)
+                };
+
+                if is_valid {
                     let mut rt = state.realtime.lock().await;
                     rt.agents.insert(client_id);
+                    drop(rt);
+                    emit_session_snapshot(state.clone()).await;
+                } else {
+                    emit_to_client(
+                        &state,
+                        client_id,
+                        "auth:error",
+                        json!({ "message": "invalid agent token" }),
+                    )
+                    .await;
                 }
-                emit_session_snapshot(state.clone()).await;
             }
             "widget:message" => {
                 let session_id = envelope.data.get("sessionId").and_then(Value::as_str);
@@ -741,16 +1359,64 @@ async fn main() {
 
     let state = Arc::new(AppState {
         sessions: RwLock::new(HashMap::new()),
+        notes_by_session: RwLock::new(HashMap::new()),
+        agents: RwLock::new(HashMap::new()),
+        tokens: RwLock::new(HashMap::new()),
+        teams: RwLock::new({
+            let mut teams = HashMap::new();
+            let id = Uuid::new_v4().to_string();
+            teams.insert(
+                id.clone(),
+                Team {
+                    id,
+                    name: "Support".to_string(),
+                    agent_ids: vec![],
+                },
+            );
+            teams
+        }),
+        inboxes: RwLock::new({
+            let mut inboxes = HashMap::new();
+            let id = Uuid::new_v4().to_string();
+            inboxes.insert(
+                id.clone(),
+                Inbox {
+                    id,
+                    name: "General".to_string(),
+                    channels: vec!["web".to_string(), "whatsapp".to_string()],
+                    agent_ids: vec![],
+                },
+            );
+            inboxes
+        }),
         realtime: Mutex::new(RealtimeState::default()),
         next_client_id: AtomicUsize::new(0),
     });
 
     let app = Router::new()
         .route("/health", get(health))
+        .route("/api/auth/register", post(register_agent))
+        .route("/api/auth/login", post(login_agent))
+        .route("/api/auth/me", get(get_me))
+        .route("/api/agent/status", patch(patch_agent_status))
+        .route("/api/teams", get(get_teams).post(create_team))
+        .route("/api/teams/{team_id}/members", post(add_member_to_team))
+        .route("/api/inboxes", get(get_inboxes).post(create_inbox))
+        .route("/api/inboxes/{inbox_id}/assign", post(assign_agent_to_inbox))
+        .route("/api/channels", get(list_channels))
+        .route("/api/agents", get(get_agents))
         .route("/api/session", post(post_session))
         .route("/api/sessions", get(get_sessions))
         .route("/api/session/{session_id}/messages", get(get_messages))
         .route("/api/session/{session_id}/message", post(post_message))
+        .route("/api/session/{session_id}/assignee", patch(patch_session_assignee))
+        .route("/api/session/{session_id}/channel", patch(patch_session_channel))
+        .route("/api/session/{session_id}/inbox", patch(patch_session_inbox))
+        .route("/api/session/{session_id}/team", patch(patch_session_team))
+        .route(
+            "/api/session/{session_id}/notes",
+            get(get_notes).post(add_note),
+        )
         .route("/ws", get(ws_handler))
         .layer(CorsLayer::permissive())
         .with_state(state);
