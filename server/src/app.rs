@@ -1737,9 +1737,9 @@ async fn get_flow_cursor(
     ))
 }
 
-/// Replace {{varName}} placeholders in a string with flow variable values.
+/// Replace {{varName}} or {{contact.name}} placeholders in a string with flow variable values.
 fn interpolate_flow_vars(text: &str, vars: &HashMap<String, String>) -> String {
-    let re = Regex::new(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}").unwrap();
+    let re = Regex::new(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s*\}\}").unwrap();
     re.replace_all(text, |caps: &regex::Captures| {
         let key = &caps[1];
         vars.get(key).cloned().unwrap_or_default()
@@ -1995,6 +1995,55 @@ async fn execute_flow_from(
         clear_flow_cursor(&state, &session_id).await;
         return;
     };
+
+    // Pre-populate contact.* variables so {{contact.name}} etc. resolve in text nodes
+    {
+        let contact_id: Option<String> =
+            sqlx::query_scalar("SELECT contact_id FROM sessions WHERE id = $1")
+                .bind(&session_id)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten();
+        if let Some(cid) = contact_id {
+            let row = sqlx::query_as::<_, (String, String, String, String, String)>(
+                "SELECT COALESCE(display_name,''), COALESCE(email,''), COALESCE(phone,''), COALESCE(company,''), COALESCE(location,'') FROM contacts WHERE id = $1",
+            )
+            .bind(&cid)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+            if let Some((name, email, phone, company, location)) = row {
+                if !name.is_empty() {
+                    flow_vars.entry("contact.name".to_string()).or_insert(name);
+                }
+                if !email.is_empty() {
+                    flow_vars.entry("contact.email".to_string()).or_insert(email);
+                }
+                if !phone.is_empty() {
+                    flow_vars.entry("contact.phone".to_string()).or_insert(phone);
+                }
+                if !company.is_empty() {
+                    flow_vars.entry("contact.company".to_string()).or_insert(company);
+                }
+                if !location.is_empty() {
+                    flow_vars.entry("contact.location".to_string()).or_insert(location);
+                }
+            }
+            // Also load custom attributes as contact.attr.<key>
+            let custom_attrs: Vec<(String, String)> = sqlx::query_as(
+                "SELECT attribute_key, attribute_value FROM contact_custom_attributes WHERE contact_id = $1",
+            )
+            .bind(&cid)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
+            for (key, val) in custom_attrs {
+                flow_vars.entry(format!("contact.{}", key)).or_insert(val);
+            }
+        }
+    }
 
     for _ in 0..24 {
         let Some(node) = node_by_id.get(&current_id).cloned() else {

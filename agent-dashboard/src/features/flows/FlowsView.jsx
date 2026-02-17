@@ -707,13 +707,56 @@ const FLOW_NODE_TYPES = {
 
 /* ─── Variable Picker Dropdown ───────────────────────────── */
 
-function VariablePickerDropdown({ attributeDefs, onSelect }) {
+const CONTACT_VARIABLES = [
+  { key: "contact.name", displayName: "Contact Name" },
+  { key: "contact.email", displayName: "Contact Email" },
+  { key: "contact.phone", displayName: "Contact Phone" },
+  { key: "contact.company", displayName: "Contact Company" },
+  { key: "contact.location", displayName: "Contact Location" },
+];
+
+function VariablePickerDropdown({ attributeDefs, flowInputVariables, onSelect }) {
   const [open, setOpen] = useState(false);
   const defs = attributeDefs || [];
-  if (defs.length === 0) return null;
+  const flowVars = (flowInputVariables || []).filter((v) => v.key);
+
+  const hasAnything = CONTACT_VARIABLES.length > 0 || flowVars.length > 0 || defs.length > 0;
+  if (!hasAnything) return null;
+
+  const renderGroup = (title, items, color) => {
+    if (!items || items.length === 0) return null;
+    return (
+      <>
+        <div className="px-2.5 py-1.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            {title}
+          </p>
+        </div>
+        {items.map((d) => (
+          <button
+            key={d.key}
+            onClick={() => {
+              onSelect(d.key);
+              setOpen(false);
+            }}
+            className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-slate-50"
+          >
+            <span
+              className={`rounded px-1.5 py-0.5 font-mono text-[10px] ${color}`}
+            >
+              {d.key}
+            </span>
+            <span className="truncate text-[11px] text-slate-600">
+              {d.displayName || d.label || d.key}
+            </span>
+          </button>
+        ))}
+      </>
+    );
+  };
 
   return (
-    <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
+    <div className="absolute right-1.5 top-2">
       <button
         type="button"
         onClick={() => setOpen(!open)}
@@ -723,30 +766,28 @@ function VariablePickerDropdown({ attributeDefs, onSelect }) {
         <Code2 size={13} />
       </button>
       {open && (
-        <div className="absolute right-0 top-8 z-50 w-52 rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
-          <div className="px-2.5 py-1.5">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-              Insert Variable
-            </p>
-          </div>
-          <div className="max-h-48 overflow-y-auto">
-            {defs.map((d) => (
-              <button
-                key={d.key}
-                onClick={() => {
-                  onSelect(d.key);
-                  setOpen(false);
-                }}
-                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-slate-50"
-              >
-                <span className="rounded bg-violet-100 px-1.5 py-0.5 font-mono text-[10px] text-violet-600">
-                  {d.key}
-                </span>
-                <span className="truncate text-[11px] text-slate-600">
-                  {d.displayName}
-                </span>
-              </button>
-            ))}
+        <div className="absolute right-0 top-8 z-50 w-56 rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
+          <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
+            <div>
+              {renderGroup("Contact", CONTACT_VARIABLES, "bg-sky-100 text-sky-600")}
+            </div>
+            {flowVars.length > 0 && (
+              <div>
+                {renderGroup(
+                  "Flow Variables",
+                  flowVars.map((v) => ({
+                    key: v.key,
+                    displayName: v.label || v.key,
+                  })),
+                  "bg-emerald-100 text-emerald-600"
+                )}
+              </div>
+            )}
+            {defs.length > 0 && (
+              <div>
+                {renderGroup("Custom Attributes", defs, "bg-violet-100 text-violet-600")}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1079,17 +1120,27 @@ function SettingsPanel({
                       </div>
                     </div>
                     <div className="px-3 py-2">
-                      <Textarea
-                        rows={3}
-                        className="min-h-[60px] border-0 bg-transparent p-0 text-[11px] text-slate-600 shadow-none focus-visible:ring-0 resize-none"
-                        value={
-                          data?.prompt ||
-                          "You are an entity extraction model that accepts an input text and ⊙ Start {x} type of entities to extract."
-                        }
-                        onChange={(e) =>
-                          updateSelectedNodeData({ prompt: e.target.value })
-                        }
-                      />
+                      <div className="relative">
+                        <Textarea
+                          rows={3}
+                          className="min-h-[60px] border-0 bg-transparent p-0 pr-7 text-[11px] text-slate-600 shadow-none focus-visible:ring-0 resize-none"
+                          value={
+                            data?.prompt ||
+                            "You are an entity extraction model that accepts an input text and ⊙ Start {x} type of entities to extract."
+                          }
+                          onChange={(e) =>
+                            updateSelectedNodeData({ prompt: e.target.value })
+                          }
+                        />
+                        <VariablePickerDropdown
+                          attributeDefs={attributeDefs}
+                          flowInputVariables={flowInputVariables}
+                          onSelect={(varKey) => {
+                            const cur = data?.prompt || "";
+                            updateSelectedNodeData({ prompt: cur + `{{${varKey}}}` });
+                          }}
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1104,15 +1155,25 @@ function SettingsPanel({
                 <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                   Prompt
                 </label>
-                <Textarea
-                  rows={4}
-                  value={data?.prompt || data?.text || ""}
-                  onChange={(e) =>
-                    updateSelectedNodeData({ text: e.target.value })
-                  }
-                  placeholder="System prompt for the LLM"
-                  className="text-[12px]"
-                />
+                <div className="relative">
+                  <Textarea
+                    rows={4}
+                    value={data?.prompt || data?.text || ""}
+                    onChange={(e) =>
+                      updateSelectedNodeData({ text: e.target.value })
+                    }
+                    placeholder="System prompt for the LLM"
+                    className="pr-8 text-[12px]"
+                  />
+                  <VariablePickerDropdown
+                    attributeDefs={attributeDefs}
+                    flowInputVariables={flowInputVariables}
+                    onSelect={(varKey) => {
+                      const cur = data?.prompt || data?.text || "";
+                      updateSelectedNodeData({ text: cur + `{{${varKey}}}` });
+                    }}
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -1146,15 +1207,25 @@ function SettingsPanel({
                     <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                       Text
                     </label>
-                    <Textarea
-                      rows={3}
-                      value={data?.text || ""}
-                      onChange={(e) =>
-                        updateSelectedNodeData({ text: e.target.value })
-                      }
-                      placeholder="Message text"
-                      className="text-[12px]"
-                    />
+                    <div className="relative">
+                      <Textarea
+                        rows={3}
+                        value={data?.text || ""}
+                        onChange={(e) =>
+                          updateSelectedNodeData({ text: e.target.value })
+                        }
+                        placeholder="Message text — use {{contact.name}} for variables"
+                        className="pr-8 text-[12px]"
+                      />
+                      <VariablePickerDropdown
+                        attributeDefs={attributeDefs}
+                        flowInputVariables={flowInputVariables}
+                        onSelect={(varKey) => {
+                          const cur = data?.text || "";
+                          updateSelectedNodeData({ text: cur + `{{${varKey}}}` });
+                        }}
+                      />
+                    </div>
                   </div>
                 )}
                 {type === "buttons" && (
@@ -2373,15 +2444,25 @@ function SettingsPanel({
                 <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                   Question Text
                 </label>
-                <Textarea
-                  rows={2}
-                  value={data?.text || ""}
-                  onChange={(e) =>
-                    updateSelectedNodeData({ text: e.target.value })
-                  }
-                  placeholder="How would you rate your experience?"
-                  className="text-[12px]"
-                />
+                <div className="relative">
+                  <Textarea
+                    rows={2}
+                    value={data?.text || ""}
+                    onChange={(e) =>
+                      updateSelectedNodeData({ text: e.target.value })
+                    }
+                    placeholder="How would you rate your experience?"
+                    className="pr-8 text-[12px]"
+                  />
+                  <VariablePickerDropdown
+                    attributeDefs={attributeDefs}
+                    flowInputVariables={flowInputVariables}
+                    onSelect={(varKey) => {
+                      const cur = data?.text || "";
+                      updateSelectedNodeData({ text: cur + `{{${varKey}}}` });
+                    }}
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -2608,6 +2689,7 @@ function SettingsPanel({
                       />
                       <VariablePickerDropdown
                         attributeDefs={attributeDefs}
+                        flowInputVariables={flowInputVariables}
                         onSelect={(varKey) => {
                           const cur = data?.attributeValue || "";
                           updateSelectedNodeData({
@@ -2644,15 +2726,25 @@ function SettingsPanel({
                 <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                   Internal Note
                 </label>
-                <Textarea
-                  rows={4}
-                  value={data?.text || ""}
-                  onChange={(e) =>
-                    updateSelectedNodeData({ text: e.target.value })
-                  }
-                  placeholder="Note visible only to agents..."
-                  className="text-[12px]"
-                />
+                <div className="relative">
+                  <Textarea
+                    rows={4}
+                    value={data?.text || ""}
+                    onChange={(e) =>
+                      updateSelectedNodeData({ text: e.target.value })
+                    }
+                    placeholder="Note visible only to agents..."
+                    className="pr-8 text-[12px]"
+                  />
+                  <VariablePickerDropdown
+                    attributeDefs={attributeDefs}
+                    flowInputVariables={flowInputVariables}
+                    onSelect={(varKey) => {
+                      const cur = data?.text || "";
+                      updateSelectedNodeData({ text: cur + `{{${varKey}}}` });
+                    }}
+                  />
+                </div>
               </div>
             </div>
           )}
