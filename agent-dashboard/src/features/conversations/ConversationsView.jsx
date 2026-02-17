@@ -9,9 +9,12 @@ import {
   ClipboardList,
   Globe,
   House,
+  Image,
   MessageCircle,
+  Paperclip,
   Phone,
   Send,
+  Smile,
   Users,
   X,
 } from "lucide-react";
@@ -155,7 +158,7 @@ export default function ConversationsView({
       formatTime={formatTime}
       sessionPreview={sessionPreview}
       mainPanel={
-        <section className="crm-main grid h-full min-h-0 overflow-hidden grid-rows-[56px_1fr_132px] bg-[#f8f9fb]">
+        <section className="crm-main grid h-full min-h-0 overflow-hidden grid-rows-[56px_minmax(0,1fr)_auto] bg-[#f8f9fb]">
           <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4">
             <div className="flex items-center gap-2">
               <div className="flex h-7 w-7 items-center justify-center rounded-full bg-fuchsia-100 text-[10px] font-semibold text-fuchsia-700">
@@ -228,7 +231,7 @@ export default function ConversationsView({
 
           <form onSubmit={sendMessage} className="relative border-t border-slate-200 bg-white p-3">
             {(cannedPanelOpen || slashQuery.length > 0) && (
-              <div className="absolute bottom-[116px] left-3 right-3 z-20 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+              <div className="absolute bottom-full left-3 right-3 z-20 mb-2 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
                 {slashQuery ? (
                   <p className="mb-2 text-[11px] text-slate-500">
                     Filtering canned replies by: <strong>/{slashQuery}</strong>
@@ -254,39 +257,7 @@ export default function ConversationsView({
               </div>
             )}
 
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="inline-flex rounded-md border border-slate-300 bg-slate-50 p-0.5">
-                <button
-                  type="button"
-                  className={`rounded px-2 py-1 text-xs font-medium transition ${
-                    messageAudience === "user" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"
-                  }`}
-                  onClick={() => setMessageAudience("user")}
-                >
-                  Reply
-                </button>
-                <button
-                  type="button"
-                  className={`rounded px-2 py-1 text-xs font-medium transition ${
-                    messageAudience === "team" ? "bg-amber-100 text-amber-900 shadow-sm" : "text-slate-600"
-                  }`}
-                  onClick={() => setMessageAudience("team")}
-                >
-                  Note
-                </button>
-              </div>
-
-              <div className="flex items-center gap-1">
-                <Button type="button" size="sm" variant="outline" className="h-7 rounded-md px-2 text-[11px]" onClick={() => setCannedPanelOpen((v) => !v)} disabled={!activeId}>
-                  <ClipboardList size={13} /> Canned
-                </Button>
-                <Button type="button" size="sm" variant="outline" className="h-7 rounded-md px-2 text-[11px]" onClick={() => setHandover(!Boolean(activeSession?.handoverActive))} disabled={!activeId}>
-                  <Users size={13} /> {activeSession?.handoverActive ? "Return to Bot" : "Take Over"}
-                </Button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-[1fr_auto] gap-2">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-2.5 shadow-[0_1px_0_rgba(15,23,42,0.04)]">
               <Textarea
                 placeholder={
                   activeId
@@ -304,17 +275,71 @@ export default function ConversationsView({
                 onKeyDown={handleComposerKeyDown}
                 disabled={!activeId || (isActiveSessionClosed && messageAudience === "user")}
                 rows={2}
-                className="min-h-10 resize-none rounded-xl border-slate-200 bg-slate-50"
+                className="min-h-20 resize-none border-0 bg-transparent px-1 py-1.5 text-[13px] shadow-none focus-visible:ring-0"
               />
 
-              <div className="flex flex-col justify-between gap-2">
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1">
+                  <Button type="button" size="sm" variant="ghost" className="h-7 w-7 rounded-full p-0 text-slate-500 hover:text-slate-700" disabled={!activeId}>
+                    <Paperclip size={14} />
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" className="h-7 w-7 rounded-full p-0 text-slate-500 hover:text-slate-700" disabled={!activeId}>
+                    <Smile size={14} />
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" className="h-7 w-7 rounded-full p-0 text-slate-500 hover:text-slate-700" disabled={!activeId}>
+                    <Image size={14} />
+                  </Button>
+                  <div className="ml-1 inline-flex rounded-md border border-slate-300 bg-white p-0.5">
+                    <button
+                      type="button"
+                      className={`rounded px-2 py-1 text-xs font-medium transition ${
+                        messageAudience === "user" ? "bg-slate-100 text-slate-900" : "text-slate-600"
+                      }`}
+                      onClick={() => setMessageAudience("user")}
+                    >
+                      Reply
+                    </button>
+                    <button
+                      type="button"
+                      className={`rounded px-2 py-1 text-xs font-medium transition ${
+                        messageAudience === "team" ? "bg-amber-100 text-amber-900" : "text-slate-600"
+                      }`}
+                      onClick={() => setMessageAudience("team")}
+                    >
+                      Note
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 rounded-lg px-2 text-[11px]"
+                    onClick={() => setCannedPanelOpen((v) => !v)}
+                    disabled={!activeId}
+                  >
+                    <ClipboardList size={13} /> Assign to Form
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 rounded-lg px-2 text-[11px]"
+                    onClick={() => setHandover(!Boolean(activeSession?.handoverActive))}
+                    disabled={!activeId}
+                  >
+                    <Users size={13} /> {activeSession?.handoverActive ? "Return to Bot" : "Take Over"}
+                  </Button>
                 <Button
                   type="submit"
                   disabled={!activeId || !text.trim() || (isActiveSessionClosed && messageAudience === "user")}
-                  className="h-10 rounded-xl bg-orange-500 px-3 text-white hover:bg-orange-600"
+                  className="h-8 rounded-lg bg-orange-500 px-3 text-white hover:bg-orange-600"
                 >
-                  Send <Send size={13} />
+                  Send <Send size={12} />
                 </Button>
+                </div>
               </div>
             </div>
           </form>

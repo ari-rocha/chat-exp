@@ -415,11 +415,12 @@
 }
 
 .conversation-workspace {
-    background: #d9dce4;
+    background: var(--background);
 }
 
 .crm-surface {
-    box-shadow: 0 20px 48px rgba(15, 23, 42, 0.12);
+    box-shadow: none;
+    border-radius: 0;
 }
 
 .crm-rail {
@@ -514,7 +515,7 @@
     }
 
     .crm-surface {
-        border-radius: 10px;
+        border-radius: 0;
         box-shadow: none;
     }
 }

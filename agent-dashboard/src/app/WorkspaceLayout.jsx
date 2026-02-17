@@ -90,9 +90,9 @@ export default function WorkspaceLayout({
   };
 
   return (
-    <div className="conversation-workspace h-full w-full p-4 max-[980px]:p-2">
+    <div className="conversation-workspace h-full w-full">
       <div
-        className={`crm-surface grid h-full min-h-0 overflow-hidden rounded-2xl border border-slate-300 bg-white max-[980px]:grid-cols-[1fr] ${
+        className={`crm-surface grid h-full min-h-0 overflow-hidden bg-white max-[980px]:grid-cols-[1fr] ${
           showConversationPanels
             ? "grid-cols-[64px_250px_1fr] max-[1220px]:grid-cols-[64px_240px_1fr]"
             : detailsPanel
