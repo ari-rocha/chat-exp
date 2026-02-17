@@ -152,6 +152,16 @@ export default function App() {
           mergeMessage(envelope.data);
         }
 
+        if (envelope?.event === "session:switched") {
+          const nextSessionId = envelope?.data?.sessionId;
+          if (!nextSessionId || nextSessionId === sessionId) return;
+          setSessionId(nextSessionId);
+          localStorage.setItem("chat_session_id", nextSessionId);
+          setMessages([]);
+          setReady(false);
+          setAgentTyping(false);
+        }
+
         if (envelope?.event === "typing") {
           const payload = envelope.data ?? {};
           if (payload.sessionId !== sessionId) return;
@@ -203,6 +213,7 @@ export default function App() {
 
   const send = (e) => {
     e.preventDefault();
+    if (chatClosed) return;
     if (!text.trim() || !sessionId) return;
     sendText(text.trim());
   };
@@ -231,6 +242,14 @@ export default function App() {
       .then((res) => res.json())
       .then((data) => {
         if (!data?.message) return;
+        const nextSessionId = data?.sessionId;
+        if (nextSessionId && nextSessionId !== sessionId) {
+          setSessionId(nextSessionId);
+          localStorage.setItem("chat_session_id", nextSessionId);
+          setMessages([]);
+          setReady(false);
+          setAgentTyping(false);
+        }
         setMessages((prev) => {
           const list = Array.isArray(prev) ? prev : [];
           const withoutTemp = list.filter((m) => m.id !== tempId);
@@ -258,6 +277,36 @@ export default function App() {
   const formKey = (messageId) => `form:${messageId}`;
 
   const canSend = text.trim().length > 0;
+  const chatClosed = useMemo(() => {
+    if (!Array.isArray(messages) || messages.length === 0) return false;
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message?.sender !== "system") continue;
+      const text = String(message?.text || "").toLowerCase();
+      if (text.includes("reopened")) return false;
+      if (text.includes("you have ended the chat")) return true;
+      if (text.includes("conversation closed")) return true;
+    }
+    return false;
+  }, [messages]);
+
+  const startNewChat = async () => {
+    const res = await fetch(`${API_URL}/api/session`, { method: "POST" });
+    const data = await res.json();
+    if (!data?.sessionId) return;
+    setSessionId(data.sessionId);
+    localStorage.setItem("chat_session_id", data.sessionId);
+    setMessages([]);
+    setReady(false);
+    setText("");
+    setAgentTyping(false);
+    setDismissedSuggestionsFor("");
+  };
+
+  const endCurrentChat = async () => {
+    if (!sessionId) return;
+    await fetch(`${API_URL}/api/session/${sessionId}/close`, { method: "POST" });
+  };
 
   return (
     <div className="widget-host">
@@ -285,6 +334,14 @@ export default function App() {
             </button> */}
           </div>
           <div className="right-actions">
+            <button
+              type="button"
+              className="end-chat-btn"
+              onClick={() => endCurrentChat().catch((error) => console.error("failed to end chat", error))}
+              disabled={!sessionId || chatClosed}
+            >
+              End Chat
+            </button>
             <button
               type="button"
               className="header-btn"
@@ -596,33 +653,45 @@ export default function App() {
           </div>
         </main>
 
-        <form className="composer" onSubmit={send}>
-          <input
-            value={text}
-            onChange={(e) => {
-              const next = e.target.value;
-              setText(next);
-              sendVisitorTyping(next);
-              if (visitorTypingIdleTimerRef.current) {
-                clearTimeout(visitorTypingIdleTimerRef.current);
-              }
-              visitorTypingIdleTimerRef.current = setTimeout(() => {
-                sendVisitorTyping(next, false);
-              }, 1200);
-            }}
-            onBlur={() => sendVisitorTyping("", false)}
-            placeholder="Message..."
-            aria-label="Message input"
-          />
-          <button
-            type="submit"
-            aria-label="Send"
-            disabled={!canSend}
-            className={canSend ? "send-active" : ""}
-          >
-            ↑
-          </button>
-        </form>
+        {chatClosed ? (
+          <div className="composer composer-closed">
+            <button
+              type="button"
+              className="new-chat-btn"
+              onClick={() => startNewChat().catch((error) => console.error("failed to start chat", error))}
+            >
+              Start new chat
+            </button>
+          </div>
+        ) : (
+          <form className="composer" onSubmit={send}>
+            <input
+              value={text}
+              onChange={(e) => {
+                const next = e.target.value;
+                setText(next);
+                sendVisitorTyping(next);
+                if (visitorTypingIdleTimerRef.current) {
+                  clearTimeout(visitorTypingIdleTimerRef.current);
+                }
+                visitorTypingIdleTimerRef.current = setTimeout(() => {
+                  sendVisitorTyping(next, false);
+                }, 1200);
+              }}
+              onBlur={() => sendVisitorTyping("", false)}
+              placeholder="Message..."
+              aria-label="Message input"
+            />
+            <button
+              type="submit"
+              aria-label="Send"
+              disabled={!canSend}
+              className={canSend ? "send-active" : ""}
+            >
+              ↑
+            </button>
+          </form>
+        )}
 
         <footer className="privacy">Privacy</footer>
       </section>

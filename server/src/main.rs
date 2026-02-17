@@ -765,6 +765,27 @@ async fn ensure_session(state: Arc<AppState>, session_id: &str) -> Session {
     session
 }
 
+async fn resolve_visitor_target_session(
+    state: Arc<AppState>,
+    requested_session_id: &str,
+) -> (String, bool) {
+    let is_closed = {
+        let sessions = state.sessions.read().await;
+        sessions
+            .get(requested_session_id)
+            .map(|session| session.status == "closed")
+            .unwrap_or(false)
+    };
+
+    if !is_closed {
+        return (requested_session_id.to_string(), false);
+    }
+
+    let new_session_id = Uuid::new_v4().to_string();
+    let _ = ensure_session(state, &new_session_id).await;
+    (new_session_id, true)
+}
+
 async fn add_message(
     state: Arc<AppState>,
     session_id: &str,
@@ -1897,9 +1918,24 @@ async fn post_message(
         _ => "visitor",
     };
 
-    let _ = ensure_session(state.clone(), &session_id).await;
+    let target_session_id = if sender == "visitor" {
+        let (target, _switched) = resolve_visitor_target_session(state.clone(), &session_id).await;
+        target
+    } else {
+        session_id.clone()
+    };
 
-    let Some(message) = add_message(state.clone(), &session_id, sender, &body.text, None, None).await
+    let _ = ensure_session(state.clone(), &target_session_id).await;
+
+    let Some(message) = add_message(
+        state.clone(),
+        &target_session_id,
+        sender,
+        &body.text,
+        None,
+        None,
+    )
+    .await
     else {
         return (
             StatusCode::BAD_REQUEST,
@@ -1910,14 +1946,49 @@ async fn post_message(
 
     if sender == "visitor" {
         let state_clone = state.clone();
-        let session_clone = session_id.clone();
+        let session_clone = target_session_id.clone();
         let text_clone = body.text.clone();
         tokio::spawn(async move {
             run_flow_for_visitor_message(state_clone, session_clone, text_clone, "visitor_message").await;
         });
     }
 
-    (StatusCode::CREATED, Json(json!({ "message": message }))).into_response()
+    (
+        StatusCode::CREATED,
+        Json(json!({ "message": message, "sessionId": target_session_id })),
+    )
+        .into_response()
+}
+
+async fn close_session_by_visitor(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let _ = ensure_session(state.clone(), &session_id).await;
+
+    let Some((summary, changed)) = set_session_status(&state, &session_id, "closed").await else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "session not found" })),
+        )
+            .into_response();
+    };
+
+    emit_session_update(&state, summary).await;
+
+    if changed {
+        let _ = add_message(
+            state.clone(),
+            &session_id,
+            "system",
+            "You have ended the chat",
+            None,
+            None,
+        )
+        .await;
+    }
+
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
 }
 
 async fn register_agent(
@@ -2948,10 +3019,33 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 let session_id = envelope.data.get("sessionId").and_then(Value::as_str);
                 let text = envelope.data.get("text").and_then(Value::as_str);
                 if let (Some(session_id), Some(text)) = (session_id, text) {
-                    let _ = ensure_session(state.clone(), session_id).await;
-                    let _ = add_message(state.clone(), session_id, "visitor", text, None, None).await;
+                    let (target_session_id, switched) =
+                        resolve_visitor_target_session(state.clone(), session_id).await;
+                    if switched {
+                        emit_to_client(
+                            &state,
+                            client_id,
+                            "session:switched",
+                            json!({
+                                "fromSessionId": session_id,
+                                "sessionId": target_session_id,
+                            }),
+                        )
+                        .await;
+                    }
+
+                    let _ = ensure_session(state.clone(), &target_session_id).await;
+                    let _ = add_message(
+                        state.clone(),
+                        &target_session_id,
+                        "visitor",
+                        text,
+                        None,
+                        None,
+                    )
+                    .await;
                     let state_clone = state.clone();
-                    let session_clone = session_id.to_string();
+                    let session_clone = target_session_id;
                     let text_clone = text.to_string();
                     tokio::spawn(async move {
                         run_flow_for_visitor_message(
@@ -3333,6 +3427,10 @@ async fn main() {
         .route("/api/sessions", get(get_sessions))
         .route("/api/session/{session_id}/messages", get(get_messages))
         .route("/api/session/{session_id}/message", post(post_message))
+        .route(
+            "/api/session/{session_id}/close",
+            post(close_session_by_visitor),
+        )
         .route(
             "/api/session/{session_id}/assignee",
             patch(patch_session_assignee),
