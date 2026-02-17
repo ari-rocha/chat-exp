@@ -1688,11 +1688,21 @@ async fn extract_vars_with_ai(
             let company: String = row.get("company");
             let location: String = row.get("location");
             contact_block.push_str("Known contact info:");
-            if !name.is_empty() { contact_block.push_str(&format!(" name={}", name)); }
-            if !email.is_empty() { contact_block.push_str(&format!(" email={}", email)); }
-            if !phone.is_empty() { contact_block.push_str(&format!(" phone={}", phone)); }
-            if !company.is_empty() { contact_block.push_str(&format!(" company={}", company)); }
-            if !location.is_empty() { contact_block.push_str(&format!(" location={}", location)); }
+            if !name.is_empty() {
+                contact_block.push_str(&format!(" name={}", name));
+            }
+            if !email.is_empty() {
+                contact_block.push_str(&format!(" email={}", email));
+            }
+            if !phone.is_empty() {
+                contact_block.push_str(&format!(" phone={}", phone));
+            }
+            if !company.is_empty() {
+                contact_block.push_str(&format!(" company={}", company));
+            }
+            if !location.is_empty() {
+                contact_block.push_str(&format!(" location={}", location));
+            }
         }
     }
 
@@ -2110,11 +2120,16 @@ async fn execute_flow_from(
                 "start_flow" => {
                     // Resuming from AI-collect on start_flow — extract vars from visitor reply
                     let sf_target_id = flow_vars.remove("__sf_target_flow_id").unwrap_or_default();
-                    let sf_sub_vars_json = flow_vars.remove("__sf_sub_vars").unwrap_or_else(|| "{}".to_string());
+                    let sf_sub_vars_json = flow_vars
+                        .remove("__sf_sub_vars")
+                        .unwrap_or_else(|| "{}".to_string());
                     let mut sub_vars: HashMap<String, String> =
                         serde_json::from_str(&sf_sub_vars_json).unwrap_or_default();
 
-                    eprintln!("[start_flow resume] target={}, sub_vars={:?}", sf_target_id, sub_vars);
+                    eprintln!(
+                        "[start_flow resume] target={}, sub_vars={:?}",
+                        sf_target_id, sub_vars
+                    );
 
                     if let Some(target_flow) = get_flow_by_id_db(&state.db, &sf_target_id).await {
                         // Always extract ALL required vars (not just missing) so the AI can
@@ -2142,7 +2157,10 @@ async fn execute_flow_from(
                             }
                         }
 
-                        eprintln!("[start_flow resume] sub_vars after extraction: {:?}", sub_vars);
+                        eprintln!(
+                            "[start_flow resume] sub_vars after extraction: {:?}",
+                            sub_vars
+                        );
 
                         // Check if we now have all required vars
                         let still_missing = find_missing_required_vars(&target_flow, &sub_vars);
@@ -2166,7 +2184,10 @@ async fn execute_flow_from(
                             // Still missing — ask again
                             eprintln!("[start_flow resume] Still missing vars, asking again");
                             flow_vars.insert("__sf_target_flow_id".to_string(), sf_target_id);
-                            flow_vars.insert("__sf_sub_vars".to_string(), serde_json::to_string(&sub_vars).unwrap_or_default());
+                            flow_vars.insert(
+                                "__sf_sub_vars".to_string(),
+                                serde_json::to_string(&sub_vars).unwrap_or_default(),
+                            );
                             let ask_prompt = format!(
                                 "The user just said: \"{}\". You still need these values from the user: [{}]. \
                                  Acknowledge what they provided (if anything), then ask for the remaining values in a friendly, concise way. \
@@ -3391,15 +3412,26 @@ async fn execute_flow_from(
                         let missing = find_missing_required_vars(&target_flow, &sub_vars);
                         if !missing.is_empty() && ai_collect {
                             // Store the target flow id + collected sub_vars in flow_vars for resume
-                            flow_vars.insert("__sf_target_flow_id".to_string(), target_flow_id.to_string());
-                            flow_vars.insert("__sf_sub_vars".to_string(), serde_json::to_string(&sub_vars).unwrap_or_default());
+                            flow_vars.insert(
+                                "__sf_target_flow_id".to_string(),
+                                target_flow_id.to_string(),
+                            );
+                            flow_vars.insert(
+                                "__sf_sub_vars".to_string(),
+                                serde_json::to_string(&sub_vars).unwrap_or_default(),
+                            );
 
                             // Ask the AI to collect the missing fields
                             let fields_desc: Vec<String> = target_flow
                                 .input_variables
                                 .iter()
                                 .filter(|v| v.required)
-                                .filter(|v| sub_vars.get(&v.key).map(|val| val.trim().is_empty()).unwrap_or(true))
+                                .filter(|v| {
+                                    sub_vars
+                                        .get(&v.key)
+                                        .map(|val| val.trim().is_empty())
+                                        .unwrap_or(true)
+                                })
                                 .map(|v| {
                                     if v.label.is_empty() {
                                         v.key.clone()
