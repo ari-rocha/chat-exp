@@ -415,56 +415,108 @@
 }
 
 .conversation-workspace {
-    background: linear-gradient(180deg, color-mix(in srgb, var(--background), #ffffff 4%), var(--background));
+    background: #d9dce4;
 }
 
-.conversation-sidebar,
-.conversation-main,
-.conversation-details {
-    background: var(--card);
+.crm-surface {
+    box-shadow: 0 20px 48px rgba(15, 23, 42, 0.12);
 }
 
-.conversation-session-item {
-    min-height: 72px;
+.crm-rail {
+    background: #f5f7fb;
+}
+
+.crm-rail-btn {
+    height: 32px;
+    width: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    color: #64748b;
+    background: transparent;
+}
+
+.crm-rail-btn:hover {
+    background: #eef2f7;
+    color: #334155;
+}
+
+.crm-rail-btn.active {
+    background: #dbeafe;
+    border-color: #bfdbfe;
+    color: #1d4ed8;
+}
+
+.crm-rail-avatar {
+    height: 34px;
+    width: 34px;
+    border-radius: 999px;
+    border: 1px solid #dbe4f1;
+    background: #ffffff;
+    color: #475569;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+.crm-list button {
+    min-height: 74px;
 }
 
 .conversation-thread {
-    background:
-        radial-gradient(circle at 8% 4%, color-mix(in srgb, var(--primary), transparent 93%), transparent 52%),
-        color-mix(in srgb, var(--background), #ffffff 3%);
-}
-
-.conversation-details .rounded-xl {
-    border-radius: 14px;
+    background: #f6f7fb;
 }
 
 .agent-dashboard-shell.theme-dark .conversation-workspace {
-    background: linear-gradient(180deg, #0b1019, #090d15 44%, #080c14);
+    background: #0b1019;
 }
 
-.agent-dashboard-shell.theme-dark .conversation-sidebar,
-.agent-dashboard-shell.theme-dark .conversation-main,
-.agent-dashboard-shell.theme-dark .conversation-details {
-    background: #0f141d;
+.agent-dashboard-shell.theme-dark .crm-surface {
+    border-color: #243244 !important;
+    background: #0f141d !important;
+}
+
+.agent-dashboard-shell.theme-dark .crm-rail,
+.agent-dashboard-shell.theme-dark .crm-inbox,
+.agent-dashboard-shell.theme-dark .crm-list,
+.agent-dashboard-shell.theme-dark .crm-main,
+.agent-dashboard-shell.theme-dark .crm-details {
+    background: #0f141d !important;
+}
+
+.agent-dashboard-shell.theme-dark .crm-main {
+    background: #0b111b !important;
 }
 
 .agent-dashboard-shell.theme-dark .conversation-thread {
-    background:
-        radial-gradient(circle at 8% 4%, rgba(31, 111, 235, 0.08), transparent 52%),
-        #0b111b;
+    background: #0b111b !important;
 }
 
-.agent-dashboard-shell.theme-dark .conversation-session-item {
-    background: #121926 !important;
+.agent-dashboard-shell.theme-dark .crm-rail-btn {
+    color: #95a5bd;
 }
 
-.agent-dashboard-shell.theme-dark .conversation-session-item:hover {
-    background: #172233 !important;
+.agent-dashboard-shell.theme-dark .crm-rail-btn:hover {
+    background: #1b273a;
+    color: #d7e1f3;
 }
 
-.agent-dashboard-shell.theme-dark .conversation-session-item.border-blue-200 {
-    border-color: #1f6feb !important;
-    background: #152742 !important;
+.agent-dashboard-shell.theme-dark .crm-rail-btn.active {
+    background: #152742;
+    border-color: #1f6feb;
+    color: #75a8ff;
+}
+
+@media (max-width: 980px) {
+    .conversation-workspace {
+        background: var(--background);
+    }
+
+    .crm-surface {
+        border-radius: 10px;
+        box-shadow: none;
+    }
 }
 
 .agent-carousel-card img {

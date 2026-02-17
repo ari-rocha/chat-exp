@@ -9,7 +9,7 @@ const formatTime = (iso) => {
 
 export default function CsatView({ csatReport }) {
   return (
-    <div className="grid min-h-0 grid-cols-[320px_1fr] gap-4 bg-slate-50 p-4 max-[1080px]:grid-cols-[1fr]">
+    <div className="grid h-full min-h-0 grid-cols-[320px_1fr] gap-4 bg-slate-50 p-4 max-[1080px]:grid-cols-[1fr]">
       <aside className="rounded-xl border border-slate-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-slate-900">CSAT Overview</h3>
         <div className="mt-3 space-y-2">
@@ -23,9 +23,9 @@ export default function CsatView({ csatReport }) {
           </div>
         </div>
       </aside>
-      <section className="rounded-xl border border-slate-200 bg-white p-4">
+      <section className="grid min-h-0 grid-rows-[auto_1fr] rounded-xl border border-slate-200 bg-white p-4">
         <h3 className="mb-3 text-sm font-semibold text-slate-900">CSAT submissions</h3>
-        <ScrollArea className="h-[calc(100vh-170px)]">
+        <ScrollArea className="h-full">
           <div className="space-y-2 pr-2">
             {(csatReport.surveys || []).map((survey) => (
               <article key={survey.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">

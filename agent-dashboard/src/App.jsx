@@ -1,4 +1,4 @@
-import TopBar from "@/app/TopBar";
+import WorkspaceLayout from "@/app/WorkspaceLayout";
 import AuthView from "@/features/auth/AuthView";
 import ContactsView from "@/features/contacts/ContactsView";
 import ConversationsView from "@/features/conversations/ConversationsView";
@@ -1022,126 +1022,155 @@ export default function App() {
     );
   }
 
+  if (view === "conversations") {
+    return (
+      <div
+        className={`agent-dashboard-shell ${theme === "dark" ? "theme-dark" : "theme-light"}`}
+      >
+        <ConversationsView
+          view={view}
+          setView={setView}
+          sessions={sessions}
+          createFlow={createFlow}
+          conversationSearch={conversationSearch}
+          setConversationSearch={setConversationSearch}
+          openCount={openCount}
+          waitingCount={waitingCount}
+          closedCount={closedCount}
+          conversationFilter={conversationFilter}
+          setConversationFilter={setConversationFilter}
+          agent={agent}
+          updateAgentStatus={updateAgentStatus}
+          channelCounts={channelCounts}
+          filteredSessions={filteredSessions}
+          activeId={activeId}
+          setActiveId={setActiveId}
+          formatTime={formatTime}
+          sessionPreview={sessionPreview}
+          activeSession={activeSession}
+          messages={messages}
+          visitorDraftBySession={visitorDraftBySession}
+          bottomRef={bottomRef}
+          sendMessage={sendMessage}
+          messageAudience={messageAudience}
+          setMessageAudience={setMessageAudience}
+          cannedPanelOpen={cannedPanelOpen}
+          setCannedPanelOpen={setCannedPanelOpen}
+          patchSessionMeta={patchSessionMeta}
+          isActiveSessionClosed={isActiveSessionClosed}
+          slashQuery={slashQuery}
+          filteredCannedReplies={filteredCannedReplies}
+          insertCannedReply={insertCannedReply}
+          deleteCannedReply={deleteCannedReply}
+          text={text}
+          setText={setText}
+          bumpTyping={bumpTyping}
+          sendTypingState={sendTypingState}
+          sendWsEvent={sendWsEvent}
+          cannedReplies={cannedReplies}
+          resolveTemplate={resolveTemplate}
+          agents={agents}
+          teams={teams}
+          inboxes={inboxes}
+          channels={channels}
+          flows={flows}
+          patchActiveSession={patchActiveSession}
+          setHandover={setHandover}
+          noteText={noteText}
+          setNoteText={setNoteText}
+          saveNote={saveNote}
+          notes={notes}
+          createCannedReply={createCannedReply}
+          newCanned={newCanned}
+          setNewCanned={setNewCanned}
+          cannedSaving={cannedSaving}
+          renderMessageWidget={renderMessageWidget}
+        />
+      </div>
+    );
+  }
+
+  const mainPanel =
+    view === "flows" ? (
+      <section className="crm-main min-h-0 bg-[#f8f9fb]">
+        <FlowsView
+          flows={flows}
+          createFlow={createFlow}
+          activeFlowId={activeFlowId}
+          setActiveFlowId={setActiveFlowId}
+          loadFlowIntoEditor={loadFlowIntoEditor}
+          flowName={flowName}
+          setFlowName={setFlowName}
+          flowEnabled={flowEnabled}
+          setFlowEnabled={setFlowEnabled}
+          saveFlow={saveFlow}
+          deleteCurrentFlow={deleteCurrentFlow}
+          flowSaveStatus={flowSaveStatus}
+          flowNodes={flowNodes}
+          flowEdges={flowEdges}
+          onFlowNodesChange={onFlowNodesChange}
+          onFlowEdgesChange={onFlowEdgesChange}
+          onFlowConnect={onFlowConnect}
+          setSelectedNodeId={setSelectedNodeId}
+          addFlowNode={addFlowNode}
+          flowDescription={flowDescription}
+          setFlowDescription={setFlowDescription}
+          selectedNode={selectedNode}
+          updateSelectedNodeData={updateSelectedNodeData}
+          carouselItemsText={carouselItemsText}
+          removeSelectedNode={removeSelectedNode}
+        />
+      </section>
+    ) : view === "contacts" ? (
+      <section className="crm-main min-h-0 bg-[#f8f9fb]">
+        <ContactsView
+          contacts={contacts}
+          newContact={newContact}
+          setNewContact={setNewContact}
+          createContact={createContact}
+        />
+      </section>
+    ) : view === "customization" ? (
+      <section className="crm-main min-h-0 bg-[#f8f9fb]">
+        <CustomizationView
+          tenantSettings={tenantSettings}
+          setTenantSettings={setTenantSettings}
+          saveTenantSettings={saveTenantSettings}
+          tenants={tenants}
+        />
+      </section>
+    ) : view === "csat" ? (
+      <section className="crm-main min-h-0 bg-[#f8f9fb]">
+        <CsatView csatReport={csatReport} />
+      </section>
+    ) : null;
+
   return (
     <div
       className={`agent-dashboard-shell ${theme === "dark" ? "theme-dark" : "theme-light"}`}
     >
-      <div className="grid h-full w-full grid-rows-[56px_1fr]">
-        <TopBar
-          view={view}
-          setView={setView}
-          agent={agent}
-          theme={theme}
-          setTheme={setTheme}
-          logout={logout}
-        />
-
-        {view === "conversations" ? (
-          <ConversationsView
-            view={view}
-            setView={setView}
-            sessions={sessions}
-            createFlow={createFlow}
-            conversationSearch={conversationSearch}
-            setConversationSearch={setConversationSearch}
-            openCount={openCount}
-            waitingCount={waitingCount}
-            closedCount={closedCount}
-            conversationFilter={conversationFilter}
-            setConversationFilter={setConversationFilter}
-            agent={agent}
-            updateAgentStatus={updateAgentStatus}
-            channelCounts={channelCounts}
-            filteredSessions={filteredSessions}
-            activeId={activeId}
-            setActiveId={setActiveId}
-            formatTime={formatTime}
-            sessionPreview={sessionPreview}
-            activeSession={activeSession}
-            messages={messages}
-            visitorDraftBySession={visitorDraftBySession}
-            bottomRef={bottomRef}
-            sendMessage={sendMessage}
-            messageAudience={messageAudience}
-            setMessageAudience={setMessageAudience}
-            cannedPanelOpen={cannedPanelOpen}
-            setCannedPanelOpen={setCannedPanelOpen}
-            patchSessionMeta={patchSessionMeta}
-            isActiveSessionClosed={isActiveSessionClosed}
-            slashQuery={slashQuery}
-            filteredCannedReplies={filteredCannedReplies}
-            insertCannedReply={insertCannedReply}
-            deleteCannedReply={deleteCannedReply}
-            text={text}
-            setText={setText}
-            bumpTyping={bumpTyping}
-            sendTypingState={sendTypingState}
-            sendWsEvent={sendWsEvent}
-            cannedReplies={cannedReplies}
-            resolveTemplate={resolveTemplate}
-            agents={agents}
-            teams={teams}
-            inboxes={inboxes}
-            channels={channels}
-            flows={flows}
-            patchActiveSession={patchActiveSession}
-            setHandover={setHandover}
-            noteText={noteText}
-            setNoteText={setNoteText}
-            saveNote={saveNote}
-            notes={notes}
-            createCannedReply={createCannedReply}
-            newCanned={newCanned}
-            setNewCanned={setNewCanned}
-            cannedSaving={cannedSaving}
-            renderMessageWidget={renderMessageWidget}
-          />
-        ) : view === "flows" ? (
-          <FlowsView
-            flows={flows}
-            createFlow={createFlow}
-            activeFlowId={activeFlowId}
-            setActiveFlowId={setActiveFlowId}
-            loadFlowIntoEditor={loadFlowIntoEditor}
-            flowName={flowName}
-            setFlowName={setFlowName}
-            flowEnabled={flowEnabled}
-            setFlowEnabled={setFlowEnabled}
-            saveFlow={saveFlow}
-            deleteCurrentFlow={deleteCurrentFlow}
-            flowSaveStatus={flowSaveStatus}
-            flowNodes={flowNodes}
-            flowEdges={flowEdges}
-            onFlowNodesChange={onFlowNodesChange}
-            onFlowEdgesChange={onFlowEdgesChange}
-            onFlowConnect={onFlowConnect}
-            setSelectedNodeId={setSelectedNodeId}
-            addFlowNode={addFlowNode}
-            flowDescription={flowDescription}
-            setFlowDescription={setFlowDescription}
-            selectedNode={selectedNode}
-            updateSelectedNodeData={updateSelectedNodeData}
-            carouselItemsText={carouselItemsText}
-            removeSelectedNode={removeSelectedNode}
-          />
-        ) : view === "contacts" ? (
-          <ContactsView
-            contacts={contacts}
-            newContact={newContact}
-            setNewContact={setNewContact}
-            createContact={createContact}
-          />
-        ) : view === "customization" ? (
-          <CustomizationView
-            tenantSettings={tenantSettings}
-            setTenantSettings={setTenantSettings}
-            saveTenantSettings={saveTenantSettings}
-            tenants={tenants}
-          />
-        ) : view === "csat" ? (
-          <CsatView csatReport={csatReport} />
-        ) : null}
-      </div>
+      <WorkspaceLayout
+        view={view}
+        setView={setView}
+        sessions={sessions}
+        conversationSearch={conversationSearch}
+        setConversationSearch={setConversationSearch}
+        openCount={openCount}
+        waitingCount={waitingCount}
+        closedCount={closedCount}
+        conversationFilter={conversationFilter}
+        setConversationFilter={setConversationFilter}
+        agent={agent}
+        updateAgentStatus={updateAgentStatus}
+        channelCounts={channelCounts}
+        filteredSessions={filteredSessions}
+        activeId={activeId}
+        setActiveId={setActiveId}
+        formatTime={formatTime}
+        sessionPreview={sessionPreview}
+        mainPanel={mainPanel}
+        showConversationPanels={false}
+      />
     </div>
   );
 }

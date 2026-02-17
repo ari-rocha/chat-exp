@@ -4,7 +4,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 export default function ContactsView({ contacts, newContact, setNewContact, createContact }) {
   return (
-    <div className="grid min-h-0 grid-cols-[340px_1fr] gap-4 bg-slate-50 p-4 max-[1000px]:grid-cols-[1fr]">
+    <div className="grid h-full min-h-0 grid-cols-[340px_1fr] gap-4 bg-slate-50 p-4 max-[1000px]:grid-cols-[1fr]">
       <aside className="rounded-xl border border-slate-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-slate-900">Create contact</h3>
         <p className="mb-3 text-xs text-slate-500">Contacts are scoped to the current tenant/workspace.</p>
@@ -30,9 +30,9 @@ export default function ContactsView({ contacts, newContact, setNewContact, crea
         </form>
       </aside>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4">
+      <section className="grid min-h-0 grid-rows-[auto_1fr] rounded-xl border border-slate-200 bg-white p-4">
         <h3 className="mb-3 text-sm font-semibold text-slate-900">Contacts ({contacts.length})</h3>
-        <ScrollArea className="h-[calc(100vh-170px)]">
+        <ScrollArea className="h-full">
           <div className="space-y-2 pr-2">
             {contacts.map((contact) => (
               <article key={contact.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">

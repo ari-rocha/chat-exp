@@ -41,13 +41,13 @@ export default function FlowsView({
 }) {
   return (
     <div className="grid min-h-0 grid-cols-[280px_1fr_320px] bg-slate-50 max-[1200px]:grid-cols-[1fr]">
-      <aside className="border-r border-slate-200 bg-white p-3 max-[1200px]:hidden">
+      <aside className="grid min-h-0 grid-rows-[auto_1fr] border-r border-slate-200 bg-white p-3 max-[1200px]:hidden">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-semibold">Flows</h3>
           <Button size="sm" onClick={createFlow}>New</Button>
         </div>
 
-        <ScrollArea className="h-[calc(100vh-120px)] pr-2">
+        <ScrollArea className="h-full pr-2">
           <div className="space-y-2">
             {flows.map((flow) => (
               <button

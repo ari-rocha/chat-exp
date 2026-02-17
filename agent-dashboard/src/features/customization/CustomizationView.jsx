@@ -4,7 +4,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 export default function CustomizationView({ tenantSettings, setTenantSettings, saveTenantSettings, tenants }) {
   return (
-    <div className="grid min-h-0 grid-cols-[1fr_320px] gap-4 bg-slate-50 p-4 max-[1080px]:grid-cols-[1fr]">
+    <div className="grid h-full min-h-0 grid-cols-[1fr_320px] gap-4 bg-slate-50 p-4 max-[1080px]:grid-cols-[1fr]">
       <section className="rounded-xl border border-slate-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-slate-900">Workspace customization</h3>
         <p className="mb-3 text-xs text-slate-500">Configure branding and widget behavior for this tenant.</p>
