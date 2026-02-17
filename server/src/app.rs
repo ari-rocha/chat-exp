@@ -2016,11 +2016,10 @@ fn resolve_interactive_next(
                 let edge = edges
                     .iter()
                     .find(|e| e.source_handle.as_deref() == Some(handle.as_str()));
-                if let Some(e) = edge {
-                    return Some(e.target.clone());
-                }
+                // If the matched button has no outgoing edge, stop the flow (don't fall through)
+                return edge.map(|e| e.target.clone());
             }
-            // Fallback: try any edge with matching condition text, then first edge
+            // No button matched the visitor text — fallback to first edge
             edges.first().map(|e| e.target.clone())
         }
         "select" => {
@@ -2044,10 +2043,10 @@ fn resolve_interactive_next(
                 let edge = edges
                     .iter()
                     .find(|e| e.source_handle.as_deref() == Some(handle.as_str()));
-                if let Some(e) = edge {
-                    return Some(e.target.clone());
-                }
+                // If the matched option has no outgoing edge, stop the flow (don't fall through)
+                return edge.map(|e| e.target.clone());
             }
+            // No option matched — fallback to first edge
             edges.first().map(|e| e.target.clone())
         }
         // quick_input, input_form, csat, close_conversation — just continue to the first outgoing edge
