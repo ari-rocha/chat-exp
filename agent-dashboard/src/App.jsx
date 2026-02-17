@@ -124,6 +124,7 @@ const FLOW_NODE_PRESETS = {
   csat: {
     label: "CSAT Rating",
     text: "How would you rate your experience?",
+    ratingType: "emoji",
     delayMs: 420,
   },
   tag: {

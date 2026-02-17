@@ -40,6 +40,7 @@ export default function App() {
   const [formInputs, setFormInputs] = useState({});
   const [quickInputs, setQuickInputs] = useState({});
   const [submittedWidgets, setSubmittedWidgets] = useState({});
+  const [csatHover, setCsatHover] = useState({});
 
   const wsRef = useRef(null);
   const reconnectTimerRef = useRef(null);
@@ -316,7 +317,8 @@ export default function App() {
         wType === "buttons" ||
         wType === "quick_input" ||
         wType === "input_form" ||
-        wType === "select"
+        wType === "select" ||
+        wType === "csat"
       ) {
         if (submittedWidgets[m.id]) return false;
         return Boolean(m.widget?.disableComposer);
@@ -810,6 +812,79 @@ export default function App() {
                                   </div>
                                 </article>
                               ))}
+                            </div>
+                          )}
+                        {m.sender === "agent" &&
+                          m.widget?.type === "csat" && (
+                            <div className="message-widget csat-widget">
+                              {submittedWidgets[m.id] ? (
+                                <div className="csat-submitted">
+                                  <span className="csat-submitted-label">
+                                    {m.widget?.ratingType === "stars"
+                                      ? "★".repeat(Number(submittedWidgets[m.id]) || 0) +
+                                        "☆".repeat(5 - (Number(submittedWidgets[m.id]) || 0))
+                                      : ["😡", "😟", "😐", "😊", "😍"][Number(submittedWidgets[m.id]) - 1] || "✓"}
+                                  </span>
+                                  <span className="csat-thanks">Thank you for your feedback!</span>
+                                </div>
+                              ) : m.widget?.ratingType === "stars" ? (
+                                <div className="csat-stars">
+                                  {[1, 2, 3, 4, 5].map((star) => (
+                                    <button
+                                      key={`${m.id}-star-${star}`}
+                                      type="button"
+                                      className={`csat-star ${
+                                        (csatHover[m.id] || 0) >= star ? "csat-star-active" : ""
+                                      }`}
+                                      onMouseEnter={() =>
+                                        setCsatHover((prev) => ({ ...prev, [m.id]: star }))
+                                      }
+                                      onMouseLeave={() =>
+                                        setCsatHover((prev) => ({ ...prev, [m.id]: 0 }))
+                                      }
+                                      onClick={() => {
+                                        markWidgetSubmitted(m.id, String(star));
+                                        fetch(
+                                          `${API_URL}/api/session/${sessionId}/csat`,
+                                          {
+                                            method: "POST",
+                                            headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({ score: star }),
+                                          },
+                                        ).catch(() => {});
+                                        sendSuggestion(String(star));
+                                      }}
+                                    >
+                                      ★
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="csat-emojis">
+                                  {["😡", "😟", "😐", "😊", "😍"].map((emoji, idx) => (
+                                    <button
+                                      key={`${m.id}-emoji-${idx}`}
+                                      type="button"
+                                      className="csat-emoji"
+                                      onClick={() => {
+                                        const score = idx + 1;
+                                        markWidgetSubmitted(m.id, String(score));
+                                        fetch(
+                                          `${API_URL}/api/session/${sessionId}/csat`,
+                                          {
+                                            method: "POST",
+                                            headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({ score }),
+                                          },
+                                        ).catch(() => {});
+                                        sendSuggestion(String(score));
+                                      }}
+                                    >
+                                      {emoji}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           )}
                       </div>

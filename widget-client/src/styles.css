@@ -553,6 +553,74 @@ body {
   gap: 8px;
 }
 
+/* ── CSAT Rating Widget ── */
+.csat-widget {
+  padding: 4px 0;
+}
+
+.csat-emojis,
+.csat-stars {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.csat-emoji {
+  font-size: 28px;
+  background: none;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  width: 44px;
+  height: 44px;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+  padding: 0;
+  line-height: 1;
+}
+
+.csat-emoji:hover {
+  transform: scale(1.25);
+  border-color: var(--gold);
+}
+
+.csat-star {
+  font-size: 30px;
+  background: none;
+  border: none;
+  color: #d1d5db;
+  cursor: pointer;
+  padding: 2px;
+  transition: color 0.12s ease, transform 0.12s ease;
+  line-height: 1;
+}
+
+.csat-star:hover,
+.csat-star-active {
+  color: #f59e0b;
+  transform: scale(1.15);
+}
+
+.csat-submitted {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+}
+
+.csat-submitted-label {
+  font-size: 26px;
+  letter-spacing: 2px;
+}
+
+.csat-thanks {
+  font-size: 12px;
+  color: #6b7280;
+  font-style: italic;
+}
+
 .carousel-widget {
   display: flex;
   gap: 10px;

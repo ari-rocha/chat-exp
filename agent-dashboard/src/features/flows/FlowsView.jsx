@@ -548,7 +548,10 @@ function DifyNode({ data, type, selected }) {
             <div className="space-y-1">
               {data?.text && <p className="text-slate-500 mb-1">{data.text}</p>}
               <div className="flex items-center gap-0.5">
-                {["😡", "😟", "😐", "😊", "😍"].map((e, i) => (
+                {(data?.ratingType === "stars"
+                  ? ["⭐", "⭐", "⭐", "⭐", "⭐"]
+                  : ["😡", "😟", "😐", "😊", "😍"]
+                ).map((e, i) => (
                   <span key={i} className="text-[14px]">
                     {e}
                   </span>
@@ -2594,6 +2597,21 @@ function SettingsPanel({
                     }}
                   />
                 </div>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Rating Type
+                </label>
+                <select
+                  value={data?.ratingType || "emoji"}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ ratingType: e.target.value })
+                  }
+                  className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] text-slate-700"
+                >
+                  <option value="emoji">😡 Emoji</option>
+                  <option value="stars">⭐ Stars</option>
+                </select>
               </div>
             </div>
           )}
