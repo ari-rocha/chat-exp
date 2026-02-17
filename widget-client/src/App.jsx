@@ -39,6 +39,7 @@ export default function App() {
   const [selectSelections, setSelectSelections] = useState({});
   const [formInputs, setFormInputs] = useState({});
   const [quickInputs, setQuickInputs] = useState({});
+  const [submittedWidgets, setSubmittedWidgets] = useState({});
 
   const wsRef = useRef(null);
   const reconnectTimerRef = useRef(null);
@@ -304,6 +305,26 @@ export default function App() {
     return false;
   }, [messages]);
 
+  const composerDisabled = useMemo(() => {
+    if (chatClosed) return false;
+    if (!Array.isArray(messages) || messages.length === 0) return false;
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const m = messages[i];
+      if (m?.sender !== "agent" || !m?.widget) continue;
+      const wType = m.widget?.type;
+      if (wType === "buttons" || wType === "quick_input" || wType === "input_form" || wType === "select") {
+        if (submittedWidgets[m.id]) return false;
+        return Boolean(m.widget?.disableComposer);
+      }
+      break;
+    }
+    return false;
+  }, [messages, submittedWidgets, chatClosed]);
+
+  const markWidgetSubmitted = (messageId, displayValue) => {
+    setSubmittedWidgets((prev) => ({ ...prev, [messageId]: displayValue || true }));
+  };
+
   const startNewChat = async () => {
     const res = await fetch(`${API_URL}/api/session`, {
       method: "POST",
@@ -423,22 +444,28 @@ export default function App() {
                           m.widget?.type === "buttons" &&
                           Array.isArray(m.widget?.buttons) && (
                             <div className="message-widget buttons-widget">
-                              {m.widget.buttons
-                                .slice(0, 6)
-                                .map((button, idx) => (
-                                  <button
-                                    key={`${m.id}-btn-${idx}`}
-                                    type="button"
-                                    className="suggestion-chip"
-                                    onClick={() =>
-                                      sendSuggestion(
-                                        button?.value || button?.label || "",
-                                      )
-                                    }
-                                  >
-                                    {button?.label || "Option"}
-                                  </button>
-                                ))}
+                              {submittedWidgets[m.id] ? (
+                                <span className="suggestion-chip submitted-chip">
+                                  {submittedWidgets[m.id]}
+                                </span>
+                              ) : (
+                                m.widget.buttons
+                                  .slice(0, 6)
+                                  .map((button, idx) => (
+                                    <button
+                                      key={`${m.id}-btn-${idx}`}
+                                      type="button"
+                                      className="suggestion-chip"
+                                      onClick={() => {
+                                        const val = button?.value || button?.label || "";
+                                        markWidgetSubmitted(m.id, button?.label || val);
+                                        sendSuggestion(val);
+                                      }}
+                                    >
+                                      {button?.label || "Option"}
+                                    </button>
+                                  ))
+                              )}
                             </div>
                           )}
                         {m.sender === "agent" &&
@@ -478,158 +505,172 @@ export default function App() {
                           m.widget?.type === "select" &&
                           Array.isArray(m.widget?.options) && (
                             <div className="message-widget inline-form-widget">
-                              <select
-                                className="carousel-select"
-                                value={selectSelections[m.id] || ""}
-                                onChange={(e) =>
-                                  setSelectSelections((prev) => ({
-                                    ...prev,
-                                    [m.id]: e.target.value,
-                                  }))
-                                }
-                              >
-                                <option value="">
-                                  {m.widget?.placeholder || "Select one"}
-                                </option>
-                                {m.widget.options.map((opt, optIdx) => {
-                                  const label =
-                                    typeof opt === "string"
-                                      ? opt
-                                      : opt?.label || opt?.value || "Option";
-                                  const value =
-                                    typeof opt === "string"
-                                      ? opt
-                                      : opt?.value || label;
-                                  return (
-                                    <option
-                                      key={`${m.id}-select-${optIdx}`}
-                                      value={value}
-                                    >
-                                      {label}
+                              {submittedWidgets[m.id] ? (
+                                <span className="inline-submitted-value">{submittedWidgets[m.id]}</span>
+                              ) : (
+                                <>
+                                  <select
+                                    className="carousel-select"
+                                    value={selectSelections[m.id] || ""}
+                                    onChange={(e) =>
+                                      setSelectSelections((prev) => ({
+                                        ...prev,
+                                        [m.id]: e.target.value,
+                                      }))
+                                    }
+                                  >
+                                    <option value="">
+                                      {m.widget?.placeholder || "Select one"}
                                     </option>
-                                  );
-                                })}
-                              </select>
-                              <button
-                                type="button"
-                                className="inline-submit"
-                                disabled={!selectSelections[m.id]}
-                                onClick={() => {
-                                  const value = selectSelections[m.id];
-                                  if (!value) return;
-                                  sendSuggestion(value);
-                                  setSelectSelections((prev) => ({
-                                    ...prev,
-                                    [m.id]: "",
-                                  }));
-                                }}
-                              >
-                                {m.widget?.buttonLabel || "Send"}
-                              </button>
+                                    {m.widget.options.map((opt, optIdx) => {
+                                      const label =
+                                        typeof opt === "string"
+                                          ? opt
+                                          : opt?.label || opt?.value || "Option";
+                                      const value =
+                                        typeof opt === "string"
+                                          ? opt
+                                          : opt?.value || label;
+                                      return (
+                                        <option
+                                          key={`${m.id}-select-${optIdx}`}
+                                          value={value}
+                                        >
+                                          {label}
+                                        </option>
+                                      );
+                                    })}
+                                  </select>
+                                  <button
+                                    type="button"
+                                    className="inline-submit"
+                                    disabled={!selectSelections[m.id]}
+                                    onClick={() => {
+                                      const value = selectSelections[m.id];
+                                      if (!value) return;
+                                      markWidgetSubmitted(m.id, value);
+                                      sendSuggestion(value);
+                                    }}
+                                  >
+                                    {m.widget?.buttonLabel || "Send"}
+                                  </button>
+                                </>
+                              )}
                             </div>
                           )}
                         {m.sender === "agent" &&
                           m.widget?.type === "input_form" &&
                           Array.isArray(m.widget?.fields) && (
                             <div className="message-widget inline-form-widget">
-                              {m.widget.fields.map((field, fIdx) => (
-                                <input
-                                  key={`${m.id}-field-${fIdx}`}
-                                  className="inline-input"
-                                  type={field?.type || "text"}
-                                  placeholder={
-                                    field?.placeholder ||
-                                    field?.label ||
-                                    field?.name ||
-                                    "Field"
-                                  }
-                                  value={
-                                    formInputs[formKey(m.id)]?.[
-                                      field?.name || `f${fIdx}`
-                                    ] || ""
-                                  }
-                                  onChange={(e) =>
-                                    setFormInputs((prev) => ({
-                                      ...prev,
-                                      [formKey(m.id)]: {
-                                        ...(prev[formKey(m.id)] || {}),
-                                        [field?.name || `f${fIdx}`]:
-                                          e.target.value,
-                                      },
-                                    }))
-                                  }
-                                />
-                              ))}
-                              <button
-                                type="button"
-                                className="inline-submit"
-                                onClick={() => {
-                                  const values =
-                                    formInputs[formKey(m.id)] || {};
-                                  const missing = m.widget.fields.some(
-                                    (field, fIdx) => {
-                                      if (field?.required === false)
-                                        return false;
-                                      const key = field?.name || `f${fIdx}`;
-                                      return !String(values[key] || "").trim();
-                                    },
-                                  );
-                                  if (missing) return;
-                                  const payload = m.widget.fields
-                                    .map((field, fIdx) => {
-                                      const key = field?.name || `f${fIdx}`;
-                                      const label = field?.label || key;
-                                      return `${label}: ${values[key] || ""}`;
-                                    })
-                                    .join(", ");
-                                  sendSuggestion(payload);
-                                  setFormInputs((prev) => ({
-                                    ...prev,
-                                    [formKey(m.id)]: {},
-                                  }));
-                                }}
-                              >
-                                {m.widget?.submitLabel || "Submit"}
-                              </button>
+                              {submittedWidgets[m.id] ? (
+                                <span className="inline-submitted-value">{submittedWidgets[m.id]}</span>
+                              ) : (
+                                <>
+                                  {m.widget.fields.map((field, fIdx) => (
+                                    <input
+                                      key={`${m.id}-field-${fIdx}`}
+                                      className="inline-input"
+                                      type={field?.type || "text"}
+                                      placeholder={
+                                        field?.placeholder ||
+                                        field?.label ||
+                                        field?.name ||
+                                        "Field"
+                                      }
+                                      value={
+                                        formInputs[formKey(m.id)]?.[
+                                          field?.name || `f${fIdx}`
+                                        ] || ""
+                                      }
+                                      onChange={(e) =>
+                                        setFormInputs((prev) => ({
+                                          ...prev,
+                                          [formKey(m.id)]: {
+                                            ...(prev[formKey(m.id)] || {}),
+                                            [field?.name || `f${fIdx}`]:
+                                              e.target.value,
+                                          },
+                                        }))
+                                      }
+                                    />
+                                  ))}
+                                  <button
+                                    type="button"
+                                    className="inline-submit"
+                                    onClick={() => {
+                                      const values =
+                                        formInputs[formKey(m.id)] || {};
+                                      const missing = m.widget.fields.some(
+                                        (field, fIdx) => {
+                                          if (field?.required === false)
+                                            return false;
+                                          const key = field?.name || `f${fIdx}`;
+                                          return !String(values[key] || "").trim();
+                                        },
+                                      );
+                                      if (missing) return;
+                                      const payload = m.widget.fields
+                                        .map((field, fIdx) => {
+                                          const key = field?.name || `f${fIdx}`;
+                                          const label = field?.label || key;
+                                          return `${label}: ${values[key] || ""}`;
+                                        })
+                                        .join(", ");
+                                      markWidgetSubmitted(m.id, payload);
+                                      sendSuggestion(payload);
+                                    }}
+                                  >
+                                    {m.widget?.submitLabel || "Submit"}
+                                  </button>
+                                </>
+                              )}
                             </div>
                           )}
                         {m.sender === "agent" &&
                           m.widget?.type === "quick_input" && (
                             <div className="message-widget crisp-input-widget">
-                              <input
-                                className="crisp-input"
-                                type={m.widget?.inputType || "text"}
-                                placeholder={
-                                  m.widget?.placeholder || "Type here..."
-                                }
-                                value={quickInputs[m.id] || ""}
-                                onChange={(e) =>
-                                  setQuickInputs((prev) => ({
-                                    ...prev,
-                                    [m.id]: e.target.value,
-                                  }))
-                                }
-                              />
-                              <button
-                                type="button"
-                                className="crisp-send"
-                                disabled={
-                                  !String(quickInputs[m.id] || "").trim()
-                                }
-                                onClick={() => {
-                                  const value = String(
-                                    quickInputs[m.id] || "",
-                                  ).trim();
-                                  if (!value) return;
-                                  sendSuggestion(value);
-                                  setQuickInputs((prev) => ({
-                                    ...prev,
-                                    [m.id]: "",
-                                  }));
-                                }}
-                              >
-                                {m.widget?.buttonLabel || "Send"}
-                              </button>
+                              {submittedWidgets[m.id] ? (
+                                <input
+                                  className="crisp-input"
+                                  type={m.widget?.inputType || "text"}
+                                  value={submittedWidgets[m.id]}
+                                  disabled
+                                />
+                              ) : (
+                                <>
+                                  <input
+                                    className="crisp-input"
+                                    type={m.widget?.inputType || "text"}
+                                    placeholder={
+                                      m.widget?.placeholder || "Type here..."
+                                    }
+                                    value={quickInputs[m.id] || ""}
+                                    onChange={(e) =>
+                                      setQuickInputs((prev) => ({
+                                        ...prev,
+                                        [m.id]: e.target.value,
+                                      }))
+                                    }
+                                  />
+                                  <button
+                                    type="button"
+                                    className="crisp-send"
+                                    disabled={
+                                      !String(quickInputs[m.id] || "").trim()
+                                    }
+                                    onClick={() => {
+                                      const value = String(
+                                        quickInputs[m.id] || "",
+                                      ).trim();
+                                      if (!value) return;
+                                      markWidgetSubmitted(m.id, value);
+                                      sendSuggestion(value);
+                                    }}
+                                  >
+                                    {m.widget?.buttonLabel || "Send"}
+                                  </button>
+                                </>
+                              )}
                             </div>
                           )}
                         {m.sender === "agent" &&
@@ -805,6 +846,10 @@ export default function App() {
             >
               Start new chat
             </button>
+          </div>
+        ) : composerDisabled ? (
+          <div className="composer composer-disabled">
+            <span className="composer-disabled-hint">Use the input above to respond</span>
           </div>
         ) : (
           <form className="composer" onSubmit={send}>

@@ -1202,6 +1202,18 @@ function SettingsPanel({
                         <Plus size={12} /> Add Button
                       </button>
                     </div>
+                    <div className="mt-3 flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                      <div>
+                        <p className="text-[11px] font-medium text-slate-700">Disable text composer</p>
+                        <p className="text-[10px] text-slate-400">Force user to use buttons only</p>
+                      </div>
+                      <button
+                        onClick={() => updateSelectedNodeData({ disableComposer: !data?.disableComposer })}
+                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${data?.disableComposer ? "bg-blue-500" : "bg-slate-300"}`}
+                      >
+                        <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${data?.disableComposer ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
+                      </button>
+                    </div>
                   </div>
                 )}
                 {type === "select" && (
@@ -1655,19 +1667,33 @@ function SettingsPanel({
                   </div>
                 )}
                 {type === "input_form" && (
-                  <div>
-                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                      Submit Button Label
-                    </label>
-                    <Input
-                      value={data?.submitLabel || "Submit"}
-                      onChange={(e) =>
-                        updateSelectedNodeData({ submitLabel: e.target.value })
-                      }
-                      placeholder="Submit"
-                      className="text-[12px]"
-                    />
-                  </div>
+                  <>
+                    <div>
+                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        Submit Button Label
+                      </label>
+                      <Input
+                        value={data?.submitLabel || "Submit"}
+                        onChange={(e) =>
+                          updateSelectedNodeData({ submitLabel: e.target.value })
+                        }
+                        placeholder="Submit"
+                        className="text-[12px]"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                      <div>
+                        <p className="text-[11px] font-medium text-slate-700">Disable text composer</p>
+                        <p className="text-[10px] text-slate-400">Force user to use this form only</p>
+                      </div>
+                      <button
+                        onClick={() => updateSelectedNodeData({ disableComposer: !data?.disableComposer })}
+                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${data?.disableComposer ? "bg-blue-500" : "bg-slate-300"}`}
+                      >
+                        <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${data?.disableComposer ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
+                      </button>
+                    </div>
+                  </>
                 )}
                 {type === "quick_input" && (
                   <>
@@ -1785,6 +1811,18 @@ function SettingsPanel({
                         placeholder="Send"
                         className="text-[12px]"
                       />
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                      <div>
+                        <p className="text-[11px] font-medium text-slate-700">Disable text composer</p>
+                        <p className="text-[10px] text-slate-400">Force user to use this input only</p>
+                      </div>
+                      <button
+                        onClick={() => updateSelectedNodeData({ disableComposer: !data?.disableComposer })}
+                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${data?.disableComposer ? "bg-blue-500" : "bg-slate-300"}`}
+                      >
+                        <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${data?.disableComposer ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
+                      </button>
                     </div>
                   </>
                 )}
@@ -2888,7 +2926,19 @@ function SettingsPanel({
 
 /* ─── Top Toolbar ─────────────────────────────────────────── */
 
-function FlowTopBar({ flowSaveStatus, saveFlow, activeFlowId }) {
+function FlowTopBar({
+  flowSaveStatus,
+  saveFlow,
+  activeFlowId,
+  flowName,
+  setFlowName,
+  flowDescription,
+  setFlowDescription,
+  flowEnabled,
+  setFlowEnabled,
+  deleteCurrentFlow,
+}) {
+  const [showMeta, setShowMeta] = useState(false);
   const timeStr = new Date().toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
@@ -2896,25 +2946,66 @@ function FlowTopBar({ flowSaveStatus, saveFlow, activeFlowId }) {
 
   return (
     <div className="flex h-12 items-center justify-between border-b border-slate-200 bg-white px-4">
-      <span className="text-[11px] text-slate-400">
-        Auto-Saved {timeStr} · {flowSaveStatus || "Unpublished"}
-      </span>
-      <div className="flex items-center gap-2">
-        <div className="flex items-center gap-0.5 rounded-lg border border-slate-200 bg-white px-0.5 py-0.5">
-          <button className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
-            <Pencil size={14} />
-          </button>
-          <button className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
-            <Eye size={14} />
-          </button>
-        </div>
-        <Button
-          size="sm"
-          variant="outline"
-          className="gap-1.5 rounded-lg text-[12px]"
+      <div className="flex items-center gap-2 min-w-0 flex-1">
+        <button
+          onClick={() => setShowMeta(!showMeta)}
+          className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-left hover:bg-slate-50 transition-colors min-w-0"
         >
-          <Play size={12} /> Preview
-        </Button>
+          <span className="truncate text-[13px] font-semibold text-slate-800 max-w-[180px]">
+            {flowName || "Untitled flow"}
+          </span>
+          <ChevronDown size={12} className="shrink-0 text-slate-400" />
+        </button>
+        <span className="text-[10px] text-slate-400 shrink-0">
+          {flowSaveStatus || "Unpublished"}
+        </span>
+        {showMeta && (
+          <div className="absolute left-4 top-12 z-50 w-72 rounded-xl border border-slate-200 bg-white p-3 shadow-lg space-y-2.5">
+            <div>
+              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Name</label>
+              <Input
+                value={flowName}
+                onChange={(e) => setFlowName(e.target.value)}
+                placeholder="Flow name"
+                className="text-[12px]"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Description</label>
+              <Input
+                value={flowDescription}
+                onChange={(e) => setFlowDescription(e.target.value)}
+                placeholder="Optional description"
+                className="text-[12px]"
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-slate-600">Enabled</span>
+              <button
+                onClick={() => setFlowEnabled(!flowEnabled)}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${flowEnabled ? "bg-emerald-500" : "bg-slate-300"}`}
+              >
+                <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${flowEnabled ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
+              </button>
+            </div>
+            <div className="flex items-center justify-between border-t border-slate-100 pt-2">
+              <button
+                onClick={() => { deleteCurrentFlow(); setShowMeta(false); }}
+                className="text-[11px] font-medium text-red-500 hover:text-red-600"
+              >
+                Delete flow
+              </button>
+              <button
+                onClick={() => setShowMeta(false)}
+                className="text-[11px] font-medium text-slate-500 hover:text-slate-700"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
         <Button
           size="sm"
           onClick={saveFlow}
@@ -3116,6 +3207,13 @@ export default function FlowsView({
           flowSaveStatus={flowSaveStatus}
           saveFlow={saveFlow}
           activeFlowId={activeFlowId}
+          flowName={flowName}
+          setFlowName={setFlowName}
+          flowDescription={flowDescription}
+          setFlowDescription={setFlowDescription}
+          flowEnabled={flowEnabled}
+          setFlowEnabled={setFlowEnabled}
+          deleteCurrentFlow={deleteCurrentFlow}
         />
         <div
           className="relative min-h-0"

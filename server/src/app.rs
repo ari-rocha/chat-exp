@@ -1855,9 +1855,11 @@ async fn execute_flow_from(
                 let widget = if buttons.is_empty() {
                     None
                 } else {
+                    let disable_composer = node.data.get("disableComposer").and_then(Value::as_bool).unwrap_or(false);
                     Some(json!({
                         "type": "buttons",
-                        "buttons": buttons
+                        "buttons": buttons,
+                        "disableComposer": disable_composer
                     }))
                 };
                 send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget)
@@ -1924,10 +1926,12 @@ async fn execute_flow_from(
                 let widget = if fields.is_empty() {
                     None
                 } else {
+                    let disable_composer = node.data.get("disableComposer").and_then(Value::as_bool).unwrap_or(false);
                     Some(json!({
                         "type": "input_form",
                         "submitLabel": node.data.get("submitLabel").and_then(Value::as_str).unwrap_or("Submit"),
-                        "fields": fields
+                        "fields": fields,
+                        "disableComposer": disable_composer
                     }))
                 };
                 send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget)
@@ -1972,7 +1976,8 @@ async fn execute_flow_from(
                     "type": "quick_input",
                     "placeholder": placeholder,
                     "buttonLabel": button_label,
-                    "inputType": input_type
+                    "inputType": input_type,
+                    "disableComposer": node.data.get("disableComposer").and_then(Value::as_bool).unwrap_or(false)
                 }));
                 send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget)
                     .await;

@@ -712,6 +712,47 @@ body {
   margin: 0 10px;
 }
 
+.composer.composer-disabled {
+  border: 0;
+  background: #f5f5f5;
+  padding: 0;
+  justify-content: center;
+  min-height: 40px;
+}
+
+.composer-disabled-hint {
+  font-size: 13px;
+  color: #999;
+  text-align: center;
+  width: 100%;
+  padding: 8px 12px;
+}
+
+.submitted-chip {
+  opacity: 0.65;
+  cursor: default !important;
+  pointer-events: none;
+  background: #e8e8e8 !important;
+  border-color: #d0d0d0 !important;
+}
+
+.inline-submitted-value {
+  font-size: 13px;
+  color: #666;
+  padding: 6px 10px;
+  background: #f3f3f3;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+  width: 100%;
+  text-align: left;
+}
+
+.crisp-input:disabled {
+  opacity: 0.65;
+  cursor: default;
+  background: #f3f3f3;
+}
+
 .new-chat-btn {
   width: 100%;
   border: 0;
