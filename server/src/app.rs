@@ -597,28 +597,6 @@ async fn set_agent_human_typing(
     }
 }
 
-/// Extract email and phone from freeform text (visitor messages, form submissions).
-fn extract_identity_from_text(text: &str) -> (Option<String>, Option<String>, Option<String>) {
-    let email_re = Regex::new(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}").unwrap();
-    let phone_re = Regex::new(r"\+?[\d\s\-().]{7,15}").unwrap();
-
-    let email = email_re.find(text).map(|m| m.as_str().to_lowercase());
-    let phone = phone_re.find(text).map(|m| m.as_str().trim().to_string());
-
-    // Try to extract a name from "Name: value" or "First name: value" patterns
-    let mut name: Option<String> = None;
-    let name_re =
-        Regex::new(r"(?i)(?:name|first[\s_]?name|full[\s_]?name)\s*:\s*([^,\n]+)").unwrap();
-    if let Some(cap) = name_re.captures(text) {
-        let n = cap[1].trim().to_string();
-        if !n.is_empty() {
-            name = Some(n);
-        }
-    }
-
-    (email, phone, name)
-}
-
 /// Given a visitor_id, look up any previous session that already has a contact_id.
 /// If found, link that contact to the given session_id and store the visitor_id.
 /// This enables persistent identity across multiple conversations.
@@ -683,115 +661,6 @@ async fn resolve_contact_from_visitor_id(
             emit_session_update(state, summary).await;
         }
     }
-}
-
-/// Try to find or create a contact from visitor-supplied data, then link to session.
-/// Returns true if a contact was linked.
-async fn auto_resolve_contact(state: &Arc<AppState>, session_id: &str, visitor_text: &str) -> bool {
-    // Skip if session already has a contact
-    let existing_contact: Option<Option<String>> =
-        sqlx::query_scalar("SELECT contact_id FROM sessions WHERE id = $1")
-            .bind(session_id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
-    if let Some(Some(ref cid)) = existing_contact {
-        if !cid.is_empty() {
-            return false;
-        }
-    }
-
-    let (email, phone, name) = extract_identity_from_text(visitor_text);
-
-    // Need at least an email or phone to resolve
-    if email.is_none() && phone.is_none() {
-        return false;
-    }
-
-    let tenant_id = sqlx::query_scalar::<_, String>("SELECT tenant_id FROM sessions WHERE id = $1")
-        .bind(session_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| state.default_tenant_id.clone());
-
-    // Try to find existing contact by email first, then phone
-    let mut contact_id: Option<String> = None;
-    if let Some(ref em) = email {
-        contact_id = sqlx::query_scalar::<_, String>(
-            "SELECT id FROM contacts WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) LIMIT 1",
-        )
-        .bind(&tenant_id)
-        .bind(em)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten();
-    }
-    if contact_id.is_none() {
-        if let Some(ref ph) = phone {
-            contact_id = sqlx::query_scalar::<_, String>(
-                "SELECT id FROM contacts WHERE tenant_id = $1 AND phone = $2 LIMIT 1",
-            )
-            .bind(&tenant_id)
-            .bind(ph)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
-        }
-    }
-
-    // If no existing contact found, create one
-    let cid = if let Some(cid) = contact_id {
-        // Update name if we discovered one and the contact doesn't have one
-        if let Some(ref n) = name {
-            let _ = sqlx::query(
-                "UPDATE contacts SET display_name = $1 WHERE id = $2 AND (display_name = '' OR display_name IS NULL)",
-            )
-            .bind(n)
-            .bind(&cid)
-            .execute(&state.db)
-            .await;
-        }
-        cid
-    } else {
-        let new_id = Uuid::new_v4().to_string();
-        let now = now_iso();
-        let display = name.clone().unwrap_or_default();
-        let em = email.clone().unwrap_or_default();
-        let ph = phone.clone().unwrap_or_default();
-        let _ = sqlx::query(
-            "INSERT INTO contacts (id, tenant_id, display_name, email, phone, external_id, metadata, created_at, updated_at, company, location, avatar_url, last_seen_at, browser, os) \
-             VALUES ($1,$2,$3,$4,$5,'','{}', $6,$7,'','','','','','')",
-        )
-        .bind(&new_id)
-        .bind(&tenant_id)
-        .bind(&display)
-        .bind(&em)
-        .bind(&ph)
-        .bind(&now)
-        .bind(&now)
-        .execute(&state.db)
-        .await;
-        new_id
-    };
-
-    // Link to session
-    let _ = sqlx::query("UPDATE sessions SET contact_id = $1 WHERE id = $2")
-        .bind(&cid)
-        .bind(session_id)
-        .execute(&state.db)
-        .await;
-
-    // Emit session update so agent dashboard sees the linked contact
-    if let Some(summary) = get_session_summary_db(&state.db, session_id).await {
-        emit_session_update(state, summary).await;
-    }
-
-    true
 }
 
 async fn ensure_session(state: Arc<AppState>, session_id: &str) -> Session {
@@ -1608,7 +1477,7 @@ async fn execute_flow(
     flow: ChatFlow,
     visitor_text: String,
 ) {
-    execute_flow_from(state, session_id, flow, visitor_text, None).await;
+    execute_flow_from(state, session_id, flow, visitor_text, None, HashMap::new()).await;
 }
 
 /// Save a flow cursor so the next visitor message resumes from this node.
@@ -1618,17 +1487,20 @@ async fn save_flow_cursor(
     flow_id: &str,
     node_id: &str,
     node_type: &str,
+    variables: &HashMap<String, String>,
 ) {
+    let vars_json = serde_json::to_string(variables).unwrap_or_else(|_| "{}".to_string());
     let _ = sqlx::query(
-        "INSERT INTO flow_cursors (tenant_id, session_id, flow_id, node_id, node_type, created_at) \
-         VALUES ($1, $2, $3, $4, $5, $6) \
-         ON CONFLICT (tenant_id, session_id) DO UPDATE SET flow_id = $3, node_id = $4, node_type = $5, created_at = $6",
+        "INSERT INTO flow_cursors (tenant_id, session_id, flow_id, node_id, node_type, variables, created_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7) \
+         ON CONFLICT (tenant_id, session_id) DO UPDATE SET flow_id = $3, node_id = $4, node_type = $5, variables = $6, created_at = $7",
     )
     .bind(&state.default_tenant_id)
     .bind(session_id)
     .bind(flow_id)
     .bind(node_id)
     .bind(node_type)
+    .bind(&vars_json)
     .bind(now_iso())
     .execute(&state.db)
     .await;
@@ -1643,13 +1515,13 @@ async fn clear_flow_cursor(state: &Arc<AppState>, session_id: &str) {
         .await;
 }
 
-/// Check if a cursor exists. Returns (flow_id, node_id, node_type).
+/// Check if a cursor exists. Returns (flow_id, node_id, node_type, variables).
 async fn get_flow_cursor(
     state: &Arc<AppState>,
     session_id: &str,
-) -> Option<(String, String, String)> {
+) -> Option<(String, String, String, HashMap<String, String>)> {
     let row = sqlx::query(
-        "SELECT flow_id, node_id, node_type FROM flow_cursors WHERE tenant_id = $1 AND session_id = $2",
+        "SELECT flow_id, node_id, node_type, variables FROM flow_cursors WHERE tenant_id = $1 AND session_id = $2",
     )
     .bind(&state.default_tenant_id)
     .bind(session_id)
@@ -1657,7 +1529,92 @@ async fn get_flow_cursor(
     .await
     .ok()
     .flatten()?;
-    Some((row.get("flow_id"), row.get("node_id"), row.get("node_type")))
+    let vars_json: String = row.get("variables");
+    let variables: HashMap<String, String> = serde_json::from_str(&vars_json).unwrap_or_default();
+    Some((
+        row.get("flow_id"),
+        row.get("node_id"),
+        row.get("node_type"),
+        variables,
+    ))
+}
+
+/// Replace {{varName}} placeholders in a string with flow variable values.
+fn interpolate_flow_vars(text: &str, vars: &HashMap<String, String>) -> String {
+    let re = Regex::new(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}").unwrap();
+    re.replace_all(text, |caps: &regex::Captures| {
+        let key = &caps[1];
+        vars.get(key).cloned().unwrap_or_default()
+    })
+    .to_string()
+}
+
+/// Find or create a contact by email, link to the session.
+async fn resolve_contact_by_email(state: &Arc<AppState>, session_id: &str, email: &str) {
+    if email.is_empty() {
+        return;
+    }
+    let tenant_id = sqlx::query_scalar::<_, String>("SELECT tenant_id FROM sessions WHERE id = $1")
+        .bind(session_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if tenant_id.is_empty() {
+        return;
+    }
+
+    // Try to find existing contact by email
+    let existing = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM contacts WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) LIMIT 1",
+    )
+    .bind(&tenant_id)
+    .bind(email)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    let contact_id = if let Some(cid) = existing {
+        cid
+    } else {
+        // Create new contact
+        let new_id = Uuid::new_v4().to_string();
+        let now = now_iso();
+        let _ = sqlx::query(
+            "INSERT INTO contacts (id, tenant_id, display_name, email, phone, external_id, metadata, created_at, updated_at, company, location, avatar_url, last_seen_at, browser, os) \
+             VALUES ($1,$2,'',$3,'','','{}', $4,$5,'','','','','','')",
+        )
+        .bind(&new_id)
+        .bind(&tenant_id)
+        .bind(email)
+        .bind(&now)
+        .bind(&now)
+        .execute(&state.db)
+        .await;
+        new_id
+    };
+
+    // Link to session
+    let _ = sqlx::query("UPDATE sessions SET contact_id = $1 WHERE id = $2")
+        .bind(&contact_id)
+        .bind(session_id)
+        .execute(&state.db)
+        .await;
+
+    // Also link all other sessions with the same visitor_id
+    let _ = sqlx::query(
+        "UPDATE sessions SET contact_id = $1 WHERE visitor_id = (SELECT visitor_id FROM sessions WHERE id = $2) AND visitor_id != '' AND contact_id IS NULL",
+    )
+    .bind(&contact_id)
+    .bind(session_id)
+    .execute(&state.db)
+    .await;
+
+    if let Some(summary) = get_session_summary_db(&state.db, session_id).await {
+        emit_session_update(state, summary).await;
+    }
 }
 
 /// Given a paused interactive node and the visitor's reply text, find the
@@ -1737,6 +1694,7 @@ async fn execute_flow_from(
     flow: ChatFlow,
     visitor_text: String,
     resume_from_node: Option<String>,
+    mut flow_vars: HashMap<String, String>,
 ) {
     if !flow.enabled {
         return;
@@ -1760,6 +1718,39 @@ async fn execute_flow_from(
         let paused_node = node_by_id.get(resume_id);
         let edges_from_paused = outgoing.get(resume_id).cloned().unwrap_or_default();
         if let Some(node) = paused_node {
+            // Capture submitted values into flow variables
+            match node.node_type.as_str() {
+                "input_form" => {
+                    // Parse "Label: value, Label2: value2" into flow vars by field name
+                    let fields = flow_node_data_fields(node, "fields");
+                    for field in &fields {
+                        let label = field.get("label").and_then(Value::as_str).unwrap_or("");
+                        let name = field.get("name").and_then(Value::as_str).unwrap_or("");
+                        if !name.is_empty() && !label.is_empty() {
+                            let prefix = format!("{}:", label);
+                            for part in visitor_text.split(',') {
+                                let part = part.trim();
+                                if let Some(val) = part.strip_prefix(&prefix) {
+                                    flow_vars.insert(name.to_string(), val.trim().to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                "quick_input" => {
+                    let var_name = node
+                        .data
+                        .get("variableName")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    if !var_name.is_empty() {
+                        flow_vars.insert(var_name, visitor_text.clone());
+                    }
+                }
+                _ => {}
+            }
             // If resuming from close_conversation (CSAT was collected), close session now
             if node.node_type == "close_conversation" {
                 let msg = node
@@ -1816,7 +1807,8 @@ async fn execute_flow_from(
         match node.node_type.as_str() {
             "trigger" | "start" => {}
             "message" => {
-                let text = flow_node_data_text(&node, "text").unwrap_or_default();
+                let raw_text = flow_node_data_text(&node, "text").unwrap_or_default();
+                let text = interpolate_flow_vars(&raw_text, &flow_vars);
                 let delay_ms = flow_node_data_u64(&node, "delayMs").unwrap_or(420);
                 let suggestions = flow_node_data_suggestions(&node, "suggestions");
                 let suggestions_opt = if suggestions.is_empty() {
@@ -1849,7 +1841,15 @@ async fn execute_flow_from(
                 send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget)
                     .await;
                 // Pause: save cursor and wait for visitor reply
-                save_flow_cursor(&state, &session_id, &flow.id, &node.id, "buttons").await;
+                save_flow_cursor(
+                    &state,
+                    &session_id,
+                    &flow.id,
+                    &node.id,
+                    "buttons",
+                    &flow_vars,
+                )
+                .await;
                 return;
             }
             "carousel" => {
@@ -1884,7 +1884,15 @@ async fn execute_flow_from(
                 send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget)
                     .await;
                 // Pause: save cursor and wait for visitor reply
-                save_flow_cursor(&state, &session_id, &flow.id, &node.id, "select").await;
+                save_flow_cursor(
+                    &state,
+                    &session_id,
+                    &flow.id,
+                    &node.id,
+                    "select",
+                    &flow_vars,
+                )
+                .await;
                 return;
             }
             "input_form" => {
@@ -1903,7 +1911,15 @@ async fn execute_flow_from(
                 send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget)
                     .await;
                 // Pause: save cursor and wait for visitor reply
-                save_flow_cursor(&state, &session_id, &flow.id, &node.id, "input_form").await;
+                save_flow_cursor(
+                    &state,
+                    &session_id,
+                    &flow.id,
+                    &node.id,
+                    "input_form",
+                    &flow_vars,
+                )
+                .await;
                 return;
             }
             "quick_input" => {
@@ -1939,7 +1955,15 @@ async fn execute_flow_from(
                 send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget)
                     .await;
                 // Pause: save cursor and wait for visitor reply
-                save_flow_cursor(&state, &session_id, &flow.id, &node.id, "quick_input").await;
+                save_flow_cursor(
+                    &state,
+                    &session_id,
+                    &flow.id,
+                    &node.id,
+                    "quick_input",
+                    &flow_vars,
+                )
+                .await;
                 return;
             }
             "ai" => {
@@ -2433,6 +2457,7 @@ async fn execute_flow_from(
                         &flow.id,
                         &node.id,
                         "close_conversation",
+                        &flow_vars,
                     )
                     .await;
                     return;
@@ -2470,7 +2495,7 @@ async fn execute_flow_from(
                 send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget)
                     .await;
                 // Pause for rating response
-                save_flow_cursor(&state, &session_id, &flow.id, &node.id, "csat").await;
+                save_flow_cursor(&state, &session_id, &flow.id, &node.id, "csat", &flow_vars).await;
                 return;
             }
             "tag" => {
@@ -2571,15 +2596,16 @@ async fn execute_flow_from(
                     .get("attributeName")
                     .and_then(Value::as_str)
                     .unwrap_or("");
-                let attr_value = node
+                let attr_value_raw = node
                     .data
                     .get("attributeValue")
                     .and_then(Value::as_str)
                     .unwrap_or("");
+                // Interpolate flow variables in the value
+                let attr_value = interpolate_flow_vars(attr_value_raw, &flow_vars);
                 if !attr_name.is_empty() {
                     let now = now_iso();
                     if target == "conversation" {
-                        // Set attribute on the conversation (session)
                         let attr_id = Uuid::new_v4().to_string();
                         let _ = sqlx::query(
                             r#"INSERT INTO conversation_custom_attributes (id, session_id, attribute_key, attribute_value, created_at, updated_at)
@@ -2589,37 +2615,79 @@ async fn execute_flow_from(
                         .bind(&attr_id)
                         .bind(&session_id)
                         .bind(attr_name)
-                        .bind(attr_value)
+                        .bind(&attr_value)
                         .bind(&now)
                         .bind(&now)
                         .execute(&state.db)
                         .await;
                     } else {
-                        // Set attribute on the linked contact (if any)
-                        let contact_id = sqlx::query_scalar::<_, Option<String>>(
-                            "SELECT contact_id FROM sessions WHERE id = $1",
-                        )
-                        .bind(&session_id)
-                        .fetch_optional(&state.db)
-                        .await
-                        .ok()
-                        .flatten()
-                        .flatten();
-                        if let Some(cid) = contact_id {
-                            let attr_id = Uuid::new_v4().to_string();
-                            let _ = sqlx::query(
-                                r#"INSERT INTO contact_custom_attributes (id, contact_id, attribute_key, attribute_value, created_at, updated_at)
-                                   VALUES ($1,$2,$3,$4,$5,$6)
-                                   ON CONFLICT (contact_id, attribute_key) DO UPDATE SET attribute_value = EXCLUDED.attribute_value, updated_at = EXCLUDED.updated_at"#,
+                        // ── Contact target ──
+                        // If setting email, find-or-create contact and link to session
+                        if attr_name == "email" && !attr_value.is_empty() {
+                            resolve_contact_by_email(&state, &session_id, &attr_value).await;
+                        }
+
+                        // For core contact fields (name, phone), update directly
+                        let is_core_field = matches!(
+                            attr_name,
+                            "name" | "email" | "phone" | "company" | "location"
+                        );
+                        if is_core_field {
+                            let col = match attr_name {
+                                "name" => "display_name",
+                                "email" => "email",
+                                "phone" => "phone",
+                                "company" => "company",
+                                "location" => "location",
+                                _ => "",
+                            };
+                            if !col.is_empty() {
+                                let contact_id = sqlx::query_scalar::<_, Option<String>>(
+                                    "SELECT contact_id FROM sessions WHERE id = $1",
+                                )
+                                .bind(&session_id)
+                                .fetch_optional(&state.db)
+                                .await
+                                .ok()
+                                .flatten()
+                                .flatten();
+                                if let Some(cid) = contact_id {
+                                    let q = format!("UPDATE contacts SET {} = $1, updated_at = $2 WHERE id = $3", col);
+                                    let _ = sqlx::query(&q)
+                                        .bind(&attr_value)
+                                        .bind(&now)
+                                        .bind(&cid)
+                                        .execute(&state.db)
+                                        .await;
+                                }
+                            }
+                        } else {
+                            // Custom attribute on the linked contact (if any)
+                            let contact_id = sqlx::query_scalar::<_, Option<String>>(
+                                "SELECT contact_id FROM sessions WHERE id = $1",
                             )
-                            .bind(&attr_id)
-                            .bind(&cid)
-                            .bind(attr_name)
-                            .bind(attr_value)
-                            .bind(&now)
-                            .bind(&now)
-                            .execute(&state.db)
-                            .await;
+                            .bind(&session_id)
+                            .fetch_optional(&state.db)
+                            .await
+                            .ok()
+                            .flatten()
+                            .flatten();
+                            if let Some(cid) = contact_id {
+                                let attr_id = Uuid::new_v4().to_string();
+                                let _ = sqlx::query(
+                                    r#"INSERT INTO contact_custom_attributes (id, contact_id, attribute_key, attribute_value, created_at, updated_at)
+                                       VALUES ($1,$2,$3,$4,$5,$6)
+                                       ON CONFLICT (contact_id, attribute_key) DO UPDATE SET attribute_value = EXCLUDED.attribute_value, updated_at = EXCLUDED.updated_at"#,
+                                )
+                                .bind(&attr_id)
+                                .bind(&cid)
+                                .bind(attr_name)
+                                .bind(&attr_value)
+                                .bind(&now)
+                                .bind(&now)
+                                .execute(&state.db)
+                                .await;
+                            }
                         }
                     }
                     let note = format!("Set {} attribute: {} = {}", target, attr_name, attr_value);
@@ -2772,13 +2840,20 @@ async fn run_flow_for_visitor_message(
 
     // ── Check for existing flow cursor (resume interactive node) ──
     if trigger_event == "visitor_message" {
-        if let Some((cursor_flow_id, cursor_node_id, _cursor_node_type)) =
+        if let Some((cursor_flow_id, cursor_node_id, _cursor_node_type, cursor_vars)) =
             get_flow_cursor(&state, &session_id).await
         {
             // We have a paused flow — resume it from the paused node
             if let Some(flow) = get_flow_by_id_db(&state.db, &cursor_flow_id).await {
-                execute_flow_from(state, session_id, flow, visitor_text, Some(cursor_node_id))
-                    .await;
+                execute_flow_from(
+                    state,
+                    session_id,
+                    flow,
+                    visitor_text,
+                    Some(cursor_node_id),
+                    cursor_vars,
+                )
+                .await;
                 return;
             } else {
                 // Flow was deleted — clear stale cursor and continue normally
@@ -3019,9 +3094,6 @@ async fn post_message(
     };
 
     if sender == "visitor" {
-        // Auto-resolve contact from visitor text (email, phone, name)
-        auto_resolve_contact(&state, &target_session_id, &body.text).await;
-
         let state_clone = state.clone();
         let session_clone = target_session_id.clone();
         let text_clone = body.text.clone();
@@ -5472,9 +5544,6 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         None,
                     )
                     .await;
-
-                    // Auto-resolve contact from visitor text (email, phone, name)
-                    auto_resolve_contact(&state, &target_session_id, text).await;
 
                     let state_clone = state.clone();
                     let session_clone = target_session_id;

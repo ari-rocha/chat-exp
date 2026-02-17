@@ -1564,6 +1564,28 @@ function SettingsPanel({
                   <>
                     <div>
                       <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        Variable Name
+                      </label>
+                      <Input
+                        value={data?.variableName || ""}
+                        onChange={(e) =>
+                          updateSelectedNodeData({
+                            variableName: e.target.value.replace(
+                              /[^a-zA-Z0-9_]/g,
+                              "",
+                            ),
+                          })
+                        }
+                        placeholder="e.g. user_email"
+                        className="text-[12px] font-mono"
+                      />
+                      <p className="mt-1 text-[10px] text-slate-400">
+                        Store the response in this flow variable. Use{" "}
+                        {"{{variableName}}"} in later nodes.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                         Input Type
                       </label>
                       <select
@@ -2123,9 +2145,12 @@ function SettingsPanel({
                   onChange={(e) =>
                     updateSelectedNodeData({ attributeValue: e.target.value })
                   }
-                  placeholder="e.g. premium, Acme Inc"
+                  placeholder="e.g. {{user_email}}"
                   className="text-[12px]"
                 />
+                <p className="mt-1 text-[10px] text-slate-400">
+                  Use {"{{variableName}}"} to insert flow variable values.
+                </p>
               </div>
             </div>
           )}
