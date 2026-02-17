@@ -428,13 +428,26 @@ function DifyNode({ data, type, selected }) {
           {/* BUTTONS body */}
           {type === "buttons" && (
             <div className="space-y-1">
-              {data?.text && <p className="text-slate-500 mb-1">{data.text}</p>}
+              {data?.text && (
+                <p className="text-slate-500 mb-1.5">{data.text}</p>
+              )}
               {(data?.buttons || []).map((btn, i) => (
-                <div key={i} className="flex items-center gap-1.5">
-                  <span className="font-bold text-slate-500 whitespace-nowrap text-[10px]">
-                    BTN {i + 1}
+                <div
+                  key={i}
+                  className="relative flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50/60 px-2.5 py-1.5"
+                >
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-sky-200/70 text-[9px] font-bold text-sky-700">
+                    {i + 1}
                   </span>
-                  <span className="text-slate-600 truncate">{btn}</span>
+                  <span className="flex-1 truncate text-[11px] font-medium text-slate-700">
+                    {btn || `Button ${i + 1}`}
+                  </span>
+                  <Handle
+                    type="source"
+                    id={`btn-${i}`}
+                    position={Position.Right}
+                    className="!-right-[5px] !h-2.5 !w-2.5 !rounded-full !border-2 !border-white !bg-blue-500"
+                  />
                 </div>
               ))}
             </div>
@@ -443,13 +456,26 @@ function DifyNode({ data, type, selected }) {
           {/* SELECT body */}
           {type === "select" && (
             <div className="space-y-1">
-              {data?.text && <p className="text-slate-500 mb-1">{data.text}</p>}
+              {data?.text && (
+                <p className="text-slate-500 mb-1.5">{data.text}</p>
+              )}
               {(data?.options || []).map((opt, i) => (
-                <div key={i} className="flex items-center gap-1.5">
-                  <span className="font-bold text-slate-500 whitespace-nowrap text-[10px]">
-                    OPT {i + 1}
+                <div
+                  key={i}
+                  className="relative flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50/60 px-2.5 py-1.5"
+                >
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-sky-200/70 text-[9px] font-bold text-sky-700">
+                    {i + 1}
                   </span>
-                  <span className="text-slate-600 truncate">{opt}</span>
+                  <span className="flex-1 truncate text-[11px] font-medium text-slate-700">
+                    {opt || `Option ${i + 1}`}
+                  </span>
+                  <Handle
+                    type="source"
+                    id={`opt-${i}`}
+                    position={Position.Right}
+                    className="!-right-[5px] !h-2.5 !w-2.5 !rounded-full !border-2 !border-white !bg-blue-500"
+                  />
                 </div>
               ))}
             </div>
@@ -594,31 +620,78 @@ function DifyNode({ data, type, selected }) {
           )}
 
           {/* CONDITION body */}
-          {type === "condition" && (
-            <div className="space-y-1">
-              {(data?.rules || []).map((rule, i) => (
-                <div key={i} className="flex items-center gap-1 text-[10px]">
-                  {i > 0 && (
-                    <span className="rounded bg-amber-100 px-1 py-0.5 text-[8px] font-bold text-amber-600 uppercase">
-                      {data?.logicOperator || "and"}
-                    </span>
+          {type === "condition" &&
+            (() => {
+              const condOutputs = outputPorts(type, data);
+              return (
+                <div className="space-y-1">
+                  {/* Rule summary */}
+                  {(data?.rules || []).length > 0 && (
+                    <div className="mb-1.5 rounded-lg border border-amber-200/60 bg-amber-50/40 px-2 py-1.5">
+                      {data.rules.map((rule, i) => (
+                        <div
+                          key={i}
+                          className="flex items-center gap-1 text-[10px]"
+                        >
+                          {i > 0 && (
+                            <span className="rounded bg-amber-200 px-1 py-0.5 text-[8px] font-bold text-amber-700 uppercase">
+                              {data?.logicOperator || "and"}
+                            </span>
+                          )}
+                          <span className="font-medium text-slate-700 truncate">
+                            {rule.attribute || "message"}
+                          </span>
+                          <span className="rounded bg-amber-100 px-1 py-0.5 text-[9px] font-medium text-amber-700">
+                            {rule.operator || "equals"}
+                          </span>
+                          <span className="text-slate-500 truncate">
+                            {rule.value || "…"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   )}
-                  <span className="font-medium text-slate-700 truncate">
-                    {rule.attribute || "message"}
-                  </span>
-                  <span className="rounded bg-amber-50 px-1 py-0.5 text-[9px] font-medium text-amber-700">
-                    {rule.operator || "equals"}
-                  </span>
-                  <span className="text-slate-500 truncate">
-                    {rule.value || "…"}
-                  </span>
+                  {/* Branch cards with handles */}
+                  {condOutputs.map((branch) => {
+                    const isElse = branch.id === "else";
+                    return (
+                      <div
+                        key={branch.id}
+                        className={`relative flex items-center gap-2 rounded-lg border px-2.5 py-1.5 ${
+                          isElse
+                            ? "border-slate-200 bg-slate-50"
+                            : "border-emerald-200 bg-emerald-50/60"
+                        }`}
+                      >
+                        <span
+                          className={`flex h-5 shrink-0 items-center justify-center rounded px-1.5 text-[9px] font-bold uppercase ${
+                            isElse
+                              ? "bg-slate-200/70 text-slate-600"
+                              : "bg-emerald-200/70 text-emerald-700"
+                          }`}
+                        >
+                          {isElse ? "ELSE" : "THEN"}
+                        </span>
+                        <span className="flex-1 truncate text-[11px] font-medium text-slate-700">
+                          {branch.label}
+                        </span>
+                        <Handle
+                          type="source"
+                          id={branch.id}
+                          position={Position.Right}
+                          className="!-right-[5px] !h-2.5 !w-2.5 !rounded-full !border-2 !border-white !bg-blue-500"
+                        />
+                      </div>
+                    );
+                  })}
+                  {condOutputs.length === 0 && (
+                    <p className="text-[10px] text-slate-400">
+                      No rules defined
+                    </p>
+                  )}
                 </div>
-              ))}
-              {(!data?.rules || data.rules.length === 0) && (
-                <p className="text-[10px] text-slate-400">No rules defined</p>
-              )}
-            </div>
-          )}
+              );
+            })()}
 
           {/* Generic fallback body */}
           {!isStart &&
@@ -647,31 +720,35 @@ function DifyNode({ data, type, selected }) {
       )}
 
       {/* ── Source handles ── */}
-      {outputs.length > 0 ? (
-        outputs.map((output, index) => {
-          const top = `${((index + 1) / (outputs.length + 1)) * 100}%`;
-          return (
-            <div
-              key={output.id}
-              className="absolute -right-[5px]"
-              style={{ top, transform: "translateY(-50%)" }}
-            >
-              <Handle
-                type="source"
-                id={output.id}
-                position={Position.Right}
-                className="!h-2.5 !w-2.5 !rounded-full !border-2 !border-white !bg-blue-500"
-              />
-            </div>
-          );
-        })
-      ) : (
-        <Handle
-          type="source"
-          position={Position.Right}
-          className="!-right-[5px] !h-2.5 !w-2.5 !rounded-full !border-2 !border-white !bg-blue-500"
-        />
-      )}
+      {/* buttons, select, condition render their own inline handles */}
+      {type !== "buttons" &&
+        type !== "select" &&
+        type !== "condition" &&
+        (outputs.length > 0 ? (
+          outputs.map((output, index) => {
+            const top = `${((index + 1) / (outputs.length + 1)) * 100}%`;
+            return (
+              <div
+                key={output.id}
+                className="absolute -right-[5px]"
+                style={{ top, transform: "translateY(-50%)" }}
+              >
+                <Handle
+                  type="source"
+                  id={output.id}
+                  position={Position.Right}
+                  className="!h-2.5 !w-2.5 !rounded-full !border-2 !border-white !bg-blue-500"
+                />
+              </div>
+            );
+          })
+        ) : (
+          <Handle
+            type="source"
+            position={Position.Right}
+            className="!-right-[5px] !h-2.5 !w-2.5 !rounded-full !border-2 !border-white !bg-blue-500"
+          />
+        ))}
     </div>
   );
 }
