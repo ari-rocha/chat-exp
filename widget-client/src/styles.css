@@ -235,6 +235,10 @@ body {
   }
 }
 
+.row-agent {
+  align-items: flex-end;
+}
+
 .row-visitor {
   justify-content: flex-end;
 }
@@ -242,6 +246,11 @@ body {
 .row-system {
   justify-content: center;
   margin: 8px 0;
+}
+
+.row-suggestions {
+  justify-content: flex-start;
+  margin: 8px 0 2px;
 }
 
 .bubble {
@@ -346,6 +355,28 @@ body {
   max-width: 90%;
 }
 
+.suggestion-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: calc(100% - 18px);
+}
+
+.suggestion-chip {
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  background: #f1f1f1;
+  color: #3a3a3a;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 14px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.suggestion-chip:hover {
+  background: #e8e8e8;
+}
+
 .mini-icon {
   width: 24px;
   height: 24px;
@@ -356,6 +387,12 @@ body {
   place-items: center;
   font-weight: 800;
   font-size: 16px;
+}
+
+.mini-icon-spacer {
+  width: 24px;
+  height: 24px;
+  display: inline-block;
 }
 
 .row-typing {

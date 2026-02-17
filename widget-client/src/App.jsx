@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -24,6 +24,7 @@ export default function App() {
   const [text, setText] = useState("");
   const [ready, setReady] = useState(false);
   const [agentTyping, setAgentTyping] = useState(false);
+  const [dismissedSuggestionsFor, setDismissedSuggestionsFor] = useState("");
 
   const wsRef = useRef(null);
   const reconnectTimerRef = useRef(null);
@@ -37,6 +38,16 @@ export default function App() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ event, data }));
   };
+
+  const latestSuggestionSource = useMemo(() => {
+    if (!Array.isArray(messages) || messages.length === 0) return null;
+    const last = messages[messages.length - 1];
+    if (!last || last.sender !== "agent") return null;
+    if (!Array.isArray(last.suggestions) || last.suggestions.length === 0) {
+      return null;
+    }
+    return last;
+  }, [messages]);
 
   const sendVisitorTyping = (nextText, forceActive) => {
     if (!sessionId) return;
@@ -176,8 +187,11 @@ export default function App() {
   const send = (e) => {
     e.preventDefault();
     if (!text.trim() || !sessionId) return;
+    sendText(text.trim());
+  };
 
-    const value = text.trim();
+  const sendText = (value) => {
+    if (!value || !sessionId) return;
     const tempId = `temp-${Date.now()}-${tempIdRef.current++}`;
     const optimistic = {
       id: tempId,
@@ -188,6 +202,7 @@ export default function App() {
     };
 
     setMessages((prev) => [...(Array.isArray(prev) ? prev : []), optimistic]);
+    setDismissedSuggestionsFor("");
     sendVisitorTyping("", false);
     setText("");
 
@@ -213,6 +228,13 @@ export default function App() {
           Array.isArray(prev) ? prev.filter((m) => m.id !== tempId) : [],
         );
       });
+  };
+
+  const sendSuggestion = (value) => {
+    if (latestSuggestionSource?.id) {
+      setDismissedSuggestionsFor(latestSuggestionSource.id);
+    }
+    sendText(String(value || "").trim());
   };
 
   const canSend = text.trim().length > 0;
@@ -269,7 +291,11 @@ export default function App() {
                 Today
               </p>
             )}
-            {messages.map((m) => (
+            {messages.map((m, index) => {
+              const next = messages[index + 1];
+              const isAgent = m.sender === "agent";
+              const showAgentIcon = isAgent && (!next || next.sender !== "agent");
+              return (
               <div
                 key={m.id}
                 className={`row row-${m.sender} row-open-animate`}
@@ -278,7 +304,12 @@ export default function App() {
                   <div className="system-pill">{String(m.text ?? "")}</div>
                 ) : (
                   <>
-                    {m.sender === "agent" && <span className="mini-icon">a</span>}
+                    {isAgent &&
+                      (showAgentIcon ? (
+                        <span className="mini-icon">a</span>
+                      ) : (
+                        <span className="mini-icon-spacer" aria-hidden="true" />
+                      ))}
                     <div className={`bubble bubble-${m.sender}`}>
                       <div className="md-content">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -289,7 +320,8 @@ export default function App() {
                   </>
                 )}
               </div>
-            ))}
+              );
+            })}
             {agentTyping && (
               <div
                 className="row row-agent row-typing row-open-animate"
@@ -305,6 +337,23 @@ export default function App() {
                 </div>
               </div>
             )}
+            {latestSuggestionSource &&
+              latestSuggestionSource.id !== dismissedSuggestionsFor && (
+                <div className="row row-suggestions row-open-animate">
+                  <div className="suggestion-row">
+                    {latestSuggestionSource.suggestions.slice(0, 4).map((item, idx) => (
+                      <button
+                        key={`${latestSuggestionSource.id}-s-${idx}`}
+                        type="button"
+                        className="suggestion-chip"
+                        onClick={() => sendSuggestion(item)}
+                      >
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
           </div>
         </main>
 

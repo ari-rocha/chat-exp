@@ -33,6 +33,8 @@ struct ChatMessage {
     session_id: String,
     sender: String,
     text: String,
+    #[serde(default)]
+    suggestions: Vec<String>,
     created_at: String,
 }
 
@@ -368,7 +370,12 @@ async fn auth_agent_from_headers(
     Ok(profile)
 }
 
-async fn emit_to_client<T: Serialize>(state: &Arc<AppState>, client_id: usize, event: &str, data: T) {
+async fn emit_to_client<T: Serialize>(
+    state: &Arc<AppState>,
+    client_id: usize,
+    event: &str,
+    data: T,
+) {
     let Some(payload) = event_payload(event, data) else {
         return;
     };
@@ -652,6 +659,7 @@ async fn add_message(
     session_id: &str,
     sender: &str,
     text: &str,
+    suggestions: Option<Vec<String>>,
 ) -> Option<ChatMessage> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -667,6 +675,7 @@ async fn add_message(
             session_id: session_id.to_string(),
             sender: sender.to_string(),
             text: trimmed.to_string(),
+            suggestions: suggestions.unwrap_or_default(),
             created_at: now_iso(),
         };
 
@@ -706,6 +715,22 @@ fn flow_node_data_text(node: &FlowNode, key: &str) -> Option<String> {
 
 fn flow_node_data_u64(node: &FlowNode, key: &str) -> Option<u64> {
     node.data.get(key).and_then(Value::as_u64)
+}
+
+fn flow_node_data_suggestions(node: &FlowNode, key: &str) -> Vec<String> {
+    node.data
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .take(6)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
 }
 
 fn flow_edge_condition(edge: &FlowEdge) -> String {
@@ -762,6 +787,7 @@ fn has_handover_intent(text: &str) -> bool {
 struct AiDecision {
     reply: String,
     handover: bool,
+    suggestions: Vec<String>,
 }
 
 async fn set_session_handover(
@@ -828,6 +854,7 @@ If user asks for a human, transfer, escalation, or representative, set handover=
         return AiDecision {
             reply: fallback,
             handover: has_handover_intent(visitor_text),
+            suggestions: vec![],
         };
     }
 
@@ -839,7 +866,7 @@ If user asks for a human, transfer, escalation, or representative, set handover=
             "model": "gpt-4o-mini",
             "instructions": system_instruction,
             "input": format!(
-                "Conversation transcript (oldest to newest):\n{}\n\nLatest visitor message:\n{}\n\nReturn ONLY JSON: {{\"reply\":\"string\",\"handover\":boolean}}",
+                "Conversation transcript (oldest to newest):\n{}\n\nLatest visitor message:\n{}\n\nReturn ONLY JSON: {{\"reply\":\"string\",\"handover\":boolean,\"suggestions\":[\"short option\", \"another option\"]}}",
                 transcript,
                 visitor_text.trim()
             ),
@@ -849,8 +876,10 @@ If user asks for a human, transfer, escalation, or representative, set handover=
 
     let Ok(response) = response else {
         return AiDecision {
-            reply: "I had a temporary issue generating an AI reply. Could you rephrase?".to_string(),
+            reply: "I had a temporary issue generating an AI reply. Could you rephrase?"
+                .to_string(),
             handover: has_handover_intent(visitor_text),
+            suggestions: vec![],
         };
     };
 
@@ -886,12 +915,30 @@ If user asks for a human, transfer, escalation, or representative, set handover=
                 .get("handover")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            return AiDecision { reply, handover };
+            let suggestions = parsed
+                .get("suggestions")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(|text| text.trim().to_string())
+                        .filter(|text| !text.is_empty())
+                        .take(6)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            return AiDecision {
+                reply,
+                handover,
+                suggestions,
+            };
         }
 
         return AiDecision {
             reply: raw_text,
             handover: has_handover_intent(visitor_text),
+            suggestions: vec![],
         };
     }
 
@@ -911,20 +958,32 @@ If user asks for a human, transfer, escalation, or representative, set handover=
     AiDecision {
         reply,
         handover: has_handover_intent(visitor_text),
+        suggestions: vec![],
     }
 }
 
-async fn send_flow_agent_message(state: Arc<AppState>, session_id: &str, text: &str, delay_ms: u64) {
+async fn send_flow_agent_message(
+    state: Arc<AppState>,
+    session_id: &str,
+    text: &str,
+    delay_ms: u64,
+    suggestions: Option<Vec<String>>,
+) {
     if text.trim().is_empty() {
         return;
     }
     start_agent_typing(state.clone(), session_id).await;
     tokio::time::sleep(Duration::from_millis(delay_ms.clamp(120, 6000))).await;
-    let _ = add_message(state.clone(), session_id, "agent", text).await;
+    let _ = add_message(state.clone(), session_id, "agent", text, suggestions).await;
     stop_agent_typing(state, session_id).await;
 }
 
-async fn execute_flow(state: Arc<AppState>, session_id: String, flow: ChatFlow, visitor_text: String) {
+async fn execute_flow(
+    state: Arc<AppState>,
+    session_id: String,
+    flow: ChatFlow,
+    visitor_text: String,
+) {
     if !flow.enabled || !flow_trigger_matches(&flow, &visitor_text) {
         return;
     }
@@ -964,15 +1023,43 @@ async fn execute_flow(state: Arc<AppState>, session_id: String, flow: ChatFlow, 
             "message" => {
                 let text = flow_node_data_text(&node, "text").unwrap_or_default();
                 let delay_ms = flow_node_data_u64(&node, "delayMs").unwrap_or(420);
-                send_flow_agent_message(state.clone(), &session_id, &text, delay_ms).await;
+                let suggestions = flow_node_data_suggestions(&node, "suggestions");
+                let suggestions_opt = if suggestions.is_empty() {
+                    None
+                } else {
+                    Some(suggestions)
+                };
+                send_flow_agent_message(
+                    state.clone(),
+                    &session_id,
+                    &text,
+                    delay_ms,
+                    suggestions_opt,
+                )
+                .await;
             }
             "ai" => {
                 let prompt = flow_node_data_text(&node, "prompt").unwrap_or_default();
                 let delay_ms = flow_node_data_u64(&node, "delayMs").unwrap_or(700);
-                let decision = generate_ai_reply(state.clone(), &session_id, &prompt, &visitor_text).await;
-                send_flow_agent_message(state.clone(), &session_id, &decision.reply, delay_ms).await;
+                let decision =
+                    generate_ai_reply(state.clone(), &session_id, &prompt, &visitor_text).await;
+                let suggestions_opt = if decision.suggestions.is_empty() {
+                    None
+                } else {
+                    Some(decision.suggestions.clone())
+                };
+                send_flow_agent_message(
+                    state.clone(),
+                    &session_id,
+                    &decision.reply,
+                    delay_ms,
+                    suggestions_opt,
+                )
+                .await;
                 if decision.handover {
-                    if let Some((summary, changed)) = set_session_handover(&state, &session_id, true).await {
+                    if let Some((summary, changed)) =
+                        set_session_handover(&state, &session_id, true).await
+                    {
                         emit_session_update(&state, summary).await;
                         if changed {
                             let _ = add_message(
@@ -980,6 +1067,7 @@ async fn execute_flow(state: Arc<AppState>, session_id: String, flow: ChatFlow, 
                                 &session_id,
                                 "system",
                                 "Conversation transferred to a human agent",
+                                None,
                             )
                             .await;
                         }
@@ -997,7 +1085,11 @@ async fn execute_flow(state: Arc<AppState>, session_id: String, flow: ChatFlow, 
                 let next = edges
                     .iter()
                     .find(|edge| flow_edge_condition(edge) == desired)
-                    .or_else(|| edges.iter().find(|edge| flow_edge_condition(edge) == "default"))
+                    .or_else(|| {
+                        edges
+                            .iter()
+                            .find(|edge| flow_edge_condition(edge) == "default")
+                    })
                     .or_else(|| edges.first())
                     .map(|edge| edge.target.clone());
                 if let Some(next_id) = next {
@@ -1009,7 +1101,7 @@ async fn execute_flow(state: Arc<AppState>, session_id: String, flow: ChatFlow, 
             "end" => break,
             _ => {
                 if let Some(text) = flow_node_data_text(&node, "text") {
-                    send_flow_agent_message(state.clone(), &session_id, &text, 320).await;
+                    send_flow_agent_message(state.clone(), &session_id, &text, 320, None).await;
                 }
             }
         }
@@ -1021,7 +1113,11 @@ async fn execute_flow(state: Arc<AppState>, session_id: String, flow: ChatFlow, 
     }
 }
 
-async fn run_flow_for_visitor_message(state: Arc<AppState>, session_id: String, visitor_text: String) {
+async fn run_flow_for_visitor_message(
+    state: Arc<AppState>,
+    session_id: String,
+    visitor_text: String,
+) {
     if has_handover_intent(&visitor_text) {
         if let Some((summary, changed)) = set_session_handover(&state, &session_id, true).await {
             emit_session_update(&state, summary).await;
@@ -1031,6 +1127,7 @@ async fn run_flow_for_visitor_message(state: Arc<AppState>, session_id: String, 
                     &session_id,
                     "system",
                     "Conversation transferred to a human agent",
+                    None,
                 )
                 .await;
             }
@@ -1040,6 +1137,7 @@ async fn run_flow_for_visitor_message(state: Arc<AppState>, session_id: String, 
             &session_id,
             "Understood. I am transferring you to a human agent now.",
             450,
+            None,
         )
         .await;
         return;
@@ -1058,7 +1156,9 @@ async fn run_flow_for_visitor_message(state: Arc<AppState>, session_id: String, 
 
     let assigned_flow_id = {
         let sessions = state.sessions.read().await;
-        sessions.get(&session_id).and_then(|session| session.flow_id.clone())
+        sessions
+            .get(&session_id)
+            .and_then(|session| session.flow_id.clone())
     };
 
     let flow = {
@@ -1093,10 +1193,25 @@ async fn run_flow_for_visitor_message(state: Arc<AppState>, session_id: String, 
                         .to_string()
                 });
 
-            let decision = generate_ai_reply(state.clone(), &session_id, &flow_prompt, &visitor_text).await;
-            send_flow_agent_message(state.clone(), &session_id, &decision.reply, 700).await;
+            let decision =
+                generate_ai_reply(state.clone(), &session_id, &flow_prompt, &visitor_text).await;
+            let suggestions_opt = if decision.suggestions.is_empty() {
+                None
+            } else {
+                Some(decision.suggestions.clone())
+            };
+            send_flow_agent_message(
+                state.clone(),
+                &session_id,
+                &decision.reply,
+                700,
+                suggestions_opt,
+            )
+            .await;
             if decision.handover {
-                if let Some((summary, changed)) = set_session_handover(&state, &session_id, true).await {
+                if let Some((summary, changed)) =
+                    set_session_handover(&state, &session_id, true).await
+                {
                     emit_session_update(&state, summary).await;
                     if changed {
                         let _ = add_message(
@@ -1104,6 +1219,7 @@ async fn run_flow_for_visitor_message(state: Arc<AppState>, session_id: String, 
                             &session_id,
                             "system",
                             "Conversation transferred to a human agent",
+                            None,
                         )
                         .await;
                     }
@@ -1114,14 +1230,17 @@ async fn run_flow_for_visitor_message(state: Arc<AppState>, session_id: String, 
     }
 
     if visitor_text.trim().eq_ignore_ascii_case("okay") {
-        send_flow_agent_message(state, &session_id, "Glad I could help!", 900).await;
+        send_flow_agent_message(state, &session_id, "Glad I could help!", 900, None).await;
     }
 }
 
 async fn post_session(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let session_id = Uuid::new_v4().to_string();
     let _ = ensure_session(state, &session_id).await;
-    (StatusCode::CREATED, Json(json!({ "sessionId": session_id })))
+    (
+        StatusCode::CREATED,
+        Json(json!({ "sessionId": session_id })),
+    )
 }
 
 async fn get_sessions(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -1162,7 +1281,8 @@ async fn post_message(
 
     let _ = ensure_session(state.clone(), &session_id).await;
 
-    let Some(message) = add_message(state.clone(), &session_id, sender, &body.text).await else {
+    let Some(message) = add_message(state.clone(), &session_id, sender, &body.text, None).await
+    else {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "unable to create message" })),
@@ -1352,7 +1472,11 @@ async fn create_team(
     }
     let name = body.name.trim().to_string();
     if name.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "name required" }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "name required" })),
+        )
+            .into_response();
     }
     let team = Team {
         id: Uuid::new_v4().to_string(),
@@ -1379,7 +1503,11 @@ async fn add_member_to_team(
     {
         let mut teams = state.teams.write().await;
         let Some(team) = teams.get_mut(&team_id) else {
-            return (StatusCode::NOT_FOUND, Json(json!({ "error": "team not found" }))).into_response();
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "team not found" })),
+            )
+                .into_response();
         };
         if !team.agent_ids.contains(&agent_id) {
             team.agent_ids.push(agent_id.clone());
@@ -1431,7 +1559,11 @@ async fn create_inbox(
     }
     let name = body.name.trim().to_string();
     if name.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "name required" }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "name required" })),
+        )
+            .into_response();
     }
     let inbox = Inbox {
         id: Uuid::new_v4().to_string(),
@@ -1459,7 +1591,11 @@ async fn assign_agent_to_inbox(
     {
         let mut inboxes = state.inboxes.write().await;
         let Some(inbox) = inboxes.get_mut(&inbox_id) else {
-            return (StatusCode::NOT_FOUND, Json(json!({ "error": "inbox not found" }))).into_response();
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "inbox not found" })),
+            )
+                .into_response();
         };
         if !inbox.agent_ids.contains(&agent_id) {
             inbox.agent_ids.push(agent_id.clone());
@@ -1487,10 +1623,18 @@ async fn patch_session_assignee(
     }
     let mut sessions = state.sessions.write().await;
     let Some(session) = sessions.get_mut(&session_id) else {
-        return (StatusCode::NOT_FOUND, Json(json!({ "error": "session not found" }))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "session not found" })),
+        )
+            .into_response();
     };
     session.assignee_agent_id = body.agent_id;
-    (StatusCode::OK, Json(json!({ "session": session_summary(session) }))).into_response()
+    (
+        StatusCode::OK,
+        Json(json!({ "session": session_summary(session) })),
+    )
+        .into_response()
 }
 
 async fn patch_session_channel(
@@ -1504,14 +1648,26 @@ async fn patch_session_channel(
     }
     let channel = body.channel.trim().to_string();
     if channel.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "channel required" }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "channel required" })),
+        )
+            .into_response();
     }
     let mut sessions = state.sessions.write().await;
     let Some(session) = sessions.get_mut(&session_id) else {
-        return (StatusCode::NOT_FOUND, Json(json!({ "error": "session not found" }))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "session not found" })),
+        )
+            .into_response();
     };
     session.channel = channel;
-    (StatusCode::OK, Json(json!({ "session": session_summary(session) }))).into_response()
+    (
+        StatusCode::OK,
+        Json(json!({ "session": session_summary(session) })),
+    )
+        .into_response()
 }
 
 async fn patch_session_inbox(
@@ -1525,10 +1681,18 @@ async fn patch_session_inbox(
     }
     let mut sessions = state.sessions.write().await;
     let Some(session) = sessions.get_mut(&session_id) else {
-        return (StatusCode::NOT_FOUND, Json(json!({ "error": "session not found" }))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "session not found" })),
+        )
+            .into_response();
     };
     session.inbox_id = body.inbox_id;
-    (StatusCode::OK, Json(json!({ "session": session_summary(session) }))).into_response()
+    (
+        StatusCode::OK,
+        Json(json!({ "session": session_summary(session) })),
+    )
+        .into_response()
 }
 
 async fn patch_session_team(
@@ -1542,10 +1706,18 @@ async fn patch_session_team(
     }
     let mut sessions = state.sessions.write().await;
     let Some(session) = sessions.get_mut(&session_id) else {
-        return (StatusCode::NOT_FOUND, Json(json!({ "error": "session not found" }))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "session not found" })),
+        )
+            .into_response();
     };
     session.team_id = body.team_id;
-    (StatusCode::OK, Json(json!({ "session": session_summary(session) }))).into_response()
+    (
+        StatusCode::OK,
+        Json(json!({ "session": session_summary(session) })),
+    )
+        .into_response()
 }
 
 async fn patch_session_flow(
@@ -1564,16 +1736,28 @@ async fn patch_session_flow(
             flows.contains_key(flow_id)
         };
         if !exists {
-            return (StatusCode::NOT_FOUND, Json(json!({ "error": "flow not found" }))).into_response();
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "flow not found" })),
+            )
+                .into_response();
         }
     }
 
     let mut sessions = state.sessions.write().await;
     let Some(session) = sessions.get_mut(&session_id) else {
-        return (StatusCode::NOT_FOUND, Json(json!({ "error": "session not found" }))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "session not found" })),
+        )
+            .into_response();
     };
     session.flow_id = body.flow_id;
-    (StatusCode::OK, Json(json!({ "session": session_summary(session) }))).into_response()
+    (
+        StatusCode::OK,
+        Json(json!({ "session": session_summary(session) })),
+    )
+        .into_response()
 }
 
 async fn patch_session_handover(
@@ -1586,8 +1770,13 @@ async fn patch_session_handover(
         return err.into_response();
     }
 
-    let Some((summary, changed)) = set_session_handover(&state, &session_id, body.active).await else {
-        return (StatusCode::NOT_FOUND, Json(json!({ "error": "session not found" }))).into_response();
+    let Some((summary, changed)) = set_session_handover(&state, &session_id, body.active).await
+    else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "session not found" })),
+        )
+            .into_response();
     };
 
     if changed && body.active {
@@ -1596,6 +1785,7 @@ async fn patch_session_handover(
             &session_id,
             "system",
             "Conversation transferred to a human agent",
+            None,
         )
         .await;
     }
@@ -1631,7 +1821,11 @@ async fn get_flow(
         flows.get(&flow_id).cloned()
     };
     let Some(flow) = flow else {
-        return (StatusCode::NOT_FOUND, Json(json!({ "error": "flow not found" }))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "flow not found" })),
+        )
+            .into_response();
     };
 
     (StatusCode::OK, Json(json!({ "flow": flow }))).into_response()
@@ -1648,7 +1842,11 @@ async fn create_flow(
 
     let name = body.name.trim().to_string();
     if name.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "name required" }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "name required" })),
+        )
+            .into_response();
     }
 
     let now = now_iso();
@@ -1683,13 +1881,21 @@ async fn update_flow(
 
     let mut flows = state.flows.write().await;
     let Some(flow) = flows.get_mut(&flow_id) else {
-        return (StatusCode::NOT_FOUND, Json(json!({ "error": "flow not found" }))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "flow not found" })),
+        )
+            .into_response();
     };
 
     if let Some(name) = body.name {
         let trimmed = name.trim();
         if trimmed.is_empty() {
-            return (StatusCode::BAD_REQUEST, Json(json!({ "error": "name required" }))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "name required" })),
+            )
+                .into_response();
         }
         flow.name = trimmed.to_string();
     }
@@ -1722,7 +1928,11 @@ async fn delete_flow(
     {
         let mut flows = state.flows.write().await;
         if flows.remove(&flow_id).is_none() {
-            return (StatusCode::NOT_FOUND, Json(json!({ "error": "flow not found" }))).into_response();
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "flow not found" })),
+            )
+                .into_response();
         }
     }
 
@@ -1750,7 +1960,11 @@ async fn add_note(
     };
     let text = body.text.trim().to_string();
     if text.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "text required" }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "text required" })),
+        )
+            .into_response();
     }
 
     let note = ConversationNote {
@@ -1784,7 +1998,10 @@ async fn get_notes(
     (StatusCode::OK, Json(json!({ "notes": notes }))).into_response()
 }
 
-async fn list_channels(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
+async fn list_channels(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
     if let Err(err) = auth_agent_from_headers(&state, &headers).await {
         return err.into_response();
     }
@@ -1897,7 +2114,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 let text = envelope.data.get("text").and_then(Value::as_str);
                 if let (Some(session_id), Some(text)) = (session_id, text) {
                     let _ = ensure_session(state.clone(), session_id).await;
-                    let _ = add_message(state.clone(), session_id, "visitor", text).await;
+                    let _ = add_message(state.clone(), session_id, "visitor", text, None).await;
                     let state_clone = state.clone();
                     let session_clone = session_id.to_string();
                     let text_clone = text.to_string();
@@ -1908,7 +2125,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
             }
             "visitor:typing" => {
                 let session_id = envelope.data.get("sessionId").and_then(Value::as_str);
-                let text = envelope.data.get("text").and_then(Value::as_str).unwrap_or("");
+                let text = envelope
+                    .data
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
                 let active = envelope
                     .data
                     .get("active")
@@ -1944,7 +2165,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
             "agent:watch-session" => {
                 if let Some(session_id) = envelope.data.get("sessionId").and_then(Value::as_str) {
                     let mut rt = state.realtime.lock().await;
-                    if let Some(previous) = rt.watched_session.insert(client_id, session_id.to_string())
+                    if let Some(previous) =
+                        rt.watched_session.insert(client_id, session_id.to_string())
                     {
                         if let Some(set) = rt.session_watchers.get_mut(&previous) {
                             set.remove(&client_id);
@@ -2011,7 +2233,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 if let (Some(session_id), Some(text)) = (session_id, text) {
                     set_agent_human_typing(state.clone(), client_id, session_id, false).await;
                     let _ = ensure_session(state.clone(), session_id).await;
-                    let _ = add_message(state.clone(), session_id, "agent", text).await;
+                    let _ = add_message(state.clone(), session_id, "agent", text, None).await;
                 }
             }
             _ => {}
@@ -2193,19 +2415,34 @@ async fn main() {
         .route("/api/teams", get(get_teams).post(create_team))
         .route("/api/teams/{team_id}/members", post(add_member_to_team))
         .route("/api/inboxes", get(get_inboxes).post(create_inbox))
-        .route("/api/inboxes/{inbox_id}/assign", post(assign_agent_to_inbox))
+        .route(
+            "/api/inboxes/{inbox_id}/assign",
+            post(assign_agent_to_inbox),
+        )
         .route("/api/channels", get(list_channels))
         .route("/api/agents", get(get_agents))
         .route("/api/session", post(post_session))
         .route("/api/sessions", get(get_sessions))
         .route("/api/session/{session_id}/messages", get(get_messages))
         .route("/api/session/{session_id}/message", post(post_message))
-        .route("/api/session/{session_id}/assignee", patch(patch_session_assignee))
-        .route("/api/session/{session_id}/channel", patch(patch_session_channel))
-        .route("/api/session/{session_id}/inbox", patch(patch_session_inbox))
+        .route(
+            "/api/session/{session_id}/assignee",
+            patch(patch_session_assignee),
+        )
+        .route(
+            "/api/session/{session_id}/channel",
+            patch(patch_session_channel),
+        )
+        .route(
+            "/api/session/{session_id}/inbox",
+            patch(patch_session_inbox),
+        )
         .route("/api/session/{session_id}/team", patch(patch_session_team))
         .route("/api/session/{session_id}/flow", patch(patch_session_flow))
-        .route("/api/session/{session_id}/handover", patch(patch_session_handover))
+        .route(
+            "/api/session/{session_id}/handover",
+            patch(patch_session_handover),
+        )
         .route(
             "/api/session/{session_id}/notes",
             get(get_notes).post(add_note),
