@@ -1663,29 +1663,29 @@ export default function FlowsView({
           }}
         >
           <ReactFlowProvider>
-          <AddNodePalette addFlowNode={addFlowNode} />
-          <ReactFlow
-            nodes={flowNodes}
-            edges={flowEdges}
-            nodeTypes={FLOW_NODE_TYPES}
-            onNodesChange={onFlowNodesChange}
-            onEdgesChange={onFlowEdgesChange}
-            onConnect={onFlowConnect}
-            onSelectionChange={({ nodes }) =>
-              setSelectedNodeId(nodes?.[0]?.id || "")
-            }
-            fitView
-            connectionLineType={ConnectionLineType.SmoothStep}
-            defaultEdgeOptions={{
-              animated: false,
-              type: "smoothstep",
-              style: { stroke: "#94a3b8", strokeWidth: 1.5 },
-            }}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Controls className="!rounded-xl !border-slate-200 !shadow-sm" />
-            <Background gap={20} size={1} color="#dce0ea" variant="dots" />
-          </ReactFlow>
+            <AddNodePalette addFlowNode={addFlowNode} />
+            <ReactFlow
+              nodes={flowNodes}
+              edges={flowEdges}
+              nodeTypes={FLOW_NODE_TYPES}
+              onNodesChange={onFlowNodesChange}
+              onEdgesChange={onFlowEdgesChange}
+              onConnect={onFlowConnect}
+              onSelectionChange={({ nodes }) =>
+                setSelectedNodeId(nodes?.[0]?.id || "")
+              }
+              fitView
+              connectionLineType={ConnectionLineType.SmoothStep}
+              defaultEdgeOptions={{
+                animated: false,
+                type: "smoothstep",
+                style: { stroke: "#94a3b8", strokeWidth: 1.5 },
+              }}
+              proOptions={{ hideAttribution: true }}
+            >
+              <Controls className="!rounded-xl !border-slate-200 !shadow-sm" />
+              <Background gap={20} size={1} color="#dce0ea" variant="dots" />
+            </ReactFlow>
           </ReactFlowProvider>
         </div>
       </section>
