@@ -50,6 +50,7 @@ struct Session {
     team_id: Option<String>,
     flow_id: Option<String>,
     handover_active: bool,
+    fired_triggers: HashSet<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -631,6 +632,7 @@ async fn ensure_session(state: Arc<AppState>, session_id: &str) -> Session {
                 team_id: None,
                 flow_id: Some(state.default_flow_id.clone()),
                 handover_active: false,
+                fired_triggers: HashSet::new(),
             };
             sessions.insert(session_id.to_string(), session.clone());
             session
@@ -645,7 +647,8 @@ async fn ensure_session(state: Arc<AppState>, session_id: &str) -> Session {
             run_flow_for_visitor_message(
                 state_clone,
                 session_clone,
-                "__session_start__".to_string(),
+                String::new(),
+                "page_open",
             )
             .await;
         });
@@ -742,23 +745,74 @@ fn flow_edge_condition(edge: &FlowEdge) -> String {
         .to_ascii_lowercase()
 }
 
-fn flow_trigger_matches(flow: &ChatFlow, visitor_text: &str) -> bool {
+async fn is_first_visitor_message(state: &Arc<AppState>, session_id: &str) -> bool {
+    let sessions = state.sessions.read().await;
+    let Some(session) = sessions.get(session_id) else {
+        return false;
+    };
+    let count = session
+        .messages
+        .iter()
+        .filter(|message| message.sender == "visitor")
+        .count();
+    count <= 1
+}
+
+async fn mark_trigger_fired_once(state: &Arc<AppState>, session_id: &str, trigger_event: &str) -> bool {
+    let mut sessions = state.sessions.write().await;
+    let Some(session) = sessions.get_mut(session_id) else {
+        return false;
+    };
+    if session.fired_triggers.contains(trigger_event) {
+        return false;
+    }
+    session.fired_triggers.insert(trigger_event.to_string());
+    true
+}
+
+fn flow_trigger_matches_event(
+    flow: &ChatFlow,
+    visitor_text: &str,
+    trigger_event: &str,
+    first_visitor_message: bool,
+) -> bool {
     let Some(trigger) = flow
         .nodes
         .iter()
         .find(|node| node.node_type == "trigger" || node.node_type == "start")
     else {
-        return true;
+        return trigger_event == "visitor_message";
     };
+
+    let trigger_on = trigger
+        .data
+        .get("on")
+        .and_then(Value::as_str)
+        .unwrap_or("widget_open")
+        .to_ascii_lowercase();
+
+    let event_match = match trigger_on.as_str() {
+        "page_open" => trigger_event == "page_open",
+        "widget_open" => trigger_event == "widget_open",
+        "first_message" => trigger_event == "visitor_message" && first_visitor_message,
+        "any_message" => trigger_event == "visitor_message",
+        _ => trigger_event == "visitor_message",
+    };
+
+    if !event_match {
+        return false;
+    }
+
+    if trigger_event != "visitor_message" {
+        return true;
+    }
 
     let Some(keywords) = trigger.data.get("keywords").and_then(Value::as_array) else {
         return true;
     };
-
     if keywords.is_empty() {
         return true;
     }
-
     let text = visitor_text.to_ascii_lowercase();
     keywords
         .iter()
@@ -984,7 +1038,7 @@ async fn execute_flow(
     flow: ChatFlow,
     visitor_text: String,
 ) {
-    if !flow.enabled || !flow_trigger_matches(&flow, &visitor_text) {
+    if !flow.enabled {
         return;
     }
 
@@ -1117,8 +1171,9 @@ async fn run_flow_for_visitor_message(
     state: Arc<AppState>,
     session_id: String,
     visitor_text: String,
+    trigger_event: &str,
 ) {
-    if has_handover_intent(&visitor_text) {
+    if trigger_event == "visitor_message" && has_handover_intent(&visitor_text) {
         if let Some((summary, changed)) = set_session_handover(&state, &session_id, true).await {
             emit_session_update(&state, summary).await;
             if changed {
@@ -1154,6 +1209,19 @@ async fn run_flow_for_visitor_message(
         return;
     }
 
+    if trigger_event == "page_open" || trigger_event == "widget_open" {
+        let first_fire = mark_trigger_fired_once(&state, &session_id, trigger_event).await;
+        if !first_fire {
+            return;
+        }
+    }
+
+    let first_visitor_message = if trigger_event == "visitor_message" {
+        is_first_visitor_message(&state, &session_id).await
+    } else {
+        false
+    };
+
     let assigned_flow_id = {
         let sessions = state.sessions.read().await;
         sessions
@@ -1177,12 +1245,12 @@ async fn run_flow_for_visitor_message(
     };
 
     if let Some(flow) = flow {
-        if flow_trigger_matches(&flow, &visitor_text) {
+        if flow_trigger_matches_event(&flow, &visitor_text, trigger_event, first_visitor_message) {
             execute_flow(state, session_id, flow, visitor_text).await;
             return;
         }
 
-        if visitor_text.trim() != "__session_start__" {
+        if trigger_event == "visitor_message" {
             let flow_prompt = flow
                 .nodes
                 .iter()
@@ -1295,7 +1363,7 @@ async fn post_message(
         let session_clone = session_id.clone();
         let text_clone = body.text.clone();
         tokio::spawn(async move {
-            run_flow_for_visitor_message(state_clone, session_clone, text_clone).await;
+            run_flow_for_visitor_message(state_clone, session_clone, text_clone, "visitor_message").await;
         });
     }
 
@@ -2119,7 +2187,30 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     let session_clone = session_id.to_string();
                     let text_clone = text.to_string();
                     tokio::spawn(async move {
-                        run_flow_for_visitor_message(state_clone, session_clone, text_clone).await;
+                        run_flow_for_visitor_message(
+                            state_clone,
+                            session_clone,
+                            text_clone,
+                            "visitor_message",
+                        )
+                        .await;
+                    });
+                }
+            }
+            "widget:opened" => {
+                let session_id = envelope.data.get("sessionId").and_then(Value::as_str);
+                if let Some(session_id) = session_id {
+                    let _ = ensure_session(state.clone(), session_id).await;
+                    let state_clone = state.clone();
+                    let session_clone = session_id.to_string();
+                    tokio::spawn(async move {
+                        run_flow_for_visitor_message(
+                            state_clone,
+                            session_clone,
+                            String::new(),
+                            "widget_open",
+                        )
+                        .await;
                     });
                 }
             }
@@ -2300,7 +2391,7 @@ async fn main() {
                 id: "trigger-welcome".to_string(),
                 node_type: "trigger".to_string(),
                 position: FlowPosition { x: 120.0, y: 200.0 },
-                data: json!({ "label": "Trigger", "keywords": ["__session_start__"] }),
+                data: json!({ "label": "Trigger", "on": "widget_open", "keywords": [] }),
             },
             FlowNode {
                 id: "msg-hello".to_string(),

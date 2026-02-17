@@ -32,12 +32,17 @@ export default function App() {
   const tempIdRef = useRef(0);
   const listRef = useRef(null);
   const stickToBottomRef = useRef(true);
+  const openRef = useRef(open);
 
   const sendWsEvent = (event, data) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ event, data }));
   };
+
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
 
   const latestSuggestionSource = useMemo(() => {
     if (!Array.isArray(messages) || messages.length === 0) return null;
@@ -108,6 +113,9 @@ export default function App() {
 
       ws.addEventListener("open", () => {
         sendWsEvent("widget:join", { sessionId });
+        if (openRef.current) {
+          sendWsEvent("widget:opened", { sessionId });
+        }
       });
 
       ws.addEventListener("message", (event) => {
@@ -170,6 +178,11 @@ export default function App() {
       wsRef.current = null;
     };
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!open || !sessionId) return;
+    sendWsEvent("widget:opened", { sessionId });
+  }, [open, sessionId]);
 
   useEffect(() => {
     if (!listRef.current) return;

@@ -24,7 +24,7 @@ const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:4000/ws";
 const TOKEN_KEY = "agent_auth_token";
 
 const FLOW_NODE_PRESETS = {
-  trigger: { label: "Trigger", keywords: [] },
+  trigger: { label: "Trigger", on: "widget_open", keywords: [] },
   message: { label: "Message", text: "Thanks for contacting us.", delayMs: 420 },
   ai: { label: "AI Reply", prompt: "Help the visitor solve their issue clearly.", delayMs: 700 },
   condition: { label: "Condition", contains: "refund" },
@@ -1009,18 +1009,31 @@ export default function App() {
                   )}
 
                   {selectedNode.type === "trigger" && (
-                    <Input
-                      value={Array.isArray(selectedNode.data?.keywords) ? selectedNode.data.keywords.join(", ") : ""}
-                      onChange={(e) =>
-                        updateSelectedNodeData({
-                          keywords: e.target.value
-                            .split(",")
-                            .map((item) => item.trim())
-                            .filter(Boolean)
-                        })
-                      }
-                      placeholder="keywords, comma separated"
-                    />
+                    <div className="space-y-2">
+                      <label className="block text-[11px] text-slate-500">Run When</label>
+                      <select
+                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
+                        value={selectedNode.data?.on || "widget_open"}
+                        onChange={(e) => updateSelectedNodeData({ on: e.target.value })}
+                      >
+                        <option value="widget_open">Widget opens</option>
+                        <option value="page_open">Page opens</option>
+                        <option value="first_message">First visitor message</option>
+                        <option value="any_message">Any visitor message</option>
+                      </select>
+                      <Input
+                        value={Array.isArray(selectedNode.data?.keywords) ? selectedNode.data.keywords.join(", ") : ""}
+                        onChange={(e) =>
+                          updateSelectedNodeData({
+                            keywords: e.target.value
+                              .split(",")
+                              .map((item) => item.trim())
+                              .filter(Boolean)
+                          })
+                        }
+                        placeholder="keywords, comma separated (for message triggers)"
+                      />
+                    </div>
                   )}
 
                   {selectedNode.type === "condition" && (
