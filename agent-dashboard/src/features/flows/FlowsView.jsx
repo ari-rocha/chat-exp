@@ -1914,7 +1914,8 @@ function SettingsPanel({
                   Input Variables
                 </label>
                 <p className="mb-2 text-[10px] text-slate-400">
-                  Define variables other flows must provide when calling this flow.
+                  Define variables other flows must provide when calling this
+                  flow.
                 </p>
                 <div className="space-y-2">
                   {(flowInputVariables || []).map((v, i) => (
@@ -1945,7 +1946,10 @@ function SettingsPanel({
                           checked={v.required ?? false}
                           onChange={(e) => {
                             const next = [...flowInputVariables];
-                            next[i] = { ...next[i], required: e.target.checked };
+                            next[i] = {
+                              ...next[i],
+                              required: e.target.checked,
+                            };
                             setFlowInputVariables(next);
                           }}
                           className="rounded"
@@ -1992,7 +1996,10 @@ function SettingsPanel({
                   value={data?.flowId || ""}
                   onChange={(e) => {
                     const newFlowId = e.target.value;
-                    updateSelectedNodeData({ flowId: newFlowId, variableBindings: {} });
+                    updateSelectedNodeData({
+                      flowId: newFlowId,
+                      variableBindings: {},
+                    });
                   }}
                 >
                   <option value="">— Select a flow —</option>
@@ -2007,7 +2014,9 @@ function SettingsPanel({
               </div>
 
               {(() => {
-                const targetFlow = (flows || []).find((f) => f.id === data?.flowId);
+                const targetFlow = (flows || []).find(
+                  (f) => f.id === data?.flowId,
+                );
                 const targetVars = targetFlow?.inputVariables || [];
                 if (!targetFlow || targetVars.length === 0) return null;
                 const bindings = data?.variableBindings || {};
@@ -2017,20 +2026,26 @@ function SettingsPanel({
                       Variable Bindings
                     </label>
                     <p className="mb-2 text-[10px] text-slate-400">
-                      Map values to the target flow's input variables. Use {"{{varName}}"} for interpolation.
+                      Map values to the target flow's input variables. Use{" "}
+                      {"{{varName}}"} for interpolation.
                     </p>
                     <div className="space-y-2">
                       {targetVars.map((v) => (
                         <div key={v.key} className="flex items-center gap-2">
                           <span className="shrink-0 rounded bg-teal-50 px-2 py-1 text-[11px] font-mono text-teal-700 border border-teal-200">
                             {v.label || v.key}
-                            {v.required && <span className="ml-0.5 text-red-400">*</span>}
+                            {v.required && (
+                              <span className="ml-0.5 text-red-400">*</span>
+                            )}
                           </span>
                           <Input
                             value={bindings[v.key] || ""}
                             onChange={(e) => {
                               updateSelectedNodeData({
-                                variableBindings: { ...bindings, [v.key]: e.target.value },
+                                variableBindings: {
+                                  ...bindings,
+                                  [v.key]: e.target.value,
+                                },
                               });
                             }}
                             placeholder={`Value or {{variable}}`}

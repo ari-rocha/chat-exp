@@ -438,7 +438,9 @@ export default function App() {
         .filter((edge) => edge.source && edge.target);
       setFlowNodes(safeNodes);
       setFlowEdges(safeEdges);
-      setFlowInputVariables(Array.isArray(flow.inputVariables) ? flow.inputVariables : []);
+      setFlowInputVariables(
+        Array.isArray(flow.inputVariables) ? flow.inputVariables : [],
+      );
       setSelectedNodeId("");
     },
     [setFlowEdges, setFlowNodes],

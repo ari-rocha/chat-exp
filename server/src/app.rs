@@ -2821,7 +2821,9 @@ async fn execute_flow_from(
                     if let Some(target_flow) = get_flow_by_id_db(&state.db, target_flow_id).await {
                         // Build initial variables for the sub-flow from bindings
                         let mut sub_vars = HashMap::new();
-                        if let Some(bindings) = node.data.get("variableBindings").and_then(Value::as_object) {
+                        if let Some(bindings) =
+                            node.data.get("variableBindings").and_then(Value::as_object)
+                        {
                             for (key, val) in bindings {
                                 let raw = val.as_str().unwrap_or("");
                                 let interpolated = interpolate_flow_vars(raw, &flow_vars);
