@@ -1804,7 +1804,9 @@ async fn execute_flow_from(
             "condition" => {
                 // ── Rules-based evaluation (Intercom-style) ──
                 let rules = node.data.get("rules").and_then(Value::as_array);
-                let logic_op = node.data.get("logicOperator")
+                let logic_op = node
+                    .data
+                    .get("logicOperator")
                     .and_then(Value::as_str)
                     .unwrap_or("and");
 
@@ -1813,27 +1815,75 @@ async fn execute_flow_from(
                         false
                     } else {
                         // Lazy-load session fields for attribute lookups
-                        let sess_channel: String = sqlx::query_scalar("SELECT channel FROM sessions WHERE id = $1")
-                            .bind(&session_id).fetch_optional(&state.db).await.ok().flatten().unwrap_or_default();
-                        let sess_status: String = sqlx::query_scalar("SELECT status FROM sessions WHERE id = $1")
-                            .bind(&session_id).fetch_optional(&state.db).await.ok().flatten().unwrap_or_default();
-                        let sess_priority: String = sqlx::query_scalar("SELECT priority FROM sessions WHERE id = $1")
-                            .bind(&session_id).fetch_optional(&state.db).await.ok().flatten().unwrap_or_default();
-                        let sess_assignee: Option<String> = sqlx::query_scalar("SELECT assignee_agent_id FROM sessions WHERE id = $1")
-                            .bind(&session_id).fetch_optional(&state.db).await.ok().flatten();
-                        let sess_team: Option<String> = sqlx::query_scalar("SELECT team_id FROM sessions WHERE id = $1")
-                            .bind(&session_id).fetch_optional(&state.db).await.ok().flatten();
-                        let sess_inbox: Option<String> = sqlx::query_scalar("SELECT inbox_id FROM sessions WHERE id = $1")
-                            .bind(&session_id).fetch_optional(&state.db).await.ok().flatten();
-                        let sess_contact: Option<String> = sqlx::query_scalar("SELECT contact_id FROM sessions WHERE id = $1")
-                            .bind(&session_id).fetch_optional(&state.db).await.ok().flatten();
+                        let sess_channel: String =
+                            sqlx::query_scalar("SELECT channel FROM sessions WHERE id = $1")
+                                .bind(&session_id)
+                                .fetch_optional(&state.db)
+                                .await
+                                .ok()
+                                .flatten()
+                                .unwrap_or_default();
+                        let sess_status: String =
+                            sqlx::query_scalar("SELECT status FROM sessions WHERE id = $1")
+                                .bind(&session_id)
+                                .fetch_optional(&state.db)
+                                .await
+                                .ok()
+                                .flatten()
+                                .unwrap_or_default();
+                        let sess_priority: String =
+                            sqlx::query_scalar("SELECT priority FROM sessions WHERE id = $1")
+                                .bind(&session_id)
+                                .fetch_optional(&state.db)
+                                .await
+                                .ok()
+                                .flatten()
+                                .unwrap_or_default();
+                        let sess_assignee: Option<String> = sqlx::query_scalar(
+                            "SELECT assignee_agent_id FROM sessions WHERE id = $1",
+                        )
+                        .bind(&session_id)
+                        .fetch_optional(&state.db)
+                        .await
+                        .ok()
+                        .flatten();
+                        let sess_team: Option<String> =
+                            sqlx::query_scalar("SELECT team_id FROM sessions WHERE id = $1")
+                                .bind(&session_id)
+                                .fetch_optional(&state.db)
+                                .await
+                                .ok()
+                                .flatten();
+                        let sess_inbox: Option<String> =
+                            sqlx::query_scalar("SELECT inbox_id FROM sessions WHERE id = $1")
+                                .bind(&session_id)
+                                .fetch_optional(&state.db)
+                                .await
+                                .ok()
+                                .flatten();
+                        let sess_contact: Option<String> =
+                            sqlx::query_scalar("SELECT contact_id FROM sessions WHERE id = $1")
+                                .bind(&session_id)
+                                .fetch_optional(&state.db)
+                                .await
+                                .ok()
+                                .flatten();
 
                         let mut results: Vec<bool> = Vec::new();
                         for rule in rules {
-                            let attr = rule.get("attribute").and_then(Value::as_str).unwrap_or("message");
-                            let operator = rule.get("operator").and_then(Value::as_str).unwrap_or("equals");
+                            let attr = rule
+                                .get("attribute")
+                                .and_then(Value::as_str)
+                                .unwrap_or("message");
+                            let operator = rule
+                                .get("operator")
+                                .and_then(Value::as_str)
+                                .unwrap_or("equals");
                             let value = rule.get("value").and_then(Value::as_str).unwrap_or("");
-                            let attr_key = rule.get("attributeKey").and_then(Value::as_str).unwrap_or("");
+                            let attr_key = rule
+                                .get("attributeKey")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
 
                             let actual: String = match attr {
                                 "message" => visitor_text.clone(),
@@ -1901,10 +1951,12 @@ async fn execute_flow_from(
                                 "is_empty" => actual.trim().is_empty(),
                                 "is_not_empty" => !actual.trim().is_empty(),
                                 "greater_than" => {
-                                    actual.parse::<f64>().unwrap_or(0.0) > value.parse::<f64>().unwrap_or(0.0)
+                                    actual.parse::<f64>().unwrap_or(0.0)
+                                        > value.parse::<f64>().unwrap_or(0.0)
                                 }
                                 "less_than" => {
-                                    actual.parse::<f64>().unwrap_or(0.0) < value.parse::<f64>().unwrap_or(0.0)
+                                    actual.parse::<f64>().unwrap_or(0.0)
+                                        < value.parse::<f64>().unwrap_or(0.0)
                                 }
                                 _ => actual_lower == value_lower,
                             };
@@ -1922,7 +1974,8 @@ async fn execute_flow_from(
                     let contains = flow_node_data_text(&node, "contains")
                         .unwrap_or_default()
                         .to_ascii_lowercase();
-                    !contains.is_empty() && visitor_text.to_ascii_lowercase().contains(contains.trim())
+                    !contains.is_empty()
+                        && visitor_text.to_ascii_lowercase().contains(contains.trim())
                 };
 
                 let desired = if matches { "true" } else { "else" };
@@ -1932,8 +1985,12 @@ async fn execute_flow_from(
                     .or_else(|| {
                         // Also check for legacy "false" handle
                         if !matches {
-                            edges.iter().find(|edge| flow_edge_condition(edge) == "false")
-                        } else { None }
+                            edges
+                                .iter()
+                                .find(|edge| flow_edge_condition(edge) == "false")
+                        } else {
+                            None
+                        }
                     })
                     .or_else(|| {
                         edges

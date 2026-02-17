@@ -595,9 +595,15 @@ function DifyNode({ data, type, selected }) {
                       {data?.logicOperator || "and"}
                     </span>
                   )}
-                  <span className="font-medium text-slate-700 truncate">{rule.attribute || "message"}</span>
-                  <span className="rounded bg-amber-50 px-1 py-0.5 text-[9px] font-medium text-amber-700">{rule.operator || "equals"}</span>
-                  <span className="text-slate-500 truncate">{rule.value || "…"}</span>
+                  <span className="font-medium text-slate-700 truncate">
+                    {rule.attribute || "message"}
+                  </span>
+                  <span className="rounded bg-amber-50 px-1 py-0.5 text-[9px] font-medium text-amber-700">
+                    {rule.operator || "equals"}
+                  </span>
+                  <span className="text-slate-500 truncate">
+                    {rule.value || "…"}
+                  </span>
                 </div>
               ))}
               {(!data?.rules || data.rules.length === 0) && (
@@ -1181,13 +1187,20 @@ function SettingsPanel({
                       </label>
                       <div className="space-y-2">
                         {(data?.rules || []).map((rule, i) => (
-                          <div key={i} className="space-y-1.5 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+                          <div
+                            key={i}
+                            className="space-y-1.5 rounded-lg border border-slate-200 bg-slate-50 p-2.5"
+                          >
                             {i > 0 && (
                               <div className="flex justify-center pb-1">
                                 <select
                                   className="rounded border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-amber-700"
                                   value={data?.logicOperator || "and"}
-                                  onChange={(e) => updateSelectedNodeData({ logicOperator: e.target.value })}
+                                  onChange={(e) =>
+                                    updateSelectedNodeData({
+                                      logicOperator: e.target.value,
+                                    })
+                                  }
                                 >
                                   <option value="and">AND</option>
                                   <option value="or">OR</option>
@@ -1199,7 +1212,10 @@ function SettingsPanel({
                               value={rule.attribute || "message"}
                               onChange={(e) => {
                                 const rules = [...(data.rules || [])];
-                                rules[i] = { ...rules[i], attribute: e.target.value };
+                                rules[i] = {
+                                  ...rules[i],
+                                  attribute: e.target.value,
+                                };
                                 updateSelectedNodeData({ rules });
                               }}
                             >
@@ -1217,19 +1233,29 @@ function SettingsPanel({
                                 <option value="contact.name">Name</option>
                                 <option value="contact.phone">Phone</option>
                                 <option value="contact.company">Company</option>
-                                <option value="contact.location">Location</option>
+                                <option value="contact.location">
+                                  Location
+                                </option>
                               </optgroup>
                               <optgroup label="Custom">
-                                <option value="contact_attribute">Contact attribute</option>
-                                <option value="conversation_attribute">Conversation attribute</option>
+                                <option value="contact_attribute">
+                                  Contact attribute
+                                </option>
+                                <option value="conversation_attribute">
+                                  Conversation attribute
+                                </option>
                               </optgroup>
                             </select>
-                            {(rule.attribute === "contact_attribute" || rule.attribute === "conversation_attribute") && (
+                            {(rule.attribute === "contact_attribute" ||
+                              rule.attribute === "conversation_attribute") && (
                               <Input
                                 value={rule.attributeKey || ""}
                                 onChange={(e) => {
                                   const rules = [...(data.rules || [])];
-                                  rules[i] = { ...rules[i], attributeKey: e.target.value };
+                                  rules[i] = {
+                                    ...rules[i],
+                                    attributeKey: e.target.value,
+                                  };
                                   updateSelectedNodeData({ rules });
                                 }}
                                 placeholder="Attribute key"
@@ -1242,33 +1268,48 @@ function SettingsPanel({
                                 value={rule.operator || "equals"}
                                 onChange={(e) => {
                                   const rules = [...(data.rules || [])];
-                                  rules[i] = { ...rules[i], operator: e.target.value };
+                                  rules[i] = {
+                                    ...rules[i],
+                                    operator: e.target.value,
+                                  };
                                   updateSelectedNodeData({ rules });
                                 }}
                               >
                                 <option value="equals">equals</option>
-                                <option value="not_equals">does not equal</option>
+                                <option value="not_equals">
+                                  does not equal
+                                </option>
                                 <option value="contains">contains</option>
-                                <option value="not_contains">does not contain</option>
+                                <option value="not_contains">
+                                  does not contain
+                                </option>
                                 <option value="starts_with">starts with</option>
                                 <option value="ends_with">ends with</option>
                                 <option value="is_empty">is empty</option>
-                                <option value="is_not_empty">is not empty</option>
-                                <option value="greater_than">greater than</option>
+                                <option value="is_not_empty">
+                                  is not empty
+                                </option>
+                                <option value="greater_than">
+                                  greater than
+                                </option>
                                 <option value="less_than">less than</option>
                               </select>
-                              {rule.operator !== "is_empty" && rule.operator !== "is_not_empty" && (
-                                <Input
-                                  value={rule.value || ""}
-                                  onChange={(e) => {
-                                    const rules = [...(data.rules || [])];
-                                    rules[i] = { ...rules[i], value: e.target.value };
-                                    updateSelectedNodeData({ rules });
-                                  }}
-                                  placeholder="Value"
-                                  className="text-[11px]"
-                                />
-                              )}
+                              {rule.operator !== "is_empty" &&
+                                rule.operator !== "is_not_empty" && (
+                                  <Input
+                                    value={rule.value || ""}
+                                    onChange={(e) => {
+                                      const rules = [...(data.rules || [])];
+                                      rules[i] = {
+                                        ...rules[i],
+                                        value: e.target.value,
+                                      };
+                                      updateSelectedNodeData({ rules });
+                                    }}
+                                    placeholder="Value"
+                                    className="text-[11px]"
+                                  />
+                                )}
                             </div>
                             <div className="flex justify-end">
                               <button
@@ -1289,7 +1330,11 @@ function SettingsPanel({
                             updateSelectedNodeData({
                               rules: [
                                 ...(data.rules || []),
-                                { attribute: "message", operator: "contains", value: "" },
+                                {
+                                  attribute: "message",
+                                  operator: "contains",
+                                  value: "",
+                                },
                               ],
                             })
                           }
@@ -1306,7 +1351,8 @@ function SettingsPanel({
                         Branches (optional)
                       </label>
                       <p className="mb-2 text-[10px] text-slate-400">
-                        Add named branches for multi-path routing. Otherwise "Yes / Else" is used.
+                        Add named branches for multi-path routing. Otherwise
+                        "Yes / Else" is used.
                       </p>
                       <div className="space-y-2">
                         {(data?.outputs || []).map((out, i) => (

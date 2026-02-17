@@ -94,9 +94,7 @@ const FLOW_NODE_PRESETS = {
   },
   condition: {
     label: "Condition",
-    rules: [
-      { attribute: "message", operator: "contains", value: "" },
-    ],
+    rules: [{ attribute: "message", operator: "contains", value: "" }],
     logicOperator: "and",
     outputs: [],
   },
