@@ -765,6 +765,9 @@ body {
   font-size: 16px;
   flex: 0 0 auto;
   transition: background-color 160ms ease, transform 160ms ease, opacity 160ms ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .composer button:disabled {
@@ -779,6 +782,11 @@ body {
 
 .composer button.send-active:hover {
   transform: translateY(-1px);
+}
+
+.send-icon {
+  width: 1em;
+  height: 1em;
 }
 
 .privacy {

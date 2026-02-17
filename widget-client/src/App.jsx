@@ -688,7 +688,20 @@ export default function App() {
               disabled={!canSend}
               className={canSend ? "send-active" : ""}
             >
-              ↑
+              <svg
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+                className="send-icon"
+              >
+                <path
+                  d="M12 18V7.5M12 7.5L7.5 12M12 7.5L16.5 12"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.1"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
             </button>
           </form>
         )}
