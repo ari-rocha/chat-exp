@@ -277,7 +277,7 @@ fn extract_title_tag(html: &str) -> Option<String> {
 fn visible_messages_for_widget(messages: &[ChatMessage]) -> Vec<ChatMessage> {
     messages
         .iter()
-        .filter(|message| message.sender != "team")
+        .filter(|message| message.sender != "team" && message.sender != "system")
         .cloned()
         .collect::<Vec<_>>()
 }
@@ -799,7 +799,7 @@ async fn add_message(
         rt.agents.iter().copied().collect::<Vec<_>>()
     };
 
-    if sender == "team" {
+    if sender == "team" || sender == "system" {
         emit_to_clients(&state, &agents, "message:new", message.clone()).await;
     } else {
         emit_to_clients(&state, &watchers, "message:new", message.clone()).await;
