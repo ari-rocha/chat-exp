@@ -1393,6 +1393,68 @@ async fn generate_ai_reply(
         .flatten()
         .unwrap_or_else(|| state.default_tenant_id.clone());
 
+    // Fetch contact info linked to this session
+    let mut contact_block = String::new();
+    let contact_id: Option<String> =
+        sqlx::query_scalar("SELECT contact_id FROM sessions WHERE id = $1")
+            .bind(session_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
+    if let Some(cid) = &contact_id {
+        let contact_row = sqlx::query(
+            "SELECT display_name, email, phone, company, location FROM contacts WHERE id = $1",
+        )
+        .bind(cid)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+        if let Some(row) = contact_row {
+            let name: String = row.get("display_name");
+            let email: String = row.get("email");
+            let phone: String = row.get("phone");
+            let company: String = row.get("company");
+            let location: String = row.get("location");
+            contact_block.push_str("\nContact information on file:");
+            if !name.is_empty() {
+                contact_block.push_str(&format!("\n- Name: {}", name));
+            }
+            if !email.is_empty() {
+                contact_block.push_str(&format!("\n- Email: {}", email));
+            }
+            if !phone.is_empty() {
+                contact_block.push_str(&format!("\n- Phone: {}", phone));
+            }
+            if !company.is_empty() {
+                contact_block.push_str(&format!("\n- Company: {}", company));
+            }
+            if !location.is_empty() {
+                contact_block.push_str(&format!("\n- Location: {}", location));
+            }
+        }
+        // Include custom attributes
+        let custom_attrs = sqlx::query(
+            "SELECT attribute_key, attribute_value FROM contact_custom_attributes WHERE contact_id = $1",
+        )
+        .bind(cid)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+        for attr_row in &custom_attrs {
+            let key: String = attr_row.get("attribute_key");
+            let val: String = attr_row.get("attribute_value");
+            if !val.is_empty() {
+                contact_block.push_str(&format!("\n- {}: {}", key, val));
+            }
+        }
+        if !contact_block.is_empty() {
+            contact_block.push('\n');
+        }
+    }
+
     // Fetch flows marked as AI tools
     let tool_flows = sqlx::query(
         "SELECT id, name, ai_tool_description, input_variables FROM flows WHERE tenant_id = $1 AND ai_tool = true AND enabled = true",
@@ -1483,7 +1545,8 @@ If the conversation is clearly complete and resolved, set closeChat=true.{}", to
             "model": "gpt-4o-mini",
             "instructions": system_instruction,
             "input": format!(
-                "Conversation transcript (oldest to newest):\n{}\n\nLatest visitor message:\n{}\n\n{}",
+                "{}\nConversation transcript (oldest to newest):\n{}\n\nLatest visitor message:\n{}\n\n{}",
+                contact_block,
                 transcript,
                 visitor_text.trim(),
                 json_format_hint
