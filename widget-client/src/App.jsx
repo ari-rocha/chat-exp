@@ -323,7 +323,9 @@ export default function App() {
 
   const endCurrentChat = async () => {
     if (!sessionId) return;
-    await fetch(`${API_URL}/api/session/${sessionId}/close`, { method: "POST" });
+    await fetch(`${API_URL}/api/session/${sessionId}/close`, {
+      method: "POST",
+    });
   };
 
   return (
@@ -355,7 +357,11 @@ export default function App() {
             <button
               type="button"
               className="end-chat-btn"
-              onClick={() => endCurrentChat().catch((error) => console.error("failed to end chat", error))}
+              onClick={() =>
+                endCurrentChat().catch((error) =>
+                  console.error("failed to end chat", error),
+                )
+              }
               disabled={!sessionId || chatClosed}
             >
               End Chat
@@ -381,265 +387,378 @@ export default function App() {
 
         <main className="panel-body" ref={listRef} onScroll={onBodyScroll}>
           <div className="messages-stack">
-            {ready && (
-              <p className="today today-open-animate">
-                Today
-              </p>
-            )}
+            {ready && <p className="today today-open-animate">Today</p>}
             {messages.map((m, index) => {
               const next = messages[index + 1];
               const isAgent = m.sender === "agent";
-              const showAgentIcon = isAgent && (!next || next.sender !== "agent");
+              const showAgentIcon =
+                isAgent && (!next || next.sender !== "agent");
               return (
-              <div
-                key={m.id}
-                className={`row row-${m.sender} row-open-animate`}
-              >
-                {m.sender === "system" ? (
-                  <div className="system-pill">{String(m.text ?? "")}</div>
-                ) : (
-                  <>
-                    {isAgent &&
-                      (showAgentIcon ? (
-                        <span className="mini-icon">a</span>
-                      ) : (
-                        <span className="mini-icon-spacer" aria-hidden="true" />
-                      ))}
-                    <div className="message-stack">
-                      <div className={`bubble bubble-${m.sender}`}>
-                        <div className="md-content">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {String(m.text ?? "")}
-                          </ReactMarkdown>
-                        </div>
-                      </div>
-                    {m.sender === "agent" && m.widget?.type === "buttons" && Array.isArray(m.widget?.buttons) && (
-                        <div className="message-widget buttons-widget">
-                          {m.widget.buttons.slice(0, 6).map((button, idx) => (
-                            <button
-                              key={`${m.id}-btn-${idx}`}
-                              type="button"
-                              className="suggestion-chip"
-                              onClick={() => sendSuggestion(button?.value || button?.label || "")}
-                            >
-                              {button?.label || "Option"}
-                            </button>
-                          ))}
-                        </div>
-                    )}
-                    {m.sender === "agent" && m.widget?.type === "link_preview" && (
-                      <a
-                        className="message-widget link-preview-card"
-                        href={m.widget?.url || "#"}
-                        target="_blank"
-                        rel="noreferrer noopener"
-                      >
-                        {m.widget?.image ? (
-                          <img
-                            src={m.widget.image}
-                            alt={m.widget?.title || "Link preview"}
-                            loading="lazy"
-                          />
-                        ) : null}
-                        <div className="link-preview-body">
-                          <p className="link-preview-site">{m.widget?.siteName || "Link"}</p>
-                          <h4>{m.widget?.title || m.widget?.url || "Open link"}</h4>
-                          {m.widget?.description ? <p>{m.widget.description}</p> : null}
-                          <span className="link-preview-url">{m.widget?.url || ""}</span>
-                        </div>
-                      </a>
-                    )}
-                    {m.sender === "agent" && m.widget?.type === "select" && Array.isArray(m.widget?.options) && (
-                      <div className="message-widget inline-form-widget">
-                        <select
-                          className="carousel-select"
-                          value={selectSelections[m.id] || ""}
-                          onChange={(e) =>
-                            setSelectSelections((prev) => ({ ...prev, [m.id]: e.target.value }))
-                          }
-                        >
-                          <option value="">{m.widget?.placeholder || "Select one"}</option>
-                          {m.widget.options.map((opt, optIdx) => {
-                            const label = typeof opt === "string" ? opt : opt?.label || opt?.value || "Option";
-                            const value = typeof opt === "string" ? opt : opt?.value || label;
-                            return (
-                              <option key={`${m.id}-select-${optIdx}`} value={value}>
-                                {label}
-                              </option>
-                            );
-                          })}
-                        </select>
-                        <button
-                          type="button"
-                          className="inline-submit"
-                          disabled={!selectSelections[m.id]}
-                          onClick={() => {
-                            const value = selectSelections[m.id];
-                            if (!value) return;
-                            sendSuggestion(value);
-                            setSelectSelections((prev) => ({ ...prev, [m.id]: "" }));
-                          }}
-                        >
-                          {m.widget?.buttonLabel || "Send"}
-                        </button>
-                      </div>
-                    )}
-                    {m.sender === "agent" && m.widget?.type === "input_form" && Array.isArray(m.widget?.fields) && (
-                      <div className="message-widget inline-form-widget">
-                        {m.widget.fields.map((field, fIdx) => (
-                          <input
-                            key={`${m.id}-field-${fIdx}`}
-                            className="inline-input"
-                            type={field?.type || "text"}
-                            placeholder={field?.placeholder || field?.label || field?.name || "Field"}
-                            value={formInputs[formKey(m.id)]?.[field?.name || `f${fIdx}`] || ""}
-                            onChange={(e) =>
-                              setFormInputs((prev) => ({
-                                ...prev,
-                                [formKey(m.id)]: {
-                                  ...(prev[formKey(m.id)] || {}),
-                                  [field?.name || `f${fIdx}`]: e.target.value
-                                }
-                              }))
-                            }
+                <div
+                  key={m.id}
+                  className={`row row-${m.sender} row-open-animate`}
+                >
+                  {m.sender === "system" ? (
+                    <div className="system-pill">{String(m.text ?? "")}</div>
+                  ) : (
+                    <>
+                      {isAgent &&
+                        (showAgentIcon ? (
+                          <span className="mini-icon">a</span>
+                        ) : (
+                          <span
+                            className="mini-icon-spacer"
+                            aria-hidden="true"
                           />
                         ))}
-                        <button
-                          type="button"
-                          className="inline-submit"
-                          onClick={() => {
-                            const values = formInputs[formKey(m.id)] || {};
-                            const missing = m.widget.fields.some((field, fIdx) => {
-                              if (field?.required === false) return false;
-                              const key = field?.name || `f${fIdx}`;
-                              return !String(values[key] || "").trim();
-                            });
-                            if (missing) return;
-                            const payload = m.widget.fields
-                              .map((field, fIdx) => {
-                                const key = field?.name || `f${fIdx}`;
-                                const label = field?.label || key;
-                                return `${label}: ${values[key] || ""}`;
-                              })
-                              .join(", ");
-                            sendSuggestion(payload);
-                            setFormInputs((prev) => ({ ...prev, [formKey(m.id)]: {} }));
-                          }}
-                        >
-                          {m.widget?.submitLabel || "Submit"}
-                        </button>
-                      </div>
-                    )}
-                    {m.sender === "agent" && m.widget?.type === "quick_input" && (
-                      <div className="message-widget crisp-input-widget">
-                        <input
-                          className="crisp-input"
-                          type={m.widget?.inputType || "text"}
-                          placeholder={m.widget?.placeholder || "Type here..."}
-                          value={quickInputs[m.id] || ""}
-                          onChange={(e) =>
-                            setQuickInputs((prev) => ({ ...prev, [m.id]: e.target.value }))
-                          }
-                        />
-                        <button
-                          type="button"
-                          className="crisp-send"
-                          disabled={!String(quickInputs[m.id] || "").trim()}
-                          onClick={() => {
-                            const value = String(quickInputs[m.id] || "").trim();
-                            if (!value) return;
-                            sendSuggestion(value);
-                            setQuickInputs((prev) => ({ ...prev, [m.id]: "" }));
-                          }}
-                        >
-                          {m.widget?.buttonLabel || "Send"}
-                        </button>
-                      </div>
-                    )}
-                    {m.sender === "agent" && m.widget?.type === "carousel" && Array.isArray(m.widget?.items) && (
-                        <div className="message-widget carousel-widget">
-                          {m.widget.items.slice(0, 8).map((item, idx) => (
-                            <article key={`${m.id}-item-${idx}`} className="carousel-card">
-                              {item?.imageUrl ? (
-                                <img src={item.imageUrl} alt={item?.title || "Item"} loading="lazy" />
+                      <div className="message-stack">
+                        <div className={`bubble bubble-${m.sender}`}>
+                          <div className="md-content">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                              {String(m.text ?? "")}
+                            </ReactMarkdown>
+                          </div>
+                        </div>
+                        {m.sender === "agent" &&
+                          m.widget?.type === "buttons" &&
+                          Array.isArray(m.widget?.buttons) && (
+                            <div className="message-widget buttons-widget">
+                              {m.widget.buttons
+                                .slice(0, 6)
+                                .map((button, idx) => (
+                                  <button
+                                    key={`${m.id}-btn-${idx}`}
+                                    type="button"
+                                    className="suggestion-chip"
+                                    onClick={() =>
+                                      sendSuggestion(
+                                        button?.value || button?.label || "",
+                                      )
+                                    }
+                                  >
+                                    {button?.label || "Option"}
+                                  </button>
+                                ))}
+                            </div>
+                          )}
+                        {m.sender === "agent" &&
+                          m.widget?.type === "link_preview" && (
+                            <a
+                              className="message-widget link-preview-card"
+                              href={m.widget?.url || "#"}
+                              target="_blank"
+                              rel="noreferrer noopener"
+                            >
+                              {m.widget?.image ? (
+                                <img
+                                  src={m.widget.image}
+                                  alt={m.widget?.title || "Link preview"}
+                                  loading="lazy"
+                                />
                               ) : null}
-                              <h4>{item?.title || "Item"}</h4>
-                              {item?.description ? <p>{item.description}</p> : null}
-                              {item?.price ? <strong>{item.price}</strong> : null}
-                              {(Array.isArray(item?.selectOptions) || Array.isArray(item?.options)) && (
-                                <select
-                                  className="carousel-select"
-                                  value={carouselSelections[selectKey(m.id, idx)] || ""}
+                              <div className="link-preview-body">
+                                <p className="link-preview-site">
+                                  {m.widget?.siteName || "Link"}
+                                </p>
+                                <h4>
+                                  {m.widget?.title ||
+                                    m.widget?.url ||
+                                    "Open link"}
+                                </h4>
+                                {m.widget?.description ? (
+                                  <p>{m.widget.description}</p>
+                                ) : null}
+                                <span className="link-preview-url">
+                                  {m.widget?.url || ""}
+                                </span>
+                              </div>
+                            </a>
+                          )}
+                        {m.sender === "agent" &&
+                          m.widget?.type === "select" &&
+                          Array.isArray(m.widget?.options) && (
+                            <div className="message-widget inline-form-widget">
+                              <select
+                                className="carousel-select"
+                                value={selectSelections[m.id] || ""}
+                                onChange={(e) =>
+                                  setSelectSelections((prev) => ({
+                                    ...prev,
+                                    [m.id]: e.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="">
+                                  {m.widget?.placeholder || "Select one"}
+                                </option>
+                                {m.widget.options.map((opt, optIdx) => {
+                                  const label =
+                                    typeof opt === "string"
+                                      ? opt
+                                      : opt?.label || opt?.value || "Option";
+                                  const value =
+                                    typeof opt === "string"
+                                      ? opt
+                                      : opt?.value || label;
+                                  return (
+                                    <option
+                                      key={`${m.id}-select-${optIdx}`}
+                                      value={value}
+                                    >
+                                      {label}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                              <button
+                                type="button"
+                                className="inline-submit"
+                                disabled={!selectSelections[m.id]}
+                                onClick={() => {
+                                  const value = selectSelections[m.id];
+                                  if (!value) return;
+                                  sendSuggestion(value);
+                                  setSelectSelections((prev) => ({
+                                    ...prev,
+                                    [m.id]: "",
+                                  }));
+                                }}
+                              >
+                                {m.widget?.buttonLabel || "Send"}
+                              </button>
+                            </div>
+                          )}
+                        {m.sender === "agent" &&
+                          m.widget?.type === "input_form" &&
+                          Array.isArray(m.widget?.fields) && (
+                            <div className="message-widget inline-form-widget">
+                              {m.widget.fields.map((field, fIdx) => (
+                                <input
+                                  key={`${m.id}-field-${fIdx}`}
+                                  className="inline-input"
+                                  type={field?.type || "text"}
+                                  placeholder={
+                                    field?.placeholder ||
+                                    field?.label ||
+                                    field?.name ||
+                                    "Field"
+                                  }
+                                  value={
+                                    formInputs[formKey(m.id)]?.[
+                                      field?.name || `f${fIdx}`
+                                    ] || ""
+                                  }
                                   onChange={(e) =>
-                                    setCarouselSelections((prev) => ({
+                                    setFormInputs((prev) => ({
                                       ...prev,
-                                      [selectKey(m.id, idx)]: e.target.value
+                                      [formKey(m.id)]: {
+                                        ...(prev[formKey(m.id)] || {}),
+                                        [field?.name || `f${fIdx}`]:
+                                          e.target.value,
+                                      },
                                     }))
                                   }
+                                />
+                              ))}
+                              <button
+                                type="button"
+                                className="inline-submit"
+                                onClick={() => {
+                                  const values =
+                                    formInputs[formKey(m.id)] || {};
+                                  const missing = m.widget.fields.some(
+                                    (field, fIdx) => {
+                                      if (field?.required === false)
+                                        return false;
+                                      const key = field?.name || `f${fIdx}`;
+                                      return !String(values[key] || "").trim();
+                                    },
+                                  );
+                                  if (missing) return;
+                                  const payload = m.widget.fields
+                                    .map((field, fIdx) => {
+                                      const key = field?.name || `f${fIdx}`;
+                                      const label = field?.label || key;
+                                      return `${label}: ${values[key] || ""}`;
+                                    })
+                                    .join(", ");
+                                  sendSuggestion(payload);
+                                  setFormInputs((prev) => ({
+                                    ...prev,
+                                    [formKey(m.id)]: {},
+                                  }));
+                                }}
+                              >
+                                {m.widget?.submitLabel || "Submit"}
+                              </button>
+                            </div>
+                          )}
+                        {m.sender === "agent" &&
+                          m.widget?.type === "quick_input" && (
+                            <div className="message-widget crisp-input-widget">
+                              <input
+                                className="crisp-input"
+                                type={m.widget?.inputType || "text"}
+                                placeholder={
+                                  m.widget?.placeholder || "Type here..."
+                                }
+                                value={quickInputs[m.id] || ""}
+                                onChange={(e) =>
+                                  setQuickInputs((prev) => ({
+                                    ...prev,
+                                    [m.id]: e.target.value,
+                                  }))
+                                }
+                              />
+                              <button
+                                type="button"
+                                className="crisp-send"
+                                disabled={
+                                  !String(quickInputs[m.id] || "").trim()
+                                }
+                                onClick={() => {
+                                  const value = String(
+                                    quickInputs[m.id] || "",
+                                  ).trim();
+                                  if (!value) return;
+                                  sendSuggestion(value);
+                                  setQuickInputs((prev) => ({
+                                    ...prev,
+                                    [m.id]: "",
+                                  }));
+                                }}
+                              >
+                                {m.widget?.buttonLabel || "Send"}
+                              </button>
+                            </div>
+                          )}
+                        {m.sender === "agent" &&
+                          m.widget?.type === "carousel" &&
+                          Array.isArray(m.widget?.items) && (
+                            <div className="message-widget carousel-widget">
+                              {m.widget.items.slice(0, 8).map((item, idx) => (
+                                <article
+                                  key={`${m.id}-item-${idx}`}
+                                  className="carousel-card"
                                 >
-                                  <option value="">Select an option</option>
-                                  {(item.selectOptions || item.options).map((opt, optIdx) => {
-                                    if (typeof opt === "string") {
-                                      return (
-                                        <option key={`${m.id}-item-${idx}-o-${optIdx}`} value={opt}>
-                                          {opt}
-                                        </option>
-                                      );
-                                    }
-                                    const label = opt?.label || opt?.value || `Option ${optIdx + 1}`;
-                                    const value = opt?.value || label;
-                                    return (
-                                      <option key={`${m.id}-item-${idx}-o-${optIdx}`} value={value}>
-                                        {label}
-                                      </option>
-                                    );
-                                  })}
-                                </select>
-                              )}
-                              <div className="carousel-actions">
-                                {Array.isArray(item?.buttons) && item.buttons.length > 0 ? (
-                                  item.buttons.slice(0, 2).map((button, bIdx) => (
-                                    <button
-                                      key={`${m.id}-item-${idx}-b-${bIdx}`}
-                                      type="button"
-                                      className="carousel-action"
-                                      onClick={() => {
-                                        const picked = carouselSelections[selectKey(m.id, idx)];
-                                        sendSuggestion(
-                                          picked || button?.value || button?.label || item?.title || ""
-                                        );
-                                      }}
+                                  {item?.imageUrl ? (
+                                    <img
+                                      src={item.imageUrl}
+                                      alt={item?.title || "Item"}
+                                      loading="lazy"
+                                    />
+                                  ) : null}
+                                  <h4>{item?.title || "Item"}</h4>
+                                  {item?.description ? (
+                                    <p>{item.description}</p>
+                                  ) : null}
+                                  {item?.price ? (
+                                    <strong>{item.price}</strong>
+                                  ) : null}
+                                  {(Array.isArray(item?.selectOptions) ||
+                                    Array.isArray(item?.options)) && (
+                                    <select
+                                      className="carousel-select"
+                                      value={
+                                        carouselSelections[
+                                          selectKey(m.id, idx)
+                                        ] || ""
+                                      }
+                                      onChange={(e) =>
+                                        setCarouselSelections((prev) => ({
+                                          ...prev,
+                                          [selectKey(m.id, idx)]:
+                                            e.target.value,
+                                        }))
+                                      }
                                     >
-                                      {button?.label || "View"}
-                                    </button>
-                                  ))
-                                ) : (
-                                  <button
-                                    type="button"
-                                    className="carousel-action"
-                                    onClick={() => {
-                                      const picked = carouselSelections[selectKey(m.id, idx)];
-                                      sendSuggestion(picked || item?.title || "");
-                                    }}
-                                  >
-                                    View
-                                  </button>
-                                )}
-                              </div>
-                            </article>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
+                                      <option value="">Select an option</option>
+                                      {(item.selectOptions || item.options).map(
+                                        (opt, optIdx) => {
+                                          if (typeof opt === "string") {
+                                            return (
+                                              <option
+                                                key={`${m.id}-item-${idx}-o-${optIdx}`}
+                                                value={opt}
+                                              >
+                                                {opt}
+                                              </option>
+                                            );
+                                          }
+                                          const label =
+                                            opt?.label ||
+                                            opt?.value ||
+                                            `Option ${optIdx + 1}`;
+                                          const value = opt?.value || label;
+                                          return (
+                                            <option
+                                              key={`${m.id}-item-${idx}-o-${optIdx}`}
+                                              value={value}
+                                            >
+                                              {label}
+                                            </option>
+                                          );
+                                        },
+                                      )}
+                                    </select>
+                                  )}
+                                  <div className="carousel-actions">
+                                    {Array.isArray(item?.buttons) &&
+                                    item.buttons.length > 0 ? (
+                                      item.buttons
+                                        .slice(0, 2)
+                                        .map((button, bIdx) => (
+                                          <button
+                                            key={`${m.id}-item-${idx}-b-${bIdx}`}
+                                            type="button"
+                                            className="carousel-action"
+                                            onClick={() => {
+                                              const picked =
+                                                carouselSelections[
+                                                  selectKey(m.id, idx)
+                                                ];
+                                              sendSuggestion(
+                                                picked ||
+                                                  button?.value ||
+                                                  button?.label ||
+                                                  item?.title ||
+                                                  "",
+                                              );
+                                            }}
+                                          >
+                                            {button?.label || "View"}
+                                          </button>
+                                        ))
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        className="carousel-action"
+                                        onClick={() => {
+                                          const picked =
+                                            carouselSelections[
+                                              selectKey(m.id, idx)
+                                            ];
+                                          sendSuggestion(
+                                            picked || item?.title || "",
+                                          );
+                                        }}
+                                      >
+                                        View
+                                      </button>
+                                    )}
+                                  </div>
+                                </article>
+                              ))}
+                            </div>
+                          )}
+                      </div>
+                    </>
+                  )}
+                </div>
               );
             })}
             {agentTyping && (
-              <div
-                className="row row-agent row-typing row-open-animate"
-              >
+              <div className="row row-agent row-typing row-open-animate">
                 <span className="mini-icon">a</span>
                 <div
                   className="bubble bubble-agent typing-bubble"
@@ -655,16 +774,18 @@ export default function App() {
               latestSuggestionSource.id !== dismissedSuggestionsFor && (
                 <div className="row row-suggestions row-open-animate">
                   <div className="suggestion-row">
-                    {latestSuggestionSource.suggestions.slice(0, 4).map((item, idx) => (
-                      <button
-                        key={`${latestSuggestionSource.id}-s-${idx}`}
-                        type="button"
-                        className="suggestion-chip"
-                        onClick={() => sendSuggestion(item)}
-                      >
-                        {item}
-                      </button>
-                    ))}
+                    {latestSuggestionSource.suggestions
+                      .slice(0, 4)
+                      .map((item, idx) => (
+                        <button
+                          key={`${latestSuggestionSource.id}-s-${idx}`}
+                          type="button"
+                          className="suggestion-chip"
+                          onClick={() => sendSuggestion(item)}
+                        >
+                          {item}
+                        </button>
+                      ))}
                   </div>
                 </div>
               )}
@@ -676,7 +797,11 @@ export default function App() {
             <button
               type="button"
               className="new-chat-btn"
-              onClick={() => startNewChat().catch((error) => console.error("failed to start chat", error))}
+              onClick={() =>
+                startNewChat().catch((error) =>
+                  console.error("failed to start chat", error),
+                )
+              }
             >
               Start new chat
             </button>
@@ -706,11 +831,7 @@ export default function App() {
               disabled={!canSend}
               className={canSend ? "send-active" : ""}
             >
-              <svg
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-                className="send-icon"
-              >
+              <svg viewBox="0 0 24 24" aria-hidden="true" className="send-icon">
                 <path
                   d="M12 18V7.5M12 7.5L7.5 12M12 7.5L16.5 12"
                   fill="none"

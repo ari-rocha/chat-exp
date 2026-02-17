@@ -5376,7 +5376,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     let session = ensure_session(state.clone(), session_id).await;
 
                     // Resolve contact from persistent visitor identity
-                    let visitor_id = envelope.data.get("visitorId").and_then(Value::as_str).unwrap_or("");
+                    let visitor_id = envelope
+                        .data
+                        .get("visitorId")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
                     if !visitor_id.is_empty() {
                         resolve_contact_from_visitor_id(&state, session_id, visitor_id).await;
                     }
