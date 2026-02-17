@@ -2254,7 +2254,12 @@ async fn execute_flow_from(
                         )
                         .await;
                         // Fire lifecycle trigger (e.g. CSAT on close)
-                        Box::pin(run_lifecycle_trigger(state.clone(), session_id.clone(), "conversation_closed".into())).await;
+                        Box::pin(run_lifecycle_trigger(
+                            state.clone(),
+                            session_id.clone(),
+                            "conversation_closed".into(),
+                        ))
+                        .await;
                     }
                 }
                 clear_flow_cursor(&state, &session_id).await;
@@ -3094,7 +3099,12 @@ async fn execute_flow_from(
                         )
                         .await;
                         // Fire lifecycle trigger (e.g. CSAT on close)
-                        Box::pin(run_lifecycle_trigger(state.clone(), session_id.clone(), "conversation_closed".into())).await;
+                        Box::pin(run_lifecycle_trigger(
+                            state.clone(),
+                            session_id.clone(),
+                            "conversation_closed".into(),
+                        ))
+                        .await;
                     }
                 }
                 clear_flow_cursor(&state, &session_id).await;

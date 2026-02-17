@@ -2119,51 +2119,53 @@ function SettingsPanel({
                       </option>
                     </select>
                   </div>
-                  {!["conversation_closed", "conversation_reopened"].includes(data?.on) && (
-                  <div>
-                    <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                      Keywords
-                    </label>
-                    <div className="space-y-2">
-                      {(data?.keywords || []).map((kw, i) => (
-                        <div key={i} className="flex items-center gap-2">
-                          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-blue-100 text-[10px] font-bold text-blue-600">
-                            {i + 1}
+                  {!["conversation_closed", "conversation_reopened"].includes(
+                    data?.on,
+                  ) && (
+                    <div>
+                      <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        Keywords
+                      </label>
+                      <div className="space-y-2">
+                        {(data?.keywords || []).map((kw, i) => (
+                          <div key={i} className="flex items-center gap-2">
+                            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-blue-100 text-[10px] font-bold text-blue-600">
+                              {i + 1}
+                            </div>
+                            <Input
+                              value={kw}
+                              onChange={(e) => {
+                                const keywords = [...(data.keywords || [])];
+                                keywords[i] = e.target.value;
+                                updateSelectedNodeData({ keywords });
+                              }}
+                              placeholder={`Keyword ${i + 1}`}
+                              className="flex-1 text-[12px]"
+                            />
+                            <button
+                              onClick={() => {
+                                const keywords = [...(data.keywords || [])];
+                                keywords.splice(i, 1);
+                                updateSelectedNodeData({ keywords });
+                              }}
+                              className="shrink-0 rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500"
+                            >
+                              <Trash2 size={12} />
+                            </button>
                           </div>
-                          <Input
-                            value={kw}
-                            onChange={(e) => {
-                              const keywords = [...(data.keywords || [])];
-                              keywords[i] = e.target.value;
-                              updateSelectedNodeData({ keywords });
-                            }}
-                            placeholder={`Keyword ${i + 1}`}
-                            className="flex-1 text-[12px]"
-                          />
-                          <button
-                            onClick={() => {
-                              const keywords = [...(data.keywords || [])];
-                              keywords.splice(i, 1);
-                              updateSelectedNodeData({ keywords });
-                            }}
-                            className="shrink-0 rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
-                      ))}
-                      <button
-                        onClick={() =>
-                          updateSelectedNodeData({
-                            keywords: [...(data.keywords || []), ""],
-                          })
-                        }
-                        className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-300 py-2 text-[11px] font-medium text-slate-500 transition-colors hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600"
-                      >
-                        <Plus size={12} /> Add Keyword
-                      </button>
+                        ))}
+                        <button
+                          onClick={() =>
+                            updateSelectedNodeData({
+                              keywords: [...(data.keywords || []), ""],
+                            })
+                          }
+                          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-300 py-2 text-[11px] font-medium text-slate-500 transition-colors hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600"
+                        >
+                          <Plus size={12} /> Add Keyword
+                        </button>
+                      </div>
                     </div>
-                  </div>
                   )}
                 </>
               )}
