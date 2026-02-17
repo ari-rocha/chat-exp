@@ -161,8 +161,8 @@ function outputPorts(type, data) {
     if (custom.length > 0)
       return custom.map((label, index) => ({ id: `out-${index}`, label }));
     return [
-      { id: "yes", label: "Yes" },
-      { id: "no", label: "No" },
+      { id: "true", label: "Yes" },
+      { id: "false", label: "No" },
     ];
   }
 
@@ -174,6 +174,28 @@ function outputPorts(type, data) {
     return data.classes.map((label, index) => ({
       id: `class-${index}`,
       label: `CLASS ${index + 1}`,
+    }));
+  }
+
+  if (
+    type === "buttons" &&
+    Array.isArray(data?.buttons) &&
+    data.buttons.length > 0
+  ) {
+    return data.buttons.map((label, index) => ({
+      id: `btn-${index}`,
+      label: label || `Button ${index + 1}`,
+    }));
+  }
+
+  if (
+    type === "select" &&
+    Array.isArray(data?.options) &&
+    data.options.length > 0
+  ) {
+    return data.options.map((label, index) => ({
+      id: `opt-${index}`,
+      label: label || `Option ${index + 1}`,
     }));
   }
 
@@ -189,6 +211,7 @@ function DifyNode({ data, type, selected }) {
   const isStart = type === "start" || type === "trigger";
   const isClassifier =
     (type === "ai" || type === "question_classifier") && outputs.length > 0;
+  const hasMultiOutputs = outputs.length > 0;
 
   return (
     <div
@@ -208,7 +231,7 @@ function DifyNode({ data, type, selected }) {
 
       {/* ── Header ── */}
       <div
-        className="flex items-center gap-2.5 rounded-t-[14px] px-3 py-2.5"
+        className={`flex items-center gap-2.5 px-3 py-2.5 ${type === "end" ? "rounded-[14px]" : "rounded-t-[14px]"}`}
         style={{ backgroundColor: colors.bg }}
       >
         <div
@@ -322,13 +345,66 @@ function DifyNode({ data, type, selected }) {
             </p>
           )}
 
+          {/* BUTTONS body */}
+          {type === "buttons" && (
+            <div className="space-y-1">
+              {data?.text && <p className="text-slate-500 mb-1">{data.text}</p>}
+              {(data?.buttons || []).map((btn, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <span className="font-bold text-slate-500 whitespace-nowrap text-[10px]">
+                    BTN {i + 1}
+                  </span>
+                  <span className="text-slate-600 truncate">{btn}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* SELECT body */}
+          {type === "select" && (
+            <div className="space-y-1">
+              {data?.text && <p className="text-slate-500 mb-1">{data.text}</p>}
+              {(data?.options || []).map((opt, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <span className="font-bold text-slate-500 whitespace-nowrap text-[10px]">
+                    OPT {i + 1}
+                  </span>
+                  <span className="text-slate-600 truncate">{opt}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* INPUT_FORM body */}
+          {type === "input_form" && (
+            <div className="space-y-1">
+              {data?.text && <p className="text-slate-500 mb-1">{data.text}</p>}
+              {(data?.fields || []).map((f, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <span className="font-bold text-slate-500 whitespace-nowrap text-[10px]">
+                    {(f.type || "text").toUpperCase()}
+                  </span>
+                  <span className="text-slate-600 truncate">
+                    {f.label || f.name || `Field ${i + 1}`}
+                  </span>
+                  {f.required && (
+                    <span className="text-red-400 text-[9px]">*</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Generic fallback body */}
           {!isStart &&
             type !== "llm" &&
             !isClassifier &&
             type !== "http" &&
             type !== "code" &&
-            type !== "end" && (
+            type !== "end" &&
+            type !== "buttons" &&
+            type !== "select" &&
+            type !== "input_form" && (
               <p className="text-slate-600 line-clamp-2">
                 {data?.text || data?.label || ""}
               </p>
@@ -960,6 +1036,136 @@ function SettingsPanel({
                     />
                   </div>
                 )}
+                {type === "input_form" && (
+                  <div>
+                    <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                      Fields
+                    </label>
+                    <div className="space-y-2">
+                      {(data?.fields || []).map((field, i) => (
+                        <div
+                          key={i}
+                          className="overflow-hidden rounded-lg border border-slate-200 bg-white"
+                        >
+                          <div className="flex items-center justify-between border-b border-slate-100 px-3 py-1.5">
+                            <span className="text-[10px] font-semibold text-slate-500">
+                              FIELD {i + 1}
+                            </span>
+                            <button
+                              onClick={() => {
+                                const fields = [...(data.fields || [])];
+                                fields.splice(i, 1);
+                                updateSelectedNodeData({ fields });
+                              }}
+                              className="rounded p-0.5 text-slate-400 hover:bg-red-50 hover:text-red-500"
+                            >
+                              <Trash2 size={11} />
+                            </button>
+                          </div>
+                          <div className="space-y-2 p-2.5">
+                            <Input
+                              value={field.label || ""}
+                              onChange={(e) => {
+                                const fields = [...(data.fields || [])];
+                                fields[i] = {
+                                  ...fields[i],
+                                  label: e.target.value,
+                                  name: e.target.value
+                                    .toLowerCase()
+                                    .replace(/\s+/g, "_"),
+                                };
+                                updateSelectedNodeData({ fields });
+                              }}
+                              placeholder="Label"
+                              className="text-[12px]"
+                            />
+                            <select
+                              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px]"
+                              value={field.type || "text"}
+                              onChange={(e) => {
+                                const fields = [...(data.fields || [])];
+                                fields[i] = {
+                                  ...fields[i],
+                                  type: e.target.value,
+                                };
+                                updateSelectedNodeData({ fields });
+                              }}
+                            >
+                              <option value="text">Text</option>
+                              <option value="email">Email</option>
+                              <option value="tel">Phone</option>
+                              <option value="number">Number</option>
+                              <option value="url">URL</option>
+                            </select>
+                            <Input
+                              value={field.placeholder || ""}
+                              onChange={(e) => {
+                                const fields = [...(data.fields || [])];
+                                fields[i] = {
+                                  ...fields[i],
+                                  placeholder: e.target.value,
+                                };
+                                updateSelectedNodeData({ fields });
+                              }}
+                              placeholder="Placeholder"
+                              className="text-[12px]"
+                            />
+                            <label className="flex items-center gap-2 text-[11px] text-slate-600">
+                              <input
+                                type="checkbox"
+                                checked={field.required ?? false}
+                                onChange={(e) => {
+                                  const fields = [...(data.fields || [])];
+                                  fields[i] = {
+                                    ...fields[i],
+                                    required: e.target.checked,
+                                  };
+                                  updateSelectedNodeData({ fields });
+                                }}
+                                className="rounded border-slate-300"
+                              />
+                              Required
+                            </label>
+                          </div>
+                        </div>
+                      ))}
+                      <button
+                        onClick={() =>
+                          updateSelectedNodeData({
+                            fields: [
+                              ...(data.fields || []),
+                              {
+                                name: "",
+                                label: "",
+                                placeholder: "",
+                                type: "text",
+                                required: false,
+                              },
+                            ],
+                          })
+                        }
+                        className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-300 py-2 text-[11px] font-medium text-slate-500 transition-colors hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600"
+                      >
+                        <Plus size={12} /> Add Field
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {type === "input_form" && (
+                  <div>
+                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                      Submit Button Label
+                    </label>
+                    <Input
+                      value={data?.submitLabel || "Submit"}
+                      onChange={(e) =>
+                        updateSelectedNodeData({ submitLabel: e.target.value })
+                      }
+                      placeholder="Submit"
+                      className="text-[12px]"
+                    />
+                  </div>
+                )}
                 {type === "quick_input" && (
                   <>
                     <div>
@@ -1132,6 +1338,87 @@ function SettingsPanel({
                   </div>
                 </>
               )}
+            </div>
+          )}
+
+          {/* ── End Node Settings ── */}
+          {type === "end" && (
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Behavior
+                </label>
+                <select
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px]"
+                  value={data?.behavior || "close"}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ behavior: e.target.value })
+                  }
+                >
+                  <option value="close">Close conversation</option>
+                  <option value="handover">Transfer to human agent</option>
+                  <option value="stop">Just stop (keep open)</option>
+                </select>
+              </div>
+              {data?.behavior === "close" && (
+                <div>
+                  <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    Close Message
+                  </label>
+                  <Input
+                    value={data?.closeMessage || ""}
+                    onChange={(e) =>
+                      updateSelectedNodeData({ closeMessage: e.target.value })
+                    }
+                    placeholder="Conversation closed"
+                    className="text-[12px]"
+                  />
+                </div>
+              )}
+              {data?.behavior === "handover" && (
+                <div>
+                  <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    Handover Message
+                  </label>
+                  <Input
+                    value={data?.handoverMessage || ""}
+                    onChange={(e) =>
+                      updateSelectedNodeData({
+                        handoverMessage: e.target.value,
+                      })
+                    }
+                    placeholder="Transferring to a human agent..."
+                    className="text-[12px]"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Delay (all message-sending nodes) ── */}
+          {(type === "message" ||
+            type === "buttons" ||
+            type === "carousel" ||
+            type === "select" ||
+            type === "input_form" ||
+            type === "quick_input") && (
+            <div>
+              <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                Typing Delay (ms)
+              </label>
+              <Input
+                type="number"
+                min={0}
+                max={6000}
+                step={100}
+                value={data?.delayMs ?? 420}
+                onChange={(e) =>
+                  updateSelectedNodeData({
+                    delayMs: Number(e.target.value) || 420,
+                  })
+                }
+                className="text-[12px]"
+              />
             </div>
           )}
 

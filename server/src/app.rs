@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use crate::types::*;
 use axum::{
     extract::{
         ws::{Message, WebSocket},
@@ -28,7 +29,6 @@ use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 use tokio::sync::{mpsc, Mutex};
 use tower_http::cors::CorsLayer;
 use uuid::Uuid;
-use crate::types::*;
 
 fn now_iso() -> String {
     Utc::now().to_rfc3339()
@@ -93,7 +93,8 @@ async fn persist_session(pool: &PgPool, session: &Session) {
 
 async fn persist_message(pool: &PgPool, message: &ChatMessage) {
     let widget = message.widget.as_ref().map(json_text);
-    let suggestions = serde_json::to_string(&message.suggestions).unwrap_or_else(|_| "[]".to_string());
+    let suggestions =
+        serde_json::to_string(&message.suggestions).unwrap_or_else(|_| "[]".to_string());
     let _ = sqlx::query(
         r#"
         INSERT INTO chat_messages (id, session_id, sender, text, suggestions, widget, created_at)
@@ -122,11 +123,12 @@ async fn get_session_summary_db(pool: &PgPool, session_id: &str) -> Option<Sessi
     .ok()
     .flatten()?;
 
-    let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM chat_messages WHERE session_id = $1")
-        .bind(session_id)
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0) as usize;
+    let count =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM chat_messages WHERE session_id = $1")
+            .bind(session_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0) as usize;
 
     let last_message_row = sqlx::query(
         "SELECT id, session_id, sender, text, suggestions, widget, created_at FROM chat_messages WHERE session_id = $1 ORDER BY created_at DESC LIMIT 1",
@@ -328,13 +330,14 @@ async fn auth_tenant_from_headers(
         Json(json!({ "error": "missing bearer token" })),
     ))?;
 
-    let tenant_id = sqlx::query_scalar::<_, String>("SELECT tenant_id FROM auth_tokens WHERE token = $1")
-        .bind(&token)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| state.default_tenant_id.clone());
+    let tenant_id =
+        sqlx::query_scalar::<_, String>("SELECT tenant_id FROM auth_tokens WHERE token = $1")
+            .bind(&token)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| state.default_tenant_id.clone());
 
     Ok(tenant_id)
 }
@@ -384,12 +387,10 @@ async fn emit_to_clients<T: Serialize + Clone>(
 
 async fn emit_session_snapshot(state: Arc<AppState>) {
     let mut list = {
-        let rows = sqlx::query(
-            "SELECT id FROM sessions ORDER BY updated_at DESC LIMIT 500",
-        )
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
+        let rows = sqlx::query("SELECT id FROM sessions ORDER BY updated_at DESC LIMIT 500")
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
             let session_id: String = row.get("id");
@@ -645,13 +646,8 @@ async fn ensure_session(state: Arc<AppState>, session_id: &str) -> Session {
         let state_clone = state.clone();
         let session_clone = session_id.to_string();
         tokio::spawn(async move {
-            run_flow_for_visitor_message(
-                state_clone,
-                session_clone,
-                String::new(),
-                "page_open",
-            )
-            .await;
+            run_flow_for_visitor_message(state_clone, session_clone, String::new(), "page_open")
+                .await;
         });
     }
 
@@ -820,7 +816,11 @@ fn flow_node_data_buttons(node: &FlowNode, key: &str) -> Vec<Value> {
                         }
                         return Some(json!({ "label": trimmed, "value": trimmed }));
                     }
-                    let label = item.get("label").and_then(Value::as_str)?.trim().to_string();
+                    let label = item
+                        .get("label")
+                        .and_then(Value::as_str)?
+                        .trim()
+                        .to_string();
                     if label.is_empty() {
                         return None;
                     }
@@ -846,7 +846,11 @@ fn flow_node_data_carousel_items(node: &FlowNode, key: &str) -> Vec<Value> {
             items
                 .iter()
                 .filter_map(|item| {
-                    let title = item.get("title").and_then(Value::as_str)?.trim().to_string();
+                    let title = item
+                        .get("title")
+                        .and_then(Value::as_str)?
+                        .trim()
+                        .to_string();
                     if title.is_empty() {
                         return None;
                     }
@@ -879,8 +883,11 @@ fn flow_node_data_carousel_items(node: &FlowNode, key: &str) -> Vec<Value> {
                                         }
                                         return Some(json!({ "label": label, "value": label }));
                                     }
-                                    let label =
-                                        button.get("label").and_then(Value::as_str)?.trim().to_string();
+                                    let label = button
+                                        .get("label")
+                                        .and_then(Value::as_str)?
+                                        .trim()
+                                        .to_string();
                                     if label.is_empty() {
                                         return None;
                                     }
@@ -895,7 +902,9 @@ fn flow_node_data_carousel_items(node: &FlowNode, key: &str) -> Vec<Value> {
                                 .take(4)
                                 .collect::<Vec<_>>()
                         })
-                        .unwrap_or_else(|| vec![json!({ "label": "View", "value": title.clone() })]);
+                        .unwrap_or_else(|| {
+                            vec![json!({ "label": "View", "value": title.clone() })]
+                        });
                     Some(json!({
                         "title": title,
                         "description": description,
@@ -925,7 +934,11 @@ fn flow_node_data_options(node: &FlowNode, key: &str) -> Vec<Value> {
                         }
                         return Some(json!({ "label": label, "value": label }));
                     }
-                    let label = item.get("label").and_then(Value::as_str)?.trim().to_string();
+                    let label = item
+                        .get("label")
+                        .and_then(Value::as_str)?
+                        .trim()
+                        .to_string();
                     if label.is_empty() {
                         return None;
                     }
@@ -1010,7 +1023,11 @@ async fn is_first_visitor_message(state: &Arc<AppState>, session_id: &str) -> bo
     count <= 1
 }
 
-async fn mark_trigger_fired_once(state: &Arc<AppState>, session_id: &str, trigger_event: &str) -> bool {
+async fn mark_trigger_fired_once(
+    state: &Arc<AppState>,
+    session_id: &str,
+    trigger_event: &str,
+) -> bool {
     sqlx::query(
         "INSERT INTO session_triggers (session_id, trigger_event, created_at) VALUES ($1,$2,$3) ON CONFLICT (session_id, trigger_event) DO NOTHING",
     )
@@ -1180,12 +1197,13 @@ async fn set_session_handover(
     session_id: &str,
     active: bool,
 ) -> Option<(SessionSummary, bool)> {
-    let current = sqlx::query_scalar::<_, bool>("SELECT handover_active FROM sessions WHERE id = $1")
-        .bind(session_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()?;
+    let current =
+        sqlx::query_scalar::<_, bool>("SELECT handover_active FROM sessions WHERE id = $1")
+            .bind(session_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()?;
     let changed = current != active;
     let _ = sqlx::query("UPDATE sessions SET handover_active = $1, updated_at = $2 WHERE id = $3")
         .bind(active)
@@ -1366,7 +1384,15 @@ async fn send_flow_agent_message(
     }
     start_agent_typing(state.clone(), session_id).await;
     tokio::time::sleep(Duration::from_millis(delay_ms.clamp(120, 6000))).await;
-    let _ = add_message(state.clone(), session_id, "agent", text, suggestions, widget).await;
+    let _ = add_message(
+        state.clone(),
+        session_id,
+        "agent",
+        text,
+        suggestions,
+        widget,
+    )
+    .await;
     stop_agent_typing(state, session_id).await;
 }
 
@@ -1375,6 +1401,136 @@ async fn execute_flow(
     session_id: String,
     flow: ChatFlow,
     visitor_text: String,
+) {
+    execute_flow_from(state, session_id, flow, visitor_text, None).await;
+}
+
+/// Save a flow cursor so the next visitor message resumes from this node.
+async fn save_flow_cursor(
+    state: &Arc<AppState>,
+    session_id: &str,
+    flow_id: &str,
+    node_id: &str,
+    node_type: &str,
+) {
+    let _ = sqlx::query(
+        "INSERT INTO flow_cursors (tenant_id, session_id, flow_id, node_id, node_type, created_at) \
+         VALUES ($1, $2, $3, $4, $5, $6) \
+         ON CONFLICT (tenant_id, session_id) DO UPDATE SET flow_id = $3, node_id = $4, node_type = $5, created_at = $6",
+    )
+    .bind(&state.default_tenant_id)
+    .bind(session_id)
+    .bind(flow_id)
+    .bind(node_id)
+    .bind(node_type)
+    .bind(now_iso())
+    .execute(&state.db)
+    .await;
+}
+
+/// Remove the flow cursor when the flow completes or we no longer need to wait.
+async fn clear_flow_cursor(state: &Arc<AppState>, session_id: &str) {
+    let _ = sqlx::query("DELETE FROM flow_cursors WHERE tenant_id = $1 AND session_id = $2")
+        .bind(&state.default_tenant_id)
+        .bind(session_id)
+        .execute(&state.db)
+        .await;
+}
+
+/// Check if a cursor exists. Returns (flow_id, node_id, node_type).
+async fn get_flow_cursor(
+    state: &Arc<AppState>,
+    session_id: &str,
+) -> Option<(String, String, String)> {
+    let row = sqlx::query(
+        "SELECT flow_id, node_id, node_type FROM flow_cursors WHERE tenant_id = $1 AND session_id = $2",
+    )
+    .bind(&state.default_tenant_id)
+    .bind(session_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()?;
+    Some((row.get("flow_id"), row.get("node_id"), row.get("node_type")))
+}
+
+/// Given a paused interactive node and the visitor's reply text, find the
+/// next node to continue from by matching the reply to the appropriate
+/// source handle (btn-N, opt-N, or just the first edge for quick_input/input_form).
+fn resolve_interactive_next(
+    node: &FlowNode,
+    edges: &[FlowEdge],
+    visitor_text: &str,
+) -> Option<String> {
+    match node.node_type.as_str() {
+        "buttons" => {
+            let buttons = flow_node_data_buttons(node, "buttons");
+            let visitor_lower = visitor_text.trim().to_ascii_lowercase();
+            // Find which button index the visitor chose (match against label or value)
+            let chosen_idx = buttons.iter().position(|b| {
+                let label = b
+                    .get("label")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                let value = b
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                label == visitor_lower || value == visitor_lower
+            });
+            if let Some(idx) = chosen_idx {
+                let handle = format!("btn-{}", idx);
+                let edge = edges
+                    .iter()
+                    .find(|e| e.source_handle.as_deref() == Some(handle.as_str()));
+                if let Some(e) = edge {
+                    return Some(e.target.clone());
+                }
+            }
+            // Fallback: try any edge with matching condition text, then first edge
+            edges.first().map(|e| e.target.clone())
+        }
+        "select" => {
+            let options = flow_node_data_options(node, "options");
+            let visitor_lower = visitor_text.trim().to_ascii_lowercase();
+            let chosen_idx = options.iter().position(|o| {
+                let label = o
+                    .get("label")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                let value = o
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                label == visitor_lower || value == visitor_lower
+            });
+            if let Some(idx) = chosen_idx {
+                let handle = format!("opt-{}", idx);
+                let edge = edges
+                    .iter()
+                    .find(|e| e.source_handle.as_deref() == Some(handle.as_str()));
+                if let Some(e) = edge {
+                    return Some(e.target.clone());
+                }
+            }
+            edges.first().map(|e| e.target.clone())
+        }
+        // quick_input, input_form — just continue to the first outgoing edge
+        _ => edges.first().map(|e| e.target.clone()),
+    }
+}
+
+/// Execute a flow, optionally starting from a specific node (for resume).
+async fn execute_flow_from(
+    state: Arc<AppState>,
+    session_id: String,
+    flow: ChatFlow,
+    visitor_text: String,
+    resume_from_node: Option<String>,
 ) {
     if !flow.enabled {
         return;
@@ -1393,14 +1549,25 @@ async fn execute_flow(
             .push(edge.clone());
     }
 
-    let start_id = flow
-        .nodes
-        .iter()
-        .find(|node| node.node_type == "trigger" || node.node_type == "start")
-        .map(|node| node.id.clone())
-        .or_else(|| flow.nodes.first().map(|node| node.id.clone()));
+    let start_id = if let Some(ref resume_id) = resume_from_node {
+        // Resuming: find the next node after the paused interactive node
+        let paused_node = node_by_id.get(resume_id);
+        let edges_from_paused = outgoing.get(resume_id).cloned().unwrap_or_default();
+        if let Some(node) = paused_node {
+            resolve_interactive_next(node, &edges_from_paused, &visitor_text)
+        } else {
+            None
+        }
+    } else {
+        flow.nodes
+            .iter()
+            .find(|node| node.node_type == "trigger" || node.node_type == "start")
+            .map(|node| node.id.clone())
+            .or_else(|| flow.nodes.first().map(|node| node.id.clone()))
+    };
 
     let Some(mut current_id) = start_id else {
+        clear_flow_cursor(&state, &session_id).await;
         return;
     };
 
@@ -1443,7 +1610,11 @@ async fn execute_flow(
                         "buttons": buttons
                     }))
                 };
-                send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget).await;
+                send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget)
+                    .await;
+                // Pause: save cursor and wait for visitor reply
+                save_flow_cursor(&state, &session_id, &flow.id, &node.id, "buttons").await;
+                return;
             }
             "carousel" => {
                 let text = flow_node_data_text(&node, "text").unwrap_or_default();
@@ -1457,7 +1628,8 @@ async fn execute_flow(
                         "items": items
                     }))
                 };
-                send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget).await;
+                send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget)
+                    .await;
             }
             "select" => {
                 let text = flow_node_data_text(&node, "text").unwrap_or_default();
@@ -1473,7 +1645,11 @@ async fn execute_flow(
                         "options": options
                     }))
                 };
-                send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget).await;
+                send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget)
+                    .await;
+                // Pause: save cursor and wait for visitor reply
+                save_flow_cursor(&state, &session_id, &flow.id, &node.id, "select").await;
+                return;
             }
             "input_form" => {
                 let text = flow_node_data_text(&node, "text").unwrap_or_default();
@@ -1488,7 +1664,11 @@ async fn execute_flow(
                         "fields": fields
                     }))
                 };
-                send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget).await;
+                send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget)
+                    .await;
+                // Pause: save cursor and wait for visitor reply
+                save_flow_cursor(&state, &session_id, &flow.id, &node.id, "input_form").await;
+                return;
             }
             "quick_input" => {
                 let text = flow_node_data_text(&node, "text").unwrap_or_default();
@@ -1520,7 +1700,11 @@ async fn execute_flow(
                     "buttonLabel": button_label,
                     "inputType": input_type
                 }));
-                send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget).await;
+                send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget)
+                    .await;
+                // Pause: save cursor and wait for visitor reply
+                save_flow_cursor(&state, &session_id, &flow.id, &node.id, "quick_input").await;
+                return;
             }
             "ai" => {
                 let prompt = flow_node_data_text(&node, "prompt").unwrap_or_default();
@@ -1558,6 +1742,7 @@ async fn execute_flow(
                             .await;
                         }
                     }
+                    clear_flow_cursor(&state, &session_id).await;
                     break;
                 }
                 if decision.close_chat {
@@ -1577,6 +1762,7 @@ async fn execute_flow(
                             .await;
                         }
                     }
+                    clear_flow_cursor(&state, &session_id).await;
                     break;
                 }
             }
@@ -1603,10 +1789,92 @@ async fn execute_flow(
                 }
                 break;
             }
-            "end" => break,
+            "end" => {
+                let behavior = node
+                    .data
+                    .get("behavior")
+                    .and_then(Value::as_str)
+                    .unwrap_or("stop");
+                match behavior {
+                    "close" => {
+                        let close_msg = node
+                            .data
+                            .get("closeMessage")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .trim();
+                        if !close_msg.is_empty() {
+                            send_flow_agent_message(
+                                state.clone(),
+                                &session_id,
+                                close_msg,
+                                300,
+                                None,
+                                None,
+                            )
+                            .await;
+                        }
+                        if let Some((summary, changed)) =
+                            set_session_status(&state, &session_id, "closed").await
+                        {
+                            emit_session_update(&state, summary).await;
+                            if changed {
+                                let _ = add_message(
+                                    state.clone(),
+                                    &session_id,
+                                    "system",
+                                    "Conversation closed by bot",
+                                    None,
+                                    None,
+                                )
+                                .await;
+                            }
+                        }
+                    }
+                    "handover" => {
+                        let handover_msg = node
+                            .data
+                            .get("handoverMessage")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .trim();
+                        if !handover_msg.is_empty() {
+                            send_flow_agent_message(
+                                state.clone(),
+                                &session_id,
+                                handover_msg,
+                                300,
+                                None,
+                                None,
+                            )
+                            .await;
+                        }
+                        if let Some((summary, changed)) =
+                            set_session_handover(&state, &session_id, true).await
+                        {
+                            emit_session_update(&state, summary).await;
+                            if changed {
+                                let _ = add_message(
+                                    state.clone(),
+                                    &session_id,
+                                    "system",
+                                    "Conversation transferred to a human agent",
+                                    None,
+                                    None,
+                                )
+                                .await;
+                            }
+                        }
+                    }
+                    _ => { /* "stop" — just break, keep session open */ }
+                }
+                clear_flow_cursor(&state, &session_id).await;
+                break;
+            }
             _ => {
                 if let Some(text) = flow_node_data_text(&node, "text") {
-                    send_flow_agent_message(state.clone(), &session_id, &text, 320, None, None).await;
+                    send_flow_agent_message(state.clone(), &session_id, &text, 320, None, None)
+                        .await;
                 }
             }
         }
@@ -1616,6 +1884,9 @@ async fn execute_flow(
         };
         current_id = next_id;
     }
+
+    // If we finished the loop without pausing, make sure cursor is cleared
+    clear_flow_cursor(&state, &session_id).await;
 }
 
 async fn run_flow_for_visitor_message(
@@ -1651,17 +1922,33 @@ async fn run_flow_for_visitor_message(
         return;
     }
 
-    let handover_active = sqlx::query_scalar::<_, bool>(
-        "SELECT handover_active FROM sessions WHERE id = $1",
-    )
-    .bind(&session_id)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or(false);
+    let handover_active =
+        sqlx::query_scalar::<_, bool>("SELECT handover_active FROM sessions WHERE id = $1")
+            .bind(&session_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(false);
     if handover_active {
         return;
+    }
+
+    // ── Check for existing flow cursor (resume interactive node) ──
+    if trigger_event == "visitor_message" {
+        if let Some((cursor_flow_id, cursor_node_id, _cursor_node_type)) =
+            get_flow_cursor(&state, &session_id).await
+        {
+            // We have a paused flow — resume it from the paused node
+            if let Some(flow) = get_flow_by_id_db(&state.db, &cursor_flow_id).await {
+                execute_flow_from(state, session_id, flow, visitor_text, Some(cursor_node_id))
+                    .await;
+                return;
+            } else {
+                // Flow was deleted — clear stale cursor and continue normally
+                clear_flow_cursor(&state, &session_id).await;
+            }
+        }
     }
 
     if trigger_event == "page_open" || trigger_event == "widget_open" {
@@ -1677,24 +1964,25 @@ async fn run_flow_for_visitor_message(
         false
     };
 
-    let assigned_flow_id = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT flow_id FROM sessions WHERE id = $1",
-    )
-    .bind(&session_id)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten()
-    .flatten();
+    let assigned_flow_id =
+        sqlx::query_scalar::<_, Option<String>>("SELECT flow_id FROM sessions WHERE id = $1")
+            .bind(&session_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
 
     let flow = if let Some(flow_id) = assigned_flow_id {
         get_flow_by_id_db(&state.db, &flow_id).await
     } else {
-        let row = sqlx::query("SELECT id FROM flows WHERE enabled = true ORDER BY created_at ASC LIMIT 1")
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
+        let row = sqlx::query(
+            "SELECT id FROM flows WHERE enabled = true ORDER BY created_at ASC LIMIT 1",
+        )
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
         if let Some(row) = row {
             let flow_id: String = row.get("id");
             get_flow_by_id_db(&state.db, &flow_id).await
@@ -1885,7 +2173,8 @@ async fn post_message(
         let session_clone = target_session_id.clone();
         let text_clone = body.text.clone();
         tokio::spawn(async move {
-            run_flow_for_visitor_message(state_clone, session_clone, text_clone, "visitor_message").await;
+            run_flow_for_visitor_message(state_clone, session_clone, text_clone, "visitor_message")
+                .await;
         });
     }
 
@@ -2092,7 +2381,11 @@ async fn get_me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl 
         .await
         .unwrap_or_else(|_| state.default_tenant_id.clone());
     match auth_agent_from_headers(&state, &headers).await {
-        Ok(agent) => (StatusCode::OK, Json(json!({ "agent": agent, "tenantId": tenant_id }))).into_response(),
+        Ok(agent) => (
+            StatusCode::OK,
+            Json(json!({ "agent": agent, "tenantId": tenant_id })),
+        )
+            .into_response(),
         Err(err) => err.into_response(),
     }
 }
@@ -2204,7 +2497,8 @@ async fn add_member_to_team(
             .into_response();
     };
     let mut team_agent_ids =
-        serde_json::from_str::<Vec<String>>(&team_row.get::<String, _>("agent_ids")).unwrap_or_default();
+        serde_json::from_str::<Vec<String>>(&team_row.get::<String, _>("agent_ids"))
+            .unwrap_or_default();
     if !team_agent_ids.contains(&agent_id) {
         team_agent_ids.push(agent_id.clone());
     }
@@ -2222,7 +2516,8 @@ async fn add_member_to_team(
         .flatten();
     if let Some(agent_row) = agent_row {
         let mut team_ids =
-            serde_json::from_str::<Vec<String>>(&agent_row.get::<String, _>("team_ids")).unwrap_or_default();
+            serde_json::from_str::<Vec<String>>(&agent_row.get::<String, _>("team_ids"))
+                .unwrap_or_default();
         if !team_ids.contains(&team_id) {
             team_ids.push(team_id.clone());
             let _ = sqlx::query("UPDATE agents SET team_ids = $1 WHERE id = $2")
@@ -2243,11 +2538,13 @@ async fn get_inboxes(State(state): State<Arc<AppState>>, headers: HeaderMap) -> 
         Ok(id) => id,
         Err(err) => return err.into_response(),
     };
-    let rows = sqlx::query("SELECT id, tenant_id, name, channels, agent_ids FROM inboxes WHERE tenant_id = $1")
-        .bind(&tenant_id)
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
+    let rows = sqlx::query(
+        "SELECT id, tenant_id, name, channels, agent_ids FROM inboxes WHERE tenant_id = $1",
+    )
+    .bind(&tenant_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
     let inboxes = rows
         .into_iter()
         .map(|row| Inbox {
@@ -2314,14 +2611,16 @@ async fn create_inbox(
         channels: body.channels,
         agent_ids: vec![],
     };
-    let _ = sqlx::query("INSERT INTO inboxes (id, tenant_id, name, channels, agent_ids) VALUES ($1,$2,$3,$4,$5)")
-        .bind(&inbox.id)
-        .bind(&inbox.tenant_id)
-        .bind(&inbox.name)
-        .bind(serde_json::to_string(&inbox.channels).unwrap_or_else(|_| "[]".to_string()))
-        .bind("[]")
-        .execute(&state.db)
-        .await;
+    let _ = sqlx::query(
+        "INSERT INTO inboxes (id, tenant_id, name, channels, agent_ids) VALUES ($1,$2,$3,$4,$5)",
+    )
+    .bind(&inbox.id)
+    .bind(&inbox.tenant_id)
+    .bind(&inbox.name)
+    .bind(serde_json::to_string(&inbox.channels).unwrap_or_else(|_| "[]".to_string()))
+    .bind("[]")
+    .execute(&state.db)
+    .await;
     (StatusCode::CREATED, Json(json!({ "inbox": inbox }))).into_response()
 }
 
@@ -2349,7 +2648,8 @@ async fn assign_agent_to_inbox(
             .into_response();
     };
     let mut inbox_agent_ids =
-        serde_json::from_str::<Vec<String>>(&inbox_row.get::<String, _>("agent_ids")).unwrap_or_default();
+        serde_json::from_str::<Vec<String>>(&inbox_row.get::<String, _>("agent_ids"))
+            .unwrap_or_default();
     if !inbox_agent_ids.contains(&agent_id) {
         inbox_agent_ids.push(agent_id.clone());
         let _ = sqlx::query("UPDATE inboxes SET agent_ids = $1 WHERE id = $2")
@@ -2366,7 +2666,8 @@ async fn assign_agent_to_inbox(
         .flatten();
     if let Some(agent_row) = agent_row {
         let mut inbox_ids =
-            serde_json::from_str::<Vec<String>>(&agent_row.get::<String, _>("inbox_ids")).unwrap_or_default();
+            serde_json::from_str::<Vec<String>>(&agent_row.get::<String, _>("inbox_ids"))
+                .unwrap_or_default();
         if !inbox_ids.contains(&inbox_id) {
             inbox_ids.push(inbox_id.clone());
             let _ = sqlx::query("UPDATE agents SET inbox_ids = $1 WHERE id = $2")
@@ -2388,15 +2689,16 @@ async fn patch_session_assignee(
     if let Err(err) = auth_agent_from_headers(&state, &headers).await {
         return err.into_response();
     }
-    let affected = sqlx::query("UPDATE sessions SET assignee_agent_id = $1, updated_at = $2 WHERE id = $3")
-        .bind(&body.agent_id)
-        .bind(now_iso())
-        .bind(&session_id)
-        .execute(&state.db)
-        .await
-        .ok()
-        .map(|r| r.rows_affected())
-        .unwrap_or(0);
+    let affected =
+        sqlx::query("UPDATE sessions SET assignee_agent_id = $1, updated_at = $2 WHERE id = $3")
+            .bind(&body.agent_id)
+            .bind(now_iso())
+            .bind(&session_id)
+            .execute(&state.db)
+            .await
+            .ok()
+            .map(|r| r.rows_affected())
+            .unwrap_or(0);
     if affected == 0 {
         return (
             StatusCode::NOT_FOUND,
@@ -2405,13 +2707,13 @@ async fn patch_session_assignee(
             .into_response();
     }
     let Some(summary) = get_session_summary_db(&state.db, &session_id).await else {
-        return (StatusCode::NOT_FOUND, Json(json!({ "error": "session not found" }))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "session not found" })),
+        )
+            .into_response();
     };
-    (
-        StatusCode::OK,
-        Json(json!({ "session": summary })),
-    )
-        .into_response()
+    (StatusCode::OK, Json(json!({ "session": summary }))).into_response()
 }
 
 async fn patch_session_channel(
@@ -2448,13 +2750,13 @@ async fn patch_session_channel(
             .into_response();
     }
     let Some(summary) = get_session_summary_db(&state.db, &session_id).await else {
-        return (StatusCode::NOT_FOUND, Json(json!({ "error": "session not found" }))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "session not found" })),
+        )
+            .into_response();
     };
-    (
-        StatusCode::OK,
-        Json(json!({ "session": summary })),
-    )
-        .into_response()
+    (StatusCode::OK, Json(json!({ "session": summary }))).into_response()
 }
 
 async fn patch_session_inbox(
@@ -2483,13 +2785,13 @@ async fn patch_session_inbox(
             .into_response();
     }
     let Some(summary) = get_session_summary_db(&state.db, &session_id).await else {
-        return (StatusCode::NOT_FOUND, Json(json!({ "error": "session not found" }))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "session not found" })),
+        )
+            .into_response();
     };
-    (
-        StatusCode::OK,
-        Json(json!({ "session": summary })),
-    )
-        .into_response()
+    (StatusCode::OK, Json(json!({ "session": summary }))).into_response()
 }
 
 async fn patch_session_team(
@@ -2518,13 +2820,13 @@ async fn patch_session_team(
             .into_response();
     }
     let Some(summary) = get_session_summary_db(&state.db, &session_id).await else {
-        return (StatusCode::NOT_FOUND, Json(json!({ "error": "session not found" }))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "session not found" })),
+        )
+            .into_response();
     };
-    (
-        StatusCode::OK,
-        Json(json!({ "session": summary })),
-    )
-        .into_response()
+    (StatusCode::OK, Json(json!({ "session": summary }))).into_response()
 }
 
 async fn patch_session_flow(
@@ -2569,13 +2871,13 @@ async fn patch_session_flow(
             .into_response();
     }
     let Some(summary) = get_session_summary_db(&state.db, &session_id).await else {
-        return (StatusCode::NOT_FOUND, Json(json!({ "error": "session not found" }))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "session not found" })),
+        )
+            .into_response();
     };
-    (
-        StatusCode::OK,
-        Json(json!({ "session": summary })),
-    )
-        .into_response()
+    (StatusCode::OK, Json(json!({ "session": summary }))).into_response()
 }
 
 async fn patch_session_handover(
@@ -2666,17 +2968,23 @@ async fn patch_session_meta(
             }
         }
     }
-    let _ = sqlx::query("UPDATE sessions SET status = $1, priority = $2, updated_at = $3 WHERE id = $4")
-        .bind(&next_status)
-        .bind(&next_priority)
-        .bind(now_iso())
-        .bind(&session_id)
-        .execute(&state.db)
-        .await;
+    let _ = sqlx::query(
+        "UPDATE sessions SET status = $1, priority = $2, updated_at = $3 WHERE id = $4",
+    )
+    .bind(&next_status)
+    .bind(&next_priority)
+    .bind(now_iso())
+    .bind(&session_id)
+    .execute(&state.db)
+    .await;
     let changed_to_closed = previous_status != "closed" && next_status == "closed";
     let changed_from_closed_to_open = previous_status == "closed" && next_status == "open";
     let Some(summary) = get_session_summary_db(&state.db, &session_id).await else {
-        return (StatusCode::NOT_FOUND, Json(json!({ "error": "session not found" }))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "session not found" })),
+        )
+            .into_response();
     };
 
     if changed_to_closed {
@@ -3208,10 +3516,7 @@ async fn list_channels(
         .into_response()
 }
 
-async fn get_tenants(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
+async fn get_tenants(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
     if let Err(err) = auth_agent_from_headers(&state, &headers).await {
         return err.into_response();
     }
@@ -3219,11 +3524,12 @@ async fn get_tenants(
         Ok(id) => id,
         Err(err) => return err.into_response(),
     };
-    let rows = sqlx::query("SELECT id, name, slug, created_at, updated_at FROM tenants WHERE id = $1")
-        .bind(&tenant_id)
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
+    let rows =
+        sqlx::query("SELECT id, name, slug, created_at, updated_at FROM tenants WHERE id = $1")
+            .bind(&tenant_id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
     let tenants = rows
         .into_iter()
         .map(|row| Tenant {
@@ -3264,15 +3570,17 @@ async fn create_tenant(
         updated_at: now.clone(),
     };
 
-    if sqlx::query("INSERT INTO tenants (id, name, slug, created_at, updated_at) VALUES ($1,$2,$3,$4,$5)")
-        .bind(&tenant.id)
-        .bind(&tenant.name)
-        .bind(&tenant.slug)
-        .bind(&tenant.created_at)
-        .bind(&tenant.updated_at)
-        .execute(&state.db)
-        .await
-        .is_err()
+    if sqlx::query(
+        "INSERT INTO tenants (id, name, slug, created_at, updated_at) VALUES ($1,$2,$3,$4,$5)",
+    )
+    .bind(&tenant.id)
+    .bind(&tenant.name)
+    .bind(&tenant.slug)
+    .bind(&tenant.created_at)
+    .bind(&tenant.updated_at)
+    .execute(&state.db)
+    .await
+    .is_err()
     {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -3369,7 +3677,11 @@ async fn switch_tenant(
     .bind(now_iso())
     .execute(&state.db)
     .await;
-    (StatusCode::OK, Json(json!({ "tenantId": tenant_id, "token": token }))).into_response()
+    (
+        StatusCode::OK,
+        Json(json!({ "tenantId": tenant_id, "token": token })),
+    )
+        .into_response()
 }
 
 async fn get_tenant_settings(
@@ -3484,10 +3796,7 @@ async fn patch_tenant_settings(
     (StatusCode::OK, Json(json!({ "settings": settings }))).into_response()
 }
 
-async fn get_contacts(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
+async fn get_contacts(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
     if let Err(err) = auth_agent_from_headers(&state, &headers).await {
         return err.into_response();
     }
@@ -4266,7 +4575,10 @@ pub async fn run() {
         )
         .route("/api/channels", get(list_channels))
         .route("/api/agents", get(get_agents))
-        .route("/api/canned-replies", get(get_canned_replies).post(create_canned_reply))
+        .route(
+            "/api/canned-replies",
+            get(get_canned_replies).post(create_canned_reply),
+        )
         .route(
             "/api/canned-replies/{canned_id}",
             patch(update_canned_reply).delete(delete_canned_reply),

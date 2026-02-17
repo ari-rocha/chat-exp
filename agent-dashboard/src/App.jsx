@@ -92,8 +92,13 @@ const FLOW_NODE_PRESETS = {
     classes: ["Sales questions", "Product support", "Other questions"],
     delayMs: 450,
   },
-  condition: { label: "Condition", contains: "refund" },
-  end: { label: "End" },
+  condition: { label: "Condition", contains: "refund", outputs: [] },
+  end: {
+    label: "End",
+    behavior: "close",
+    closeMessage: "",
+    handoverMessage: "",
+  },
 };
 
 const formatTime = (iso) => {
@@ -148,7 +153,9 @@ function normalizeNode(node, index = 0) {
   const x = Number(node?.position?.x);
   const y = Number(node?.position?.y);
   const data =
-    typeof node?.data === "object" && node?.data !== null ? { ...node.data } : {};
+    typeof node?.data === "object" && node?.data !== null
+      ? { ...node.data }
+      : {};
   const type = node?.type || "message";
 
   if (type === "ai") {
@@ -158,7 +165,10 @@ function normalizeNode(node, index = 0) {
     if (!Array.isArray(data.classes) || data.classes.length === 0) {
       data.classes = ["Sales questions", "Product support", "Other questions"];
     }
-    if (!data.prompt || data.prompt === "Help the visitor solve their issue clearly.") {
+    if (
+      !data.prompt ||
+      data.prompt === "Help the visitor solve their issue clearly."
+    ) {
       data.prompt =
         "Classify the user's question and route it to the most relevant branch.";
     }
@@ -295,9 +305,10 @@ export default function App() {
     if (!query) return byStatus;
     return byStatus.filter((session) => {
       const draft = visitorDraftBySession[session.id];
-      const preview = (draft
-        ? `Typing: ${draft}`
-        : session.lastMessage?.text ?? "No messages yet"
+      const preview = (
+        draft
+          ? `Typing: ${draft}`
+          : (session.lastMessage?.text ?? "No messages yet")
       ).toLowerCase();
       const id = session.id.toLowerCase();
       return id.includes(query) || preview.includes(query);
@@ -306,7 +317,8 @@ export default function App() {
 
   const openCount = useMemo(
     () =>
-      sessions.filter((session) => (session.status || "open") === "open").length,
+      sessions.filter((session) => (session.status || "open") === "open")
+        .length,
     [sessions],
   );
   const waitingCount = useMemo(
@@ -343,7 +355,9 @@ export default function App() {
       const normalizedShortcut = shortcut.startsWith("/")
         ? shortcut.slice(1)
         : shortcut;
-      const haystack = [reply.title, reply.body, reply.category].join(" ").toLowerCase();
+      const haystack = [reply.title, reply.body, reply.category]
+        .join(" ")
+        .toLowerCase();
       return (
         normalizedShortcut.includes(query) ||
         shortcut.includes(`/${query}`) ||
@@ -764,7 +778,9 @@ export default function App() {
 
   const deleteCannedReply = async (replyId) => {
     if (!token || !replyId) return;
-    await apiFetch(`/api/canned-replies/${replyId}`, token, { method: "DELETE" });
+    await apiFetch(`/api/canned-replies/${replyId}`, token, {
+      method: "DELETE",
+    });
     setCannedReplies((prev) => prev.filter((reply) => reply.id !== replyId));
   };
 
@@ -917,7 +933,11 @@ export default function App() {
           rel="noreferrer noopener"
         >
           {widget.image ? (
-            <img src={widget.image} alt={widget.title || "Preview"} loading="lazy" />
+            <img
+              src={widget.image}
+              alt={widget.title || "Preview"}
+              loading="lazy"
+            />
           ) : null}
           <div className="agent-link-body">
             <p className="agent-link-site">{widget.siteName || "Link"}</p>
@@ -933,7 +953,11 @@ export default function App() {
       return (
         <div className="agent-widget agent-buttons">
           {widget.buttons.slice(0, 8).map((button, idx) => (
-            <button key={`${message.id}-ab-${idx}`} type="button" className="agent-pill">
+            <button
+              key={`${message.id}-ab-${idx}`}
+              type="button"
+              className="agent-pill"
+            >
               {button?.label || "Option"}
             </button>
           ))}
@@ -947,7 +971,10 @@ export default function App() {
           <select className="agent-select" defaultValue="">
             <option value="">{widget.placeholder || "Select one"}</option>
             {widget.options.map((opt, idx) => {
-              const label = typeof opt === "string" ? opt : opt?.label || opt?.value || "Option";
+              const label =
+                typeof opt === "string"
+                  ? opt
+                  : opt?.label || opt?.value || "Option";
               const value = typeof opt === "string" ? opt : opt?.value || label;
               return (
                 <option key={`${message.id}-so-${idx}`} value={value}>
@@ -956,7 +983,9 @@ export default function App() {
               );
             })}
           </select>
-          <button type="button" className="agent-submit">{widget.buttonLabel || "Send"}</button>
+          <button type="button" className="agent-submit">
+            {widget.buttonLabel || "Send"}
+          </button>
         </div>
       );
     }
@@ -969,7 +998,9 @@ export default function App() {
             type={widget.inputType || "text"}
             placeholder={widget.placeholder || "Type value"}
           />
-          <button type="button" className="agent-submit">{widget.buttonLabel || "Send"}</button>
+          <button type="button" className="agent-submit">
+            {widget.buttonLabel || "Send"}
+          </button>
         </div>
       );
     }
@@ -982,7 +1013,9 @@ export default function App() {
               key={`${message.id}-f-${idx}`}
               className="agent-input"
               type={field?.type || "text"}
-              placeholder={field?.placeholder || field?.label || field?.name || "Field"}
+              placeholder={
+                field?.placeholder || field?.label || field?.name || "Field"
+              }
             />
           ))}
           <button type="button" className="agent-submit">
@@ -996,15 +1029,23 @@ export default function App() {
       return (
         <div className="agent-widget agent-carousel">
           {widget.items.slice(0, 8).map((item, idx) => (
-            <article key={`${message.id}-c-${idx}`} className="agent-carousel-card">
+            <article
+              key={`${message.id}-c-${idx}`}
+              className="agent-carousel-card"
+            >
               {item?.imageUrl ? (
-                <img src={item.imageUrl} alt={item?.title || "Item"} loading="lazy" />
+                <img
+                  src={item.imageUrl}
+                  alt={item?.title || "Item"}
+                  loading="lazy"
+                />
               ) : null}
               <h4>{item?.title || "Item"}</h4>
               {item?.description ? <p>{item.description}</p> : null}
               {item?.price ? <strong>{item.price}</strong> : null}
               <button type="button" className="agent-submit">
-                {(Array.isArray(item?.buttons) && item.buttons[0]?.label) || "View"}
+                {(Array.isArray(item?.buttons) && item.buttons[0]?.label) ||
+                  "View"}
               </button>
             </article>
           ))}
