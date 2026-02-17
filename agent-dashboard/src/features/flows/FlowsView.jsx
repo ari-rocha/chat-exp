@@ -1661,41 +1661,64 @@ function SettingsPanel({
                       <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                         Save to Variable
                       </label>
-                      <select
-                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px]"
-                        value={data?.variableName || ""}
-                        onChange={(e) =>
-                          updateSelectedNodeData({
-                            variableName: e.target.value,
-                          })
-                        }
-                      >
-                        <option value="">— Select variable —</option>
-                        {(attributeDefs || []).map((d) => (
-                          <option key={d.key} value={d.key}>
-                            {d.displayName} ({d.key})
-                          </option>
-                        ))}
-                        <option value="__custom__">✎ Custom variable…</option>
-                      </select>
-                      {data?.variableName === "__custom__" && (
-                        <Input
-                          value={data?._customVarKey || ""}
-                          onChange={(e) => {
-                            const v = e.target.value.replace(
-                              /[^a-zA-Z0-9_]/g,
-                              "",
-                            );
-                            updateSelectedNodeData({
-                              _customVarKey: v,
-                              variableName: v || "__custom__",
-                            });
-                          }}
-                          placeholder="custom_var_name"
-                          className="mt-1.5 text-[12px] font-mono"
-                          autoFocus
-                        />
-                      )}
+                      {(() => {
+                        const knownKeys = (attributeDefs || []).map(
+                          (d) => d.key,
+                        );
+                        const curVar = data?.variableName || "";
+                        const isCustom =
+                          data?._isCustomVar ||
+                          (curVar !== "" && !knownKeys.includes(curVar));
+                        const selectValue = isCustom ? "__custom__" : curVar;
+                        return (
+                          <>
+                            <select
+                              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px]"
+                              value={selectValue}
+                              onChange={(e) => {
+                                if (e.target.value === "__custom__") {
+                                  updateSelectedNodeData({
+                                    _isCustomVar: true,
+                                    variableName: "",
+                                  });
+                                } else {
+                                  updateSelectedNodeData({
+                                    _isCustomVar: false,
+                                    variableName: e.target.value,
+                                  });
+                                }
+                              }}
+                            >
+                              <option value="">— Select variable —</option>
+                              {(attributeDefs || []).map((d) => (
+                                <option key={d.key} value={d.key}>
+                                  {d.displayName} ({d.key})
+                                </option>
+                              ))}
+                              <option value="__custom__">
+                                ✎ Custom variable…
+                              </option>
+                            </select>
+                            {isCustom && (
+                              <Input
+                                value={curVar}
+                                onChange={(e) => {
+                                  const v = e.target.value.replace(
+                                    /[^a-zA-Z0-9_]/g,
+                                    "",
+                                  );
+                                  updateSelectedNodeData({
+                                    variableName: v,
+                                  });
+                                }}
+                                placeholder="custom_var_name"
+                                className="mt-1.5 text-[12px] font-mono"
+                                autoFocus
+                              />
+                            )}
+                          </>
+                        );
+                      })()}
                       <p className="mt-1 text-[10px] text-slate-400">
                         Store the response in this flow variable. Use{" "}
                         {"{{variableName}}"} in later nodes.
@@ -2263,54 +2286,78 @@ function SettingsPanel({
                     <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                       Attribute
                     </label>
-                    <select
-                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px]"
-                      value={data?.attributeName || ""}
-                      onChange={(e) =>
-                        updateSelectedNodeData({
-                          attributeName: e.target.value,
-                        })
-                      }
-                    >
-                      <option value="">— Select attribute —</option>
-                      {builtInAttrs.length > 0 && (
-                        <optgroup label="Built-in">
-                          {builtInAttrs.map((a) => (
-                            <option key={a.key} value={a.key}>
-                              {a.displayName}
-                            </option>
-                          ))}
-                        </optgroup>
-                      )}
-                      {filteredDefs.length > 0 && (
-                        <optgroup label="Custom Attributes">
-                          {filteredDefs.map((d) => (
-                            <option key={d.key} value={d.key}>
-                              {d.displayName}
-                            </option>
-                          ))}
-                        </optgroup>
-                      )}
-                      <option value="__custom__">✎ Custom key…</option>
-                    </select>
-                    {data?.attributeName === "__custom__" && (
-                      <Input
-                        value={data?._customAttrKey || ""}
-                        onChange={(e) => {
-                          const v = e.target.value.replace(
-                            /[^a-zA-Z0-9_]/g,
-                            "",
-                          );
-                          updateSelectedNodeData({
-                            _customAttrKey: v,
-                            attributeName: v || "__custom__",
-                          });
-                        }}
-                        placeholder="custom_key"
-                        className="mt-1.5 text-[12px] font-mono"
-                        autoFocus
-                      />
-                    )}
+                    {(() => {
+                      const knownAttrKeys = [
+                        ...builtInAttrs.map((a) => a.key),
+                        ...filteredDefs.map((d) => d.key),
+                      ];
+                      const curAttr = data?.attributeName || "";
+                      const isCustomAttr =
+                        data?._isCustomAttr ||
+                        (curAttr !== "" && !knownAttrKeys.includes(curAttr));
+                      const selectAttrValue = isCustomAttr
+                        ? "__custom__"
+                        : curAttr;
+                      return (
+                        <>
+                          <select
+                            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px]"
+                            value={selectAttrValue}
+                            onChange={(e) => {
+                              if (e.target.value === "__custom__") {
+                                updateSelectedNodeData({
+                                  _isCustomAttr: true,
+                                  attributeName: "",
+                                });
+                              } else {
+                                updateSelectedNodeData({
+                                  _isCustomAttr: false,
+                                  attributeName: e.target.value,
+                                });
+                              }
+                            }}
+                          >
+                            <option value="">— Select attribute —</option>
+                            {builtInAttrs.length > 0 && (
+                              <optgroup label="Built-in">
+                                {builtInAttrs.map((a) => (
+                                  <option key={a.key} value={a.key}>
+                                    {a.displayName}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
+                            {filteredDefs.length > 0 && (
+                              <optgroup label="Custom Attributes">
+                                {filteredDefs.map((d) => (
+                                  <option key={d.key} value={d.key}>
+                                    {d.displayName}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
+                            <option value="__custom__">✎ Custom key…</option>
+                          </select>
+                          {isCustomAttr && (
+                            <Input
+                              value={curAttr}
+                              onChange={(e) => {
+                                const v = e.target.value.replace(
+                                  /[^a-zA-Z0-9_]/g,
+                                  "",
+                                );
+                                updateSelectedNodeData({
+                                  attributeName: v,
+                                });
+                              }}
+                              placeholder="custom_key"
+                              className="mt-1.5 text-[12px] font-mono"
+                              autoFocus
+                            />
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                   <div>
                     <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
