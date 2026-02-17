@@ -352,6 +352,28 @@ export default function App() {
                           ))}
                         </div>
                     )}
+                    {m.sender === "agent" && m.widget?.type === "link_preview" && (
+                      <a
+                        className="message-widget link-preview-card"
+                        href={m.widget?.url || "#"}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                      >
+                        {m.widget?.image ? (
+                          <img
+                            src={m.widget.image}
+                            alt={m.widget?.title || "Link preview"}
+                            loading="lazy"
+                          />
+                        ) : null}
+                        <div className="link-preview-body">
+                          <p className="link-preview-site">{m.widget?.siteName || "Link"}</p>
+                          <h4>{m.widget?.title || m.widget?.url || "Open link"}</h4>
+                          {m.widget?.description ? <p>{m.widget.description}</p> : null}
+                          <span className="link-preview-url">{m.widget?.url || ""}</span>
+                        </div>
+                      </a>
+                    )}
                     {m.sender === "agent" && m.widget?.type === "select" && Array.isArray(m.widget?.options) && (
                       <div className="message-widget inline-form-widget">
                         <select

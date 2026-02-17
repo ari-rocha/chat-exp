@@ -20,6 +20,7 @@ use axum::{
 use bcrypt::{hash, verify, DEFAULT_COST};
 use chrono::Utc;
 use futures_util::{sink::SinkExt, stream::StreamExt};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, Mutex, RwLock};
@@ -315,6 +316,34 @@ struct EventEnvelopeIn {
 
 fn now_iso() -> String {
     Utc::now().to_rfc3339()
+}
+
+fn first_http_url(text: &str) -> Option<String> {
+    let regex = Regex::new(r#"https?://[^\s<>()"]+"#).ok()?;
+    let capture = regex.find(text)?;
+    Some(capture.as_str().trim_end_matches(&['.', ',', ';', ')', ']'][..]).to_string())
+}
+
+fn extract_meta_tag(html: &str, property: &str) -> Option<String> {
+    let pattern = format!(
+        r#"(?is)<meta[^>]+(?:property|name)\s*=\s*["']{}["'][^>]+content\s*=\s*["']([^"']+)["'][^>]*>"#,
+        regex::escape(property)
+    );
+    let regex = Regex::new(&pattern).ok()?;
+    regex
+        .captures(html)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+fn extract_title_tag(html: &str) -> Option<String> {
+    let regex = Regex::new(r"(?is)<title[^>]*>(.*?)</title>").ok()?;
+    regex
+        .captures(html)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().replace('\n', " ").trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 fn session_summary(session: &Session) -> SessionSummary {
@@ -672,6 +701,11 @@ async fn add_message(
         return None;
     }
 
+    let mut final_widget = widget;
+    if sender == "agent" && final_widget.is_none() {
+        final_widget = build_link_preview_widget(&state, trimmed).await;
+    }
+
     let (message, summary) = {
         let mut sessions = state.sessions.write().await;
         let session = sessions.get_mut(session_id)?;
@@ -682,7 +716,7 @@ async fn add_message(
             sender: sender.to_string(),
             text: trimmed.to_string(),
             suggestions: suggestions.unwrap_or_default(),
-            widget,
+            widget: final_widget,
             created_at: now_iso(),
         };
 
@@ -710,6 +744,43 @@ async fn add_message(
     emit_to_clients(&state, &agents, "session:updated", summary).await;
 
     Some(message)
+}
+
+async fn build_link_preview_widget(state: &Arc<AppState>, text: &str) -> Option<Value> {
+    let url = first_http_url(text)?;
+    let response = state
+        .ai_client
+        .get(&url)
+        .timeout(Duration::from_secs(5))
+        .header("user-agent", "chat-exp-link-preview/1.0")
+        .send()
+        .await
+        .ok()?;
+
+    if !response.status().is_success() {
+        return None;
+    }
+
+    let body = response.text().await.ok()?;
+    let title = extract_meta_tag(&body, "og:title")
+        .or_else(|| extract_meta_tag(&body, "twitter:title"))
+        .or_else(|| extract_title_tag(&body))
+        .unwrap_or_else(|| url.clone());
+    let description = extract_meta_tag(&body, "og:description")
+        .or_else(|| extract_meta_tag(&body, "description"))
+        .or_else(|| extract_meta_tag(&body, "twitter:description"))
+        .unwrap_or_default();
+    let image = extract_meta_tag(&body, "og:image").unwrap_or_default();
+    let site_name = extract_meta_tag(&body, "og:site_name").unwrap_or_default();
+
+    Some(json!({
+        "type": "link_preview",
+        "url": url,
+        "title": title,
+        "description": description,
+        "image": image,
+        "siteName": site_name
+    }))
 }
 
 fn flow_node_data_text(node: &FlowNode, key: &str) -> Option<String> {

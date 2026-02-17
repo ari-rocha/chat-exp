@@ -397,6 +397,59 @@ body {
   max-width: 100%;
 }
 
+.link-preview-card {
+  display: block;
+  text-decoration: none;
+  border: 1px solid #d4d7de;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+  color: #111827;
+}
+
+.link-preview-card img {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  display: block;
+  background: #e5e7eb;
+}
+
+.link-preview-body {
+  padding: 10px;
+}
+
+.link-preview-site {
+  margin: 0 0 4px;
+  font-size: 11px;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.link-preview-body h4 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.link-preview-body p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.3;
+  color: #4b5563;
+}
+
+.link-preview-url {
+  display: block;
+  margin-top: 8px;
+  font-size: 11px;
+  color: #2563eb;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .inline-form-widget {
   display: flex;
   flex-direction: column;

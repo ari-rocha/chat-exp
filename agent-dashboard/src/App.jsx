@@ -689,6 +689,113 @@ export default function App() {
         .join("\n")
     : "";
 
+  const renderMessageWidget = (message) => {
+    const widget = message?.widget;
+    if (!widget || message?.sender !== "agent") return null;
+
+    if (widget.type === "link_preview") {
+      return (
+        <a
+          className="agent-widget agent-link-preview"
+          href={widget.url || "#"}
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          {widget.image ? <img src={widget.image} alt={widget.title || "Preview"} loading="lazy" /> : null}
+          <div className="agent-link-body">
+            <p className="agent-link-site">{widget.siteName || "Link"}</p>
+            <h4>{widget.title || widget.url || "Open link"}</h4>
+            {widget.description ? <p>{widget.description}</p> : null}
+            <span>{widget.url || ""}</span>
+          </div>
+        </a>
+      );
+    }
+
+    if (widget.type === "buttons" && Array.isArray(widget.buttons)) {
+      return (
+        <div className="agent-widget agent-buttons">
+          {widget.buttons.slice(0, 8).map((button, idx) => (
+            <button key={`${message.id}-ab-${idx}`} type="button" className="agent-pill">
+              {button?.label || "Option"}
+            </button>
+          ))}
+        </div>
+      );
+    }
+
+    if (widget.type === "select" && Array.isArray(widget.options)) {
+      return (
+        <div className="agent-widget agent-inline">
+          <select className="agent-select" defaultValue="">
+            <option value="">{widget.placeholder || "Select one"}</option>
+            {widget.options.map((opt, idx) => {
+              const label = typeof opt === "string" ? opt : opt?.label || opt?.value || "Option";
+              const value = typeof opt === "string" ? opt : opt?.value || label;
+              return (
+                <option key={`${message.id}-so-${idx}`} value={value}>
+                  {label}
+                </option>
+              );
+            })}
+          </select>
+          <button type="button" className="agent-submit">{widget.buttonLabel || "Send"}</button>
+        </div>
+      );
+    }
+
+    if (widget.type === "quick_input") {
+      return (
+        <div className="agent-widget agent-inline">
+          <input
+            className="agent-input"
+            type={widget.inputType || "text"}
+            placeholder={widget.placeholder || "Type value"}
+          />
+          <button type="button" className="agent-submit">{widget.buttonLabel || "Send"}</button>
+        </div>
+      );
+    }
+
+    if (widget.type === "input_form" && Array.isArray(widget.fields)) {
+      return (
+        <div className="agent-widget agent-form">
+          {widget.fields.slice(0, 8).map((field, idx) => (
+            <input
+              key={`${message.id}-f-${idx}`}
+              className="agent-input"
+              type={field?.type || "text"}
+              placeholder={field?.placeholder || field?.label || field?.name || "Field"}
+            />
+          ))}
+          <button type="button" className="agent-submit">
+            {widget.submitLabel || "Submit"}
+          </button>
+        </div>
+      );
+    }
+
+    if (widget.type === "carousel" && Array.isArray(widget.items)) {
+      return (
+        <div className="agent-widget agent-carousel">
+          {widget.items.slice(0, 8).map((item, idx) => (
+            <article key={`${message.id}-c-${idx}`} className="agent-carousel-card">
+              {item?.imageUrl ? <img src={item.imageUrl} alt={item?.title || "Item"} loading="lazy" /> : null}
+              <h4>{item?.title || "Item"}</h4>
+              {item?.description ? <p>{item.description}</p> : null}
+              {item?.price ? <strong>{item.price}</strong> : null}
+              <button type="button" className="agent-submit">
+                {(Array.isArray(item?.buttons) && item.buttons[0]?.label) || "View"}
+              </button>
+            </article>
+          ))}
+        </div>
+      );
+    }
+
+    return null;
+  };
+
   const removeSelectedNode = () => {
     if (!selectedNodeId) return;
     setFlowNodes((prev) => prev.filter((node) => node.id !== selectedNodeId));
@@ -889,6 +996,7 @@ export default function App() {
                             {String(message.text ?? "")}
                           </ReactMarkdown>
                         </div>
+                        {renderMessageWidget(message)}
                         <time
                           className={`mt-1 block text-right text-[11px] ${
                             message.sender === "agent"
