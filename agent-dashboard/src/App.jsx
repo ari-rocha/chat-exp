@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
 import {
   addEdge,
   Background,
@@ -7,17 +12,12 @@ import {
   MiniMap,
   ReactFlow,
   useEdgesState,
-  useNodesState
+  useNodesState,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
-import { Textarea } from "@/components/ui/textarea";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:4000/ws";
@@ -25,10 +25,83 @@ const TOKEN_KEY = "agent_auth_token";
 
 const FLOW_NODE_PRESETS = {
   trigger: { label: "Trigger", on: "widget_open", keywords: [] },
-  message: { label: "Message", text: "Thanks for contacting us.", delayMs: 420 },
-  ai: { label: "AI Reply", prompt: "Help the visitor solve their issue clearly.", delayMs: 700 },
+  message: {
+    label: "Message",
+    text: "Thanks for contacting us.",
+    delayMs: 420,
+  },
+  buttons: {
+    label: "Buttons",
+    text: "Choose an option:",
+    delayMs: 420,
+    buttons: ["Bot's Technical Documentation", "Test"],
+  },
+  carousel: {
+    label: "Carousel",
+    text: "Here are some products you might like:",
+    delayMs: 520,
+    items: [
+      {
+        title: "Starter Plan",
+        description: "Good for small teams getting started.",
+        price: "$29/mo",
+        imageUrl: "",
+        buttons: [{ label: "View", value: "View Starter Plan" }],
+      },
+    ],
+  },
+  select: {
+    label: "Select",
+    text: "Please choose one option:",
+    delayMs: 420,
+    placeholder: "Select one",
+    buttonLabel: "Send",
+    options: ["Bot's Technical Documentation", "Pricing", "Talk to sales"],
+  },
+  input_form: {
+    label: "Input Form",
+    text: "Please fill your information:",
+    delayMs: 420,
+    submitLabel: "Submit",
+    fields: [
+      {
+        name: "first_name",
+        label: "First name",
+        placeholder: "John",
+        type: "text",
+        required: true,
+      },
+      {
+        name: "last_name",
+        label: "Last name",
+        placeholder: "Doe",
+        type: "text",
+        required: true,
+      },
+      {
+        name: "email",
+        label: "Email",
+        placeholder: "john@company.com",
+        type: "email",
+        required: true,
+      },
+    ],
+  },
+  quick_input: {
+    label: "Quick Input",
+    text: "How should we get back to you?",
+    delayMs: 420,
+    placeholder: "martha.collins@gmail.com",
+    buttonLabel: "Send",
+    inputType: "email",
+  },
+  ai: {
+    label: "AI Reply",
+    prompt: "Help the visitor solve their issue clearly.",
+    delayMs: 700,
+  },
   condition: { label: "Condition", contains: "refund" },
-  end: { label: "End" }
+  end: { label: "End" },
 };
 
 const formatTime = (iso) => {
@@ -59,7 +132,10 @@ function createNode(type, x = 120, y = 120) {
     id: nodeId,
     type,
     position: { x, y },
-    data: { ...FLOW_NODE_PRESETS[type], label: FLOW_NODE_PRESETS[type]?.label ?? type }
+    data: {
+      ...FLOW_NODE_PRESETS[type],
+      label: FLOW_NODE_PRESETS[type]?.label ?? type,
+    },
   };
 }
 
@@ -71,8 +147,8 @@ function defaultFlowGraph() {
     nodes: [trigger, ai, end],
     edges: [
       { id: `e-${trigger.id}-${ai.id}`, source: trigger.id, target: ai.id },
-      { id: `e-${ai.id}-${end.id}`, source: ai.id, target: end.id }
-    ]
+      { id: `e-${ai.id}-${end.id}`, source: ai.id, target: end.id },
+    ],
   };
 }
 
@@ -84,9 +160,10 @@ function normalizeNode(node, index = 0) {
     type: node?.type || "message",
     position: {
       x: Number.isFinite(x) ? x : 120 + index * 40,
-      y: Number.isFinite(y) ? y : 140 + index * 30
+      y: Number.isFinite(y) ? y : 140 + index * 30,
     },
-    data: typeof node?.data === "object" && node?.data !== null ? node.data : {}
+    data:
+      typeof node?.data === "object" && node?.data !== null ? node.data : {},
   };
 }
 
@@ -97,7 +174,8 @@ function normalizeEdge(edge, index = 0) {
     target: String(edge?.target ?? ""),
     sourceHandle: edge?.sourceHandle ?? null,
     targetHandle: edge?.targetHandle ?? null,
-    data: typeof edge?.data === "object" && edge?.data !== null ? edge.data : {}
+    data:
+      typeof edge?.data === "object" && edge?.data !== null ? edge.data : {},
   };
 }
 
@@ -106,7 +184,11 @@ export default function App() {
 
   const [token, setToken] = useState(localStorage.getItem(TOKEN_KEY) || "");
   const [authMode, setAuthMode] = useState("login");
-  const [authForm, setAuthForm] = useState({ name: "", email: "", password: "" });
+  const [authForm, setAuthForm] = useState({
+    name: "",
+    email: "",
+    password: "",
+  });
   const [authError, setAuthError] = useState("");
 
   const [agent, setAgent] = useState(null);
@@ -143,14 +225,17 @@ export default function App() {
 
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === activeId) ?? null,
-    [sessions, activeId]
+    [sessions, activeId],
   );
 
-  const activeFlow = useMemo(() => flows.find((flow) => flow.id === activeFlowId) ?? null, [flows, activeFlowId]);
+  const activeFlow = useMemo(
+    () => flows.find((flow) => flow.id === activeFlowId) ?? null,
+    [flows, activeFlowId],
+  );
 
   const selectedNode = useMemo(
     () => flowNodes.find((node) => node.id === selectedNodeId) ?? null,
-    [flowNodes, selectedNodeId]
+    [flowNodes, selectedNodeId],
   );
 
   const sessionPreview = (session) => {
@@ -159,19 +244,24 @@ export default function App() {
     return session.lastMessage?.text ?? "No messages yet";
   };
 
-  const loadFlowIntoEditor = useCallback((flow) => {
-    if (!flow) return;
-    setFlowName(flow.name ?? "Untitled flow");
-    setFlowDescription(flow.description ?? "");
-    setFlowEnabled(Boolean(flow.enabled));
-    const safeNodes = (Array.isArray(flow.nodes) ? flow.nodes : []).map((node, index) => normalizeNode(node, index));
-    const safeEdges = (Array.isArray(flow.edges) ? flow.edges : [])
-      .map((edge, index) => normalizeEdge(edge, index))
-      .filter((edge) => edge.source && edge.target);
-    setFlowNodes(safeNodes);
-    setFlowEdges(safeEdges);
-    setSelectedNodeId("");
-  }, [setFlowEdges, setFlowNodes]);
+  const loadFlowIntoEditor = useCallback(
+    (flow) => {
+      if (!flow) return;
+      setFlowName(flow.name ?? "Untitled flow");
+      setFlowDescription(flow.description ?? "");
+      setFlowEnabled(Boolean(flow.enabled));
+      const safeNodes = (Array.isArray(flow.nodes) ? flow.nodes : []).map(
+        (node, index) => normalizeNode(node, index),
+      );
+      const safeEdges = (Array.isArray(flow.edges) ? flow.edges : [])
+        .map((edge, index) => normalizeEdge(edge, index))
+        .filter((edge) => edge.source && edge.target);
+      setFlowNodes(safeNodes);
+      setFlowEdges(safeEdges);
+      setSelectedNodeId("");
+    },
+    [setFlowEdges, setFlowNodes],
+  );
 
   const sendWsEvent = (event, data) => {
     const ws = wsRef.current;
@@ -200,7 +290,7 @@ export default function App() {
     if (!token || !activeId) return;
     const payload = await apiFetch(`/api/session/${activeId}/${route}`, token, {
       method: "PATCH",
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
     });
 
     if (!payload?.session) return;
@@ -216,14 +306,22 @@ export default function App() {
   };
 
   const loadBootstrap = async (authToken) => {
-    const [meRes, sessionsRes, teamsRes, inboxesRes, channelsRes, agentsRes, flowsRes] = await Promise.all([
+    const [
+      meRes,
+      sessionsRes,
+      teamsRes,
+      inboxesRes,
+      channelsRes,
+      agentsRes,
+      flowsRes,
+    ] = await Promise.all([
       apiFetch("/api/auth/me", authToken),
       apiFetch("/api/sessions", authToken),
       apiFetch("/api/teams", authToken),
       apiFetch("/api/inboxes", authToken),
       apiFetch("/api/channels", authToken),
       apiFetch("/api/agents", authToken),
-      apiFetch("/api/flows", authToken)
+      apiFetch("/api/flows", authToken),
     ]);
 
     setAgent(meRes.agent ?? null);
@@ -258,8 +356,12 @@ export default function App() {
       ws.addEventListener("open", () => {
         sendWsEvent("agent:join", { token: authToken });
         if (activeIdRef.current) {
-          sendWsEvent("agent:watch-session", { sessionId: activeIdRef.current });
-          sendWsEvent("agent:request-history", { sessionId: activeIdRef.current });
+          sendWsEvent("agent:watch-session", {
+            sessionId: activeIdRef.current,
+          });
+          sendWsEvent("agent:request-history", {
+            sessionId: activeIdRef.current,
+          });
         }
       });
 
@@ -400,10 +502,11 @@ export default function App() {
     e.preventDefault();
     setAuthError("");
     try {
-      const path = authMode === "register" ? "/api/auth/register" : "/api/auth/login";
+      const path =
+        authMode === "register" ? "/api/auth/register" : "/api/auth/login";
       const payload = await apiFetch(path, "", {
         method: "POST",
-        body: JSON.stringify(authForm)
+        body: JSON.stringify(authForm),
       });
       localStorage.setItem(TOKEN_KEY, payload.token);
       setToken(payload.token);
@@ -436,7 +539,7 @@ export default function App() {
     if (!token || !activeId || !noteText.trim()) return;
     const payload = await apiFetch(`/api/session/${activeId}/notes`, token, {
       method: "POST",
-      body: JSON.stringify({ text: noteText.trim() })
+      body: JSON.stringify({ text: noteText.trim() }),
     });
     setNotes((prev) => [...prev, payload.note]);
     setNoteText("");
@@ -446,7 +549,7 @@ export default function App() {
     if (!token) return;
     const payload = await apiFetch("/api/agent/status", token, {
       method: "PATCH",
-      body: JSON.stringify({ status })
+      body: JSON.stringify({ status }),
     });
     setAgent(payload.agent);
   };
@@ -460,8 +563,8 @@ export default function App() {
         description: "",
         enabled: true,
         nodes: graph.nodes,
-        edges: graph.edges
-      })
+        edges: graph.edges,
+      }),
     });
 
     const created = payload.flow;
@@ -476,7 +579,9 @@ export default function App() {
     if (!token || !activeFlowId) return;
     setFlowSaveStatus("Saving...");
     try {
-      const nodesPayload = flowNodes.map((node, index) => normalizeNode(node, index));
+      const nodesPayload = flowNodes.map((node, index) =>
+        normalizeNode(node, index),
+      );
       const edgesPayload = flowEdges
         .map((edge, index) => normalizeEdge(edge, index))
         .filter((edge) => edge.source && edge.target);
@@ -487,8 +592,8 @@ export default function App() {
           description: flowDescription,
           enabled: flowEnabled,
           nodes: nodesPayload,
-          edges: edgesPayload
-        })
+          edges: edgesPayload,
+        }),
       });
 
       const saved = payload.flow;
@@ -497,7 +602,9 @@ export default function App() {
         return;
       }
 
-      setFlows((prev) => prev.map((flow) => (flow.id === saved.id ? saved : flow)));
+      setFlows((prev) =>
+        prev.map((flow) => (flow.id === saved.id ? saved : flow)),
+      );
       setFlowSaveStatus("Saved");
       setTimeout(() => setFlowSaveStatus(""), 1200);
     } catch (error) {
@@ -523,14 +630,25 @@ export default function App() {
       return next;
     });
 
-    setSessions((prev) => prev.map((session) => (session.flowId === activeFlowId ? { ...session, flowId: null } : session)));
+    setSessions((prev) =>
+      prev.map((session) =>
+        session.flowId === activeFlowId
+          ? { ...session, flowId: null }
+          : session,
+      ),
+    );
   };
 
   const onFlowConnect = useCallback(
     (connection) => {
-      setFlowEdges((prev) => addEdge({ ...connection, id: `e-${crypto.randomUUID().slice(0, 8)}` }, prev));
+      setFlowEdges((prev) =>
+        addEdge(
+          { ...connection, id: `e-${crypto.randomUUID().slice(0, 8)}` },
+          prev,
+        ),
+      );
     },
-    [setFlowEdges]
+    [setFlowEdges],
   );
 
   const addFlowNode = (type) => {
@@ -550,18 +668,36 @@ export default function App() {
               ...node,
               data: {
                 ...(node.data ?? {}),
-                ...patch
-              }
+                ...patch,
+              },
             }
-          : node
-      )
+          : node,
+      ),
     );
   };
+
+  const carouselItemsText = Array.isArray(selectedNode?.data?.items)
+    ? selectedNode.data.items
+        .map((item) =>
+          [
+            item?.title || "",
+            item?.description || "",
+            item?.price || "",
+            item?.imageUrl || "",
+          ].join(" | "),
+        )
+        .join("\n")
+    : "";
 
   const removeSelectedNode = () => {
     if (!selectedNodeId) return;
     setFlowNodes((prev) => prev.filter((node) => node.id !== selectedNodeId));
-    setFlowEdges((prev) => prev.filter((edge) => edge.source !== selectedNodeId && edge.target !== selectedNodeId));
+    setFlowEdges((prev) =>
+      prev.filter(
+        (edge) =>
+          edge.source !== selectedNodeId && edge.target !== selectedNodeId,
+      ),
+    );
     setSelectedNodeId("");
   };
 
@@ -572,14 +708,18 @@ export default function App() {
           <h1 className="text-xl font-semibold text-slate-900">
             {authMode === "register" ? "Create Agent Account" : "Agent Sign In"}
           </h1>
-          <p className="mt-1 text-sm text-slate-500">Access your inboxes, teams and flow automations.</p>
+          <p className="mt-1 text-sm text-slate-500">
+            Access your inboxes, teams and flow automations.
+          </p>
 
           <form className="mt-4 space-y-3" onSubmit={submitAuth}>
             {authMode === "register" && (
               <Input
                 placeholder="Full name"
                 value={authForm.name}
-                onChange={(e) => setAuthForm((p) => ({ ...p, name: e.target.value }))}
+                onChange={(e) =>
+                  setAuthForm((p) => ({ ...p, name: e.target.value }))
+                }
                 required
               />
             )}
@@ -587,27 +727,38 @@ export default function App() {
               type="email"
               placeholder="Email"
               value={authForm.email}
-              onChange={(e) => setAuthForm((p) => ({ ...p, email: e.target.value }))}
+              onChange={(e) =>
+                setAuthForm((p) => ({ ...p, email: e.target.value }))
+              }
               required
             />
             <Input
               type="password"
               placeholder="Password"
               value={authForm.password}
-              onChange={(e) => setAuthForm((p) => ({ ...p, password: e.target.value }))}
+              onChange={(e) =>
+                setAuthForm((p) => ({ ...p, password: e.target.value }))
+              }
               required
             />
             {authError && <p className="text-sm text-red-600">{authError}</p>}
-            <Button className="w-full bg-blue-600 text-white hover:bg-blue-700" type="submit">
+            <Button
+              className="w-full bg-blue-600 text-white hover:bg-blue-700"
+              type="submit"
+            >
               {authMode === "register" ? "Register" : "Login"}
             </Button>
           </form>
 
           <button
             className="mt-4 text-sm text-blue-700"
-            onClick={() => setAuthMode((m) => (m === "register" ? "login" : "register"))}
+            onClick={() =>
+              setAuthMode((m) => (m === "register" ? "login" : "register"))
+            }
           >
-            {authMode === "register" ? "Already have an account? Login" : "Need an account? Register"}
+            {authMode === "register"
+              ? "Already have an account? Login"
+              : "Need an account? Register"}
           </button>
         </div>
       </div>
@@ -626,7 +777,11 @@ export default function App() {
             >
               Conversations
             </Button>
-            <Button variant={view === "flows" ? "default" : "outline"} size="sm" onClick={() => setView("flows")}>
+            <Button
+              variant={view === "flows" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setView("flows")}
+            >
               Flow Builder
             </Button>
           </div>
@@ -645,7 +800,9 @@ export default function App() {
               <div className="flex items-center justify-between border-b border-slate-200 p-4">
                 <div>
                   <h2 className="text-sm font-semibold">Conversations</h2>
-                  <p className="text-xs text-slate-500">{sessions.length} total</p>
+                  <p className="text-xs text-slate-500">
+                    {sessions.length} total
+                  </p>
                 </div>
                 <Button size="sm" variant="outline" onClick={createFlow}>
                   + Flow
@@ -653,7 +810,9 @@ export default function App() {
               </div>
 
               <div className="p-3">
-                <label className="mb-1 block text-xs text-slate-500">Status</label>
+                <label className="mb-1 block text-xs text-slate-500">
+                  Status
+                </label>
                 <select
                   className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
                   value={agent?.status || "online"}
@@ -681,11 +840,18 @@ export default function App() {
                       >
                         <div className="mb-1 flex items-center justify-between text-xs">
                           <strong>{session.id.slice(0, 8)}</strong>
-                          <span className="text-slate-400">{formatTime(session.updatedAt)}</span>
+                          <span className="text-slate-400">
+                            {formatTime(session.updatedAt)}
+                          </span>
                         </div>
-                        <p className="truncate text-xs text-slate-500">{sessionPreview(session)}</p>
+                        <p className="truncate text-xs text-slate-500">
+                          {sessionPreview(session)}
+                        </p>
                         <p className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">
-                          {session.channel} {session.assigneeAgentId ? "• assigned" : "• unassigned"}
+                          {session.channel}{" "}
+                          {session.assigneeAgentId
+                            ? "• assigned"
+                            : "• unassigned"}
                         </p>
                       </button>
                     );
@@ -697,9 +863,12 @@ export default function App() {
             <section className="grid min-h-0 grid-rows-[1fr_90px] bg-slate-100">
               <ScrollArea className="h-full p-4">
                 <div className="space-y-3">
-                  {messages.map((message) => (
+                  {messages.map((message) =>
                     message.sender === "system" ? (
-                      <div key={message.id} className="flex justify-center py-1">
+                      <div
+                        key={message.id}
+                        className="flex justify-center py-1"
+                      >
                         <span className="rounded-full bg-slate-200 px-3 py-1 text-xs text-slate-600">
                           {String(message.text ?? "")}
                         </span>
@@ -722,28 +891,41 @@ export default function App() {
                         </div>
                         <time
                           className={`mt-1 block text-right text-[11px] ${
-                            message.sender === "agent" ? "text-blue-100" : "text-slate-400"
+                            message.sender === "agent"
+                              ? "text-blue-100"
+                              : "text-slate-400"
                           }`}
                         >
                           {formatTime(message.createdAt)}
                         </time>
                       </article>
-                    )
-                  ))}
+                    ),
+                  )}
 
                   {activeId && visitorDraftBySession[activeId] && (
                     <article className="max-w-[72%] rounded-xl border border-dashed border-slate-300 bg-white px-3 py-2 text-sm text-slate-700">
-                      <p className="whitespace-pre-wrap break-words">{visitorDraftBySession[activeId]}</p>
-                      <time className="mt-1 block text-right text-[11px] text-slate-400">typing...</time>
+                      <p className="whitespace-pre-wrap break-words">
+                        {visitorDraftBySession[activeId]}
+                      </p>
+                      <time className="mt-1 block text-right text-[11px] text-slate-400">
+                        typing...
+                      </time>
                     </article>
                   )}
                   <div ref={bottomRef} />
                 </div>
               </ScrollArea>
 
-              <form onSubmit={sendMessage} className="grid grid-cols-[1fr_auto] gap-2 border-t border-slate-200 bg-white p-3">
+              <form
+                onSubmit={sendMessage}
+                className="grid grid-cols-[1fr_auto] gap-2 border-t border-slate-200 bg-white p-3"
+              >
                 <Textarea
-                  placeholder={activeId ? "Type your reply..." : "Select a conversation to reply"}
+                  placeholder={
+                    activeId
+                      ? "Type your reply..."
+                      : "Select a conversation to reply"
+                  }
                   value={text}
                   onChange={(e) => {
                     setText(e.target.value);
@@ -766,33 +948,53 @@ export default function App() {
 
             <aside className="border-l border-slate-200 bg-white p-4 max-[1080px]:hidden">
               <h3 className="text-sm font-semibold">Routing & Notes</h3>
-              <p className="mb-4 text-xs text-slate-500">Inboxes, teams, assignees, channels, flow and notes.</p>
+              <p className="mb-4 text-xs text-slate-500">
+                Inboxes, teams, assignees, channels, flow and notes.
+              </p>
 
               <div className="space-y-3 text-sm">
                 <div className="rounded-md border border-slate-200 bg-slate-50 p-2">
                   <div className="mb-2 flex items-center justify-between">
-                    <span className="text-xs font-semibold text-slate-600">Agent Handover</span>
-                    <Badge variant={activeSession?.handoverActive ? "default" : "secondary"}>
+                    <span className="text-xs font-semibold text-slate-600">
+                      Agent Handover
+                    </span>
+                    <Badge
+                      variant={
+                        activeSession?.handoverActive ? "default" : "secondary"
+                      }
+                    >
                       {activeSession?.handoverActive ? "Human" : "Bot"}
                     </Badge>
                   </div>
                   <Button
                     size="sm"
                     className="w-full"
-                    variant={activeSession?.handoverActive ? "outline" : "default"}
+                    variant={
+                      activeSession?.handoverActive ? "outline" : "default"
+                    }
                     disabled={!activeId}
-                    onClick={() => setHandover(!Boolean(activeSession?.handoverActive))}
+                    onClick={() =>
+                      setHandover(!Boolean(activeSession?.handoverActive))
+                    }
                   >
-                    {activeSession?.handoverActive ? "Return To Bot" : "Take Over As Agent"}
+                    {activeSession?.handoverActive
+                      ? "Return To Bot"
+                      : "Take Over As Agent"}
                   </Button>
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Assignee</label>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Assignee
+                  </label>
                   <select
                     className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
                     value={activeSession?.assigneeAgentId || ""}
-                    onChange={(e) => patchActiveSession("assignee", { agentId: e.target.value || null })}
+                    onChange={(e) =>
+                      patchActiveSession("assignee", {
+                        agentId: e.target.value || null,
+                      })
+                    }
                     disabled={!activeId}
                   >
                     <option value="">Unassigned</option>
@@ -805,11 +1007,15 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Channel</label>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Channel
+                  </label>
                   <select
                     className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
                     value={activeSession?.channel || "web"}
-                    onChange={(e) => patchActiveSession("channel", { channel: e.target.value })}
+                    onChange={(e) =>
+                      patchActiveSession("channel", { channel: e.target.value })
+                    }
                     disabled={!activeId}
                   >
                     {channels.map((channel) => (
@@ -821,11 +1027,17 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Inbox</label>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Inbox
+                  </label>
                   <select
                     className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
                     value={activeSession?.inboxId || ""}
-                    onChange={(e) => patchActiveSession("inbox", { inboxId: e.target.value || null })}
+                    onChange={(e) =>
+                      patchActiveSession("inbox", {
+                        inboxId: e.target.value || null,
+                      })
+                    }
                     disabled={!activeId}
                   >
                     <option value="">None</option>
@@ -838,11 +1050,17 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Team</label>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Team
+                  </label>
                   <select
                     className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
                     value={activeSession?.teamId || ""}
-                    onChange={(e) => patchActiveSession("team", { teamId: e.target.value || null })}
+                    onChange={(e) =>
+                      patchActiveSession("team", {
+                        teamId: e.target.value || null,
+                      })
+                    }
                     disabled={!activeId}
                   >
                     <option value="">None</option>
@@ -855,11 +1073,17 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Flow</label>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Flow
+                  </label>
                   <select
                     className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
                     value={activeSession?.flowId || ""}
-                    onChange={(e) => patchActiveSession("flow", { flowId: e.target.value || null })}
+                    onChange={(e) =>
+                      patchActiveSession("flow", {
+                        flowId: e.target.value || null,
+                      })
+                    }
                     disabled={!activeId}
                   >
                     <option value="">No flow</option>
@@ -874,7 +1098,9 @@ export default function App() {
 
               <Separator className="my-4" />
 
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Notes</p>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Notes
+              </p>
               <Textarea
                 value={noteText}
                 onChange={(e) => setNoteText(e.target.value)}
@@ -882,19 +1108,31 @@ export default function App() {
                 rows={3}
                 disabled={!activeId}
               />
-              <Button className="mt-2 w-full" variant="secondary" onClick={saveNote} disabled={!activeId || !noteText.trim()}>
+              <Button
+                className="mt-2 w-full"
+                variant="secondary"
+                onClick={saveNote}
+                disabled={!activeId || !noteText.trim()}
+              >
                 Save Note
               </Button>
 
               <ScrollArea className="mt-3 h-[300px] rounded-md border border-slate-200 p-2">
                 <div className="space-y-2">
                   {notes.map((note) => (
-                    <div key={note.id} className="rounded-md border border-slate-200 bg-slate-50 p-2 text-sm text-slate-700">
+                    <div
+                      key={note.id}
+                      className="rounded-md border border-slate-200 bg-slate-50 p-2 text-sm text-slate-700"
+                    >
                       <p>{note.text}</p>
-                      <p className="mt-1 text-[11px] text-slate-400">{formatTime(note.createdAt)}</p>
+                      <p className="mt-1 text-[11px] text-slate-400">
+                        {formatTime(note.createdAt)}
+                      </p>
                     </div>
                   ))}
-                  {notes.length === 0 && <p className="text-xs text-slate-400">No notes yet.</p>}
+                  {notes.length === 0 && (
+                    <p className="text-xs text-slate-400">No notes yet.</p>
+                  )}
                 </div>
               </ScrollArea>
             </aside>
@@ -919,33 +1157,63 @@ export default function App() {
                         loadFlowIntoEditor(flow);
                       }}
                       className={`w-full rounded-md border px-3 py-2 text-left ${
-                        flow.id === activeFlowId ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-white"
+                        flow.id === activeFlowId
+                          ? "border-blue-200 bg-blue-50"
+                          : "border-slate-200 bg-white"
                       }`}
                     >
-                      <p className="text-sm font-medium text-slate-900">{flow.name}</p>
-                      <p className="text-xs text-slate-500">{flow.description || "No description"}</p>
-                      <p className="mt-1 text-[11px] uppercase text-slate-400">{flow.enabled ? "enabled" : "disabled"}</p>
+                      <p className="text-sm font-medium text-slate-900">
+                        {flow.name}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {flow.description || "No description"}
+                      </p>
+                      <p className="mt-1 text-[11px] uppercase text-slate-400">
+                        {flow.enabled ? "enabled" : "disabled"}
+                      </p>
                     </button>
                   ))}
-                  {flows.length === 0 && <p className="text-xs text-slate-400">No flows yet.</p>}
+                  {flows.length === 0 && (
+                    <p className="text-xs text-slate-400">No flows yet.</p>
+                  )}
                 </div>
               </ScrollArea>
             </aside>
 
             <section className="grid min-h-0 grid-rows-[56px_1fr]">
               <div className="flex items-center gap-2 border-b border-slate-200 bg-white px-3">
-                <Input value={flowName} onChange={(e) => setFlowName(e.target.value)} placeholder="Flow name" className="max-w-sm" />
-                <Badge variant={flowEnabled ? "default" : "secondary"}>{flowEnabled ? "enabled" : "disabled"}</Badge>
-                <Button variant="outline" size="sm" onClick={() => setFlowEnabled((v) => !v)}>
+                <Input
+                  value={flowName}
+                  onChange={(e) => setFlowName(e.target.value)}
+                  placeholder="Flow name"
+                  className="max-w-sm"
+                />
+                <Badge variant={flowEnabled ? "default" : "secondary"}>
+                  {flowEnabled ? "enabled" : "disabled"}
+                </Badge>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setFlowEnabled((v) => !v)}
+                >
                   Toggle
                 </Button>
                 <Button size="sm" onClick={saveFlow} disabled={!activeFlowId}>
                   Save Flow
                 </Button>
-                <Button size="sm" variant="destructive" onClick={deleteCurrentFlow} disabled={!activeFlowId}>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={deleteCurrentFlow}
+                  disabled={!activeFlowId}
+                >
                   Delete
                 </Button>
-                {flowSaveStatus && <span className="text-xs text-slate-500">{flowSaveStatus}</span>}
+                {flowSaveStatus && (
+                  <span className="text-xs text-slate-500">
+                    {flowSaveStatus}
+                  </span>
+                )}
               </div>
 
               <div className="relative min-h-0 bg-slate-100">
@@ -955,7 +1223,9 @@ export default function App() {
                   onNodesChange={onFlowNodesChange}
                   onEdgesChange={onFlowEdgesChange}
                   onConnect={onFlowConnect}
-                  onSelectionChange={({ nodes }) => setSelectedNodeId(nodes?.[0]?.id || "")}
+                  onSelectionChange={({ nodes }) =>
+                    setSelectedNodeId(nodes?.[0]?.id || "")
+                  }
                   fitView
                   connectionLineType={ConnectionLineType.SmoothStep}
                 >
@@ -968,19 +1238,88 @@ export default function App() {
 
             <aside className="border-l border-slate-200 bg-white p-3 max-[1200px]:hidden">
               <h3 className="text-sm font-semibold">Flow Inspector</h3>
-              <p className="mb-3 text-xs text-slate-500">Add nodes, edit node data, and configure AI behavior.</p>
+              <p className="mb-3 text-xs text-slate-500">
+                Add nodes, edit node data, and configure AI behavior.
+              </p>
 
               <div className="grid grid-cols-2 gap-2">
-                <Button size="sm" variant="outline" onClick={() => addFlowNode("trigger")}>+ Trigger</Button>
-                <Button size="sm" variant="outline" onClick={() => addFlowNode("condition")}>+ Condition</Button>
-                <Button size="sm" variant="outline" onClick={() => addFlowNode("message")}>+ Message</Button>
-                <Button size="sm" variant="outline" onClick={() => addFlowNode("ai")}>+ AI</Button>
-                <Button size="sm" variant="outline" onClick={() => addFlowNode("end")}>+ End</Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => addFlowNode("trigger")}
+                >
+                  + Trigger
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => addFlowNode("condition")}
+                >
+                  + Condition
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => addFlowNode("message")}
+                >
+                  + Message
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => addFlowNode("buttons")}
+                >
+                  + Buttons
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => addFlowNode("carousel")}
+                >
+                  + Carousel
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => addFlowNode("select")}
+                >
+                  + Select
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => addFlowNode("input_form")}
+                >
+                  + Input Form
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => addFlowNode("quick_input")}
+                >
+                  + Quick Input
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => addFlowNode("ai")}
+                >
+                  + AI
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => addFlowNode("end")}
+                >
+                  + End
+                </Button>
               </div>
 
               <Separator className="my-4" />
 
-              <label className="mb-1 block text-xs text-slate-500">Description</label>
+              <label className="mb-1 block text-xs text-slate-500">
+                Description
+              </label>
               <Textarea
                 rows={3}
                 value={flowDescription}
@@ -992,43 +1331,241 @@ export default function App() {
 
               {selectedNode ? (
                 <div className="space-y-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Selected Node</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Selected Node
+                  </p>
                   <Input
                     value={selectedNode.data?.label || ""}
-                    onChange={(e) => updateSelectedNodeData({ label: e.target.value })}
+                    onChange={(e) =>
+                      updateSelectedNodeData({ label: e.target.value })
+                    }
                     placeholder="Label"
                   />
-                  <p className="text-[11px] text-slate-500">Type: {selectedNode.type}</p>
+                  <p className="text-[11px] text-slate-500">
+                    Type: {selectedNode.type}
+                  </p>
 
-                  {(selectedNode.type === "message" || selectedNode.type === "condition") && (
+                  {(selectedNode.type === "message" ||
+                    selectedNode.type === "condition" ||
+                    selectedNode.type === "buttons" ||
+                    selectedNode.type === "carousel" ||
+                    selectedNode.type === "select" ||
+                    selectedNode.type === "input_form" ||
+                    selectedNode.type === "quick_input") && (
                     <Input
                       value={selectedNode.data?.text || ""}
-                      onChange={(e) => updateSelectedNodeData({ text: e.target.value })}
+                      onChange={(e) =>
+                        updateSelectedNodeData({ text: e.target.value })
+                      }
                       placeholder="Message text"
                     />
                   )}
 
+                  {selectedNode.type === "buttons" && (
+                    <Input
+                      value={
+                        Array.isArray(selectedNode.data?.buttons)
+                          ? selectedNode.data.buttons.join(", ")
+                          : ""
+                      }
+                      onChange={(e) =>
+                        updateSelectedNodeData({
+                          buttons: e.target.value
+                            .split(",")
+                            .map((item) => item.trim())
+                            .filter(Boolean),
+                        })
+                      }
+                      placeholder="Button labels, comma separated"
+                    />
+                  )}
+
+                  {selectedNode.type === "select" && (
+                    <div className="space-y-2">
+                      <Input
+                        value={selectedNode.data?.placeholder || ""}
+                        onChange={(e) =>
+                          updateSelectedNodeData({
+                            placeholder: e.target.value,
+                          })
+                        }
+                        placeholder="Select placeholder"
+                      />
+                      <Input
+                        value={selectedNode.data?.buttonLabel || ""}
+                        onChange={(e) =>
+                          updateSelectedNodeData({
+                            buttonLabel: e.target.value,
+                          })
+                        }
+                        placeholder="Submit button label"
+                      />
+                      <Input
+                        value={
+                          Array.isArray(selectedNode.data?.options)
+                            ? selectedNode.data.options.join(", ")
+                            : ""
+                        }
+                        onChange={(e) =>
+                          updateSelectedNodeData({
+                            options: e.target.value
+                              .split(",")
+                              .map((item) => item.trim())
+                              .filter(Boolean),
+                          })
+                        }
+                        placeholder="Options, comma separated"
+                      />
+                    </div>
+                  )}
+
+                  {selectedNode.type === "carousel" && (
+                    <Textarea
+                      rows={6}
+                      value={carouselItemsText}
+                      onChange={(e) => {
+                        const items = e.target.value
+                          .split("\n")
+                          .map((line) => line.trim())
+                          .filter(Boolean)
+                          .map((line) => {
+                            const [title, description, price, imageUrl] = line
+                              .split("|")
+                              .map((part) => part.trim());
+                            return {
+                              title: title || "Item",
+                              description: description || "",
+                              price: price || "",
+                              imageUrl: imageUrl || "",
+                              buttons: [
+                                { label: "View", value: title || "View item" },
+                              ],
+                            };
+                          });
+                        updateSelectedNodeData({ items });
+                      }}
+                      placeholder="One item per line: title | description | price | imageUrl"
+                    />
+                  )}
+
+                  {selectedNode.type === "input_form" && (
+                    <div className="space-y-2">
+                      <Input
+                        value={selectedNode.data?.submitLabel || ""}
+                        onChange={(e) =>
+                          updateSelectedNodeData({
+                            submitLabel: e.target.value,
+                          })
+                        }
+                        placeholder="Submit label"
+                      />
+                      <Textarea
+                        rows={6}
+                        value={
+                          Array.isArray(selectedNode.data?.fields)
+                            ? selectedNode.data.fields
+                                .map((field) =>
+                                  [
+                                    field?.name || "",
+                                    field?.label || "",
+                                    field?.placeholder || "",
+                                    field?.type || "text",
+                                    String(field?.required ?? true),
+                                  ].join(" | "),
+                                )
+                                .join("\n")
+                            : ""
+                        }
+                        onChange={(e) => {
+                          const fields = e.target.value
+                            .split("\n")
+                            .map((line) => line.trim())
+                            .filter(Boolean)
+                            .map((line) => {
+                              const [name, label, placeholder, type, required] =
+                                line.split("|").map((part) => part.trim());
+                              return {
+                                name: name || "field",
+                                label: label || name || "Field",
+                                placeholder: placeholder || "",
+                                type: type || "text",
+                                required: required
+                                  ? required.toLowerCase() !== "false"
+                                  : true,
+                              };
+                            });
+                          updateSelectedNodeData({ fields });
+                        }}
+                        placeholder="One field per line: name | label | placeholder | type | required"
+                      />
+                    </div>
+                  )}
+
+                  {selectedNode.type === "quick_input" && (
+                    <div className="space-y-2">
+                      <Input
+                        value={selectedNode.data?.placeholder || ""}
+                        onChange={(e) =>
+                          updateSelectedNodeData({
+                            placeholder: e.target.value,
+                          })
+                        }
+                        placeholder="Input placeholder"
+                      />
+                      <Input
+                        value={selectedNode.data?.buttonLabel || ""}
+                        onChange={(e) =>
+                          updateSelectedNodeData({
+                            buttonLabel: e.target.value,
+                          })
+                        }
+                        placeholder="Button label"
+                      />
+                      <select
+                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
+                        value={selectedNode.data?.inputType || "text"}
+                        onChange={(e) =>
+                          updateSelectedNodeData({ inputType: e.target.value })
+                        }
+                      >
+                        <option value="text">text</option>
+                        <option value="email">email</option>
+                        <option value="tel">tel</option>
+                      </select>
+                    </div>
+                  )}
+
                   {selectedNode.type === "trigger" && (
                     <div className="space-y-2">
-                      <label className="block text-[11px] text-slate-500">Run When</label>
+                      <label className="block text-[11px] text-slate-500">
+                        Run When
+                      </label>
                       <select
                         className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
                         value={selectedNode.data?.on || "widget_open"}
-                        onChange={(e) => updateSelectedNodeData({ on: e.target.value })}
+                        onChange={(e) =>
+                          updateSelectedNodeData({ on: e.target.value })
+                        }
                       >
                         <option value="widget_open">Widget opens</option>
                         <option value="page_open">Page opens</option>
-                        <option value="first_message">First visitor message</option>
+                        <option value="first_message">
+                          First visitor message
+                        </option>
                         <option value="any_message">Any visitor message</option>
                       </select>
                       <Input
-                        value={Array.isArray(selectedNode.data?.keywords) ? selectedNode.data.keywords.join(", ") : ""}
+                        value={
+                          Array.isArray(selectedNode.data?.keywords)
+                            ? selectedNode.data.keywords.join(", ")
+                            : ""
+                        }
                         onChange={(e) =>
                           updateSelectedNodeData({
                             keywords: e.target.value
                               .split(",")
                               .map((item) => item.trim())
-                              .filter(Boolean)
+                              .filter(Boolean),
                           })
                         }
                         placeholder="keywords, comma separated (for message triggers)"
@@ -1039,7 +1576,9 @@ export default function App() {
                   {selectedNode.type === "condition" && (
                     <Input
                       value={selectedNode.data?.contains || ""}
-                      onChange={(e) => updateSelectedNodeData({ contains: e.target.value })}
+                      onChange={(e) =>
+                        updateSelectedNodeData({ contains: e.target.value })
+                      }
                       placeholder="Contains text"
                     />
                   )}
@@ -1048,28 +1587,46 @@ export default function App() {
                     <Textarea
                       rows={4}
                       value={selectedNode.data?.prompt || ""}
-                      onChange={(e) => updateSelectedNodeData({ prompt: e.target.value })}
+                      onChange={(e) =>
+                        updateSelectedNodeData({ prompt: e.target.value })
+                      }
                       placeholder="AI instruction prompt"
                     />
                   )}
 
-                  {(selectedNode.type === "message" || selectedNode.type === "ai") && (
+                  {(selectedNode.type === "message" ||
+                    selectedNode.type === "ai" ||
+                    selectedNode.type === "buttons" ||
+                    selectedNode.type === "carousel" ||
+                    selectedNode.type === "select" ||
+                    selectedNode.type === "input_form" ||
+                    selectedNode.type === "quick_input") && (
                     <Input
                       type="number"
                       min={100}
                       max={6000}
                       value={selectedNode.data?.delayMs ?? 420}
-                      onChange={(e) => updateSelectedNodeData({ delayMs: Number(e.target.value || 420) })}
+                      onChange={(e) =>
+                        updateSelectedNodeData({
+                          delayMs: Number(e.target.value || 420),
+                        })
+                      }
                       placeholder="Delay ms"
                     />
                   )}
 
-                  <Button size="sm" variant="destructive" onClick={removeSelectedNode}>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={removeSelectedNode}
+                  >
                     Remove Node
                   </Button>
                 </div>
               ) : (
-                <p className="text-xs text-slate-400">Select a node to edit its fields.</p>
+                <p className="text-xs text-slate-400">
+                  Select a node to edit its fields.
+                </p>
               )}
             </aside>
           </div>

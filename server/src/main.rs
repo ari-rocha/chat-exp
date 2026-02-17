@@ -35,6 +35,8 @@ struct ChatMessage {
     text: String,
     #[serde(default)]
     suggestions: Vec<String>,
+    #[serde(default)]
+    widget: Option<Value>,
     created_at: String,
 }
 
@@ -663,6 +665,7 @@ async fn add_message(
     sender: &str,
     text: &str,
     suggestions: Option<Vec<String>>,
+    widget: Option<Value>,
 ) -> Option<ChatMessage> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -679,6 +682,7 @@ async fn add_message(
             sender: sender.to_string(),
             text: trimmed.to_string(),
             suggestions: suggestions.unwrap_or_default(),
+            widget,
             created_at: now_iso(),
         };
 
@@ -731,6 +735,191 @@ fn flow_node_data_suggestions(node: &FlowNode, key: &str) -> Vec<String> {
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
                 .take(6)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn flow_node_data_buttons(node: &FlowNode, key: &str) -> Vec<Value> {
+    node.data
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    if let Some(label) = item.as_str() {
+                        let trimmed = label.trim();
+                        if trimmed.is_empty() {
+                            return None;
+                        }
+                        return Some(json!({ "label": trimmed, "value": trimmed }));
+                    }
+                    let label = item.get("label").and_then(Value::as_str)?.trim().to_string();
+                    if label.is_empty() {
+                        return None;
+                    }
+                    let value = item
+                        .get("value")
+                        .and_then(Value::as_str)
+                        .map(|v| v.trim().to_string())
+                        .filter(|v| !v.is_empty())
+                        .unwrap_or_else(|| label.clone());
+                    Some(json!({ "label": label, "value": value }))
+                })
+                .take(8)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn flow_node_data_carousel_items(node: &FlowNode, key: &str) -> Vec<Value> {
+    node.data
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let title = item.get("title").and_then(Value::as_str)?.trim().to_string();
+                    if title.is_empty() {
+                        return None;
+                    }
+                    let description = item
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .map(|v| v.trim().to_string())
+                        .unwrap_or_default();
+                    let price = item
+                        .get("price")
+                        .and_then(Value::as_str)
+                        .map(|v| v.trim().to_string())
+                        .unwrap_or_default();
+                    let image_url = item
+                        .get("imageUrl")
+                        .and_then(Value::as_str)
+                        .map(|v| v.trim().to_string())
+                        .unwrap_or_default();
+                    let buttons = item
+                        .get("buttons")
+                        .and_then(Value::as_array)
+                        .map(|buttons| {
+                            buttons
+                                .iter()
+                                .filter_map(|button| {
+                                    if let Some(label) = button.as_str() {
+                                        let label = label.trim().to_string();
+                                        if label.is_empty() {
+                                            return None;
+                                        }
+                                        return Some(json!({ "label": label, "value": label }));
+                                    }
+                                    let label =
+                                        button.get("label").and_then(Value::as_str)?.trim().to_string();
+                                    if label.is_empty() {
+                                        return None;
+                                    }
+                                    let value = button
+                                        .get("value")
+                                        .and_then(Value::as_str)
+                                        .map(|v| v.trim().to_string())
+                                        .filter(|v| !v.is_empty())
+                                        .unwrap_or_else(|| label.clone());
+                                    Some(json!({ "label": label, "value": value }))
+                                })
+                                .take(4)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_else(|| vec![json!({ "label": "View", "value": title.clone() })]);
+                    Some(json!({
+                        "title": title,
+                        "description": description,
+                        "price": price,
+                        "imageUrl": image_url,
+                        "buttons": buttons
+                    }))
+                })
+                .take(10)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn flow_node_data_options(node: &FlowNode, key: &str) -> Vec<Value> {
+    node.data
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    if let Some(label) = item.as_str() {
+                        let label = label.trim().to_string();
+                        if label.is_empty() {
+                            return None;
+                        }
+                        return Some(json!({ "label": label, "value": label }));
+                    }
+                    let label = item.get("label").and_then(Value::as_str)?.trim().to_string();
+                    if label.is_empty() {
+                        return None;
+                    }
+                    let value = item
+                        .get("value")
+                        .and_then(Value::as_str)
+                        .map(|v| v.trim().to_string())
+                        .filter(|v| !v.is_empty())
+                        .unwrap_or_else(|| label.clone());
+                    Some(json!({ "label": label, "value": value }))
+                })
+                .take(20)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn flow_node_data_fields(node: &FlowNode, key: &str) -> Vec<Value> {
+    node.data
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let name = item.get("name").and_then(Value::as_str)?.trim().to_string();
+                    if name.is_empty() {
+                        return None;
+                    }
+                    let label = item
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .map(|v| v.trim().to_string())
+                        .filter(|v| !v.is_empty())
+                        .unwrap_or_else(|| name.clone());
+                    let placeholder = item
+                        .get("placeholder")
+                        .and_then(Value::as_str)
+                        .map(|v| v.trim().to_string())
+                        .unwrap_or_default();
+                    let field_type = item
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .map(|v| v.trim().to_string())
+                        .filter(|v| !v.is_empty())
+                        .unwrap_or_else(|| "text".to_string());
+                    let required = item
+                        .get("required")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(true);
+                    Some(json!({
+                        "name": name,
+                        "label": label,
+                        "placeholder": placeholder,
+                        "type": field_type,
+                        "required": required
+                    }))
+                })
+                .take(8)
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default()
@@ -842,6 +1031,77 @@ struct AiDecision {
     reply: String,
     handover: bool,
     suggestions: Vec<String>,
+}
+
+fn parse_ai_decision_from_text(raw: &str) -> Option<AiDecision> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut candidates = Vec::<String>::new();
+    candidates.push(trimmed.to_string());
+
+    if trimmed.starts_with("```") {
+        let stripped = trimmed
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim()
+            .to_string();
+        if !stripped.is_empty() {
+            candidates.push(stripped);
+        }
+    }
+
+    if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}')) {
+        if end > start {
+            let inner = trimmed[start..=end].to_string();
+            candidates.push(inner);
+        }
+    }
+
+    for candidate in candidates {
+        let Ok(parsed) = serde_json::from_str::<Value>(&candidate) else {
+            continue;
+        };
+
+        let reply = parsed
+            .get("reply")
+            .and_then(Value::as_str)
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty())
+            .unwrap_or_default();
+        if reply.is_empty() {
+            continue;
+        }
+
+        let handover = parsed
+            .get("handover")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let suggestions = parsed
+            .get("suggestions")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(|text| text.trim().to_string())
+                    .filter(|text| !text.is_empty())
+                    .take(6)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        return Some(AiDecision {
+            reply,
+            handover,
+            suggestions,
+        });
+    }
+
+    None
 }
 
 async fn set_session_handover(
@@ -958,37 +1218,11 @@ If user asks for a human, transfer, escalation, or representative, set handover=
         });
 
     if let Some(raw_text) = raw_text {
-        if let Ok(parsed) = serde_json::from_str::<Value>(&raw_text) {
-            let reply = parsed
-                .get("reply")
-                .and_then(Value::as_str)
-                .map(|text| text.trim().to_string())
-                .filter(|text| !text.is_empty())
-                .unwrap_or_else(|| "I can help with that. Tell me a bit more.".to_string());
-            let handover = parsed
-                .get("handover")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let suggestions = parsed
-                .get("suggestions")
-                .and_then(Value::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(|text| text.trim().to_string())
-                        .filter(|text| !text.is_empty())
-                        .take(6)
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            return AiDecision {
-                reply,
-                handover,
-                suggestions,
-            };
+        if let Some(parsed) = parse_ai_decision_from_text(&raw_text) {
+            return parsed;
         }
 
+        // If model didn't follow JSON format, use plain text and keep heuristic handover.
         return AiDecision {
             reply: raw_text,
             handover: has_handover_intent(visitor_text),
@@ -1022,13 +1256,14 @@ async fn send_flow_agent_message(
     text: &str,
     delay_ms: u64,
     suggestions: Option<Vec<String>>,
+    widget: Option<Value>,
 ) {
     if text.trim().is_empty() {
         return;
     }
     start_agent_typing(state.clone(), session_id).await;
     tokio::time::sleep(Duration::from_millis(delay_ms.clamp(120, 6000))).await;
-    let _ = add_message(state.clone(), session_id, "agent", text, suggestions).await;
+    let _ = add_message(state.clone(), session_id, "agent", text, suggestions, widget).await;
     stop_agent_typing(state, session_id).await;
 }
 
@@ -1089,8 +1324,100 @@ async fn execute_flow(
                     &text,
                     delay_ms,
                     suggestions_opt,
+                    None,
                 )
                 .await;
+            }
+            "buttons" => {
+                let text = flow_node_data_text(&node, "text").unwrap_or_default();
+                let delay_ms = flow_node_data_u64(&node, "delayMs").unwrap_or(420);
+                let buttons = flow_node_data_buttons(&node, "buttons");
+                let widget = if buttons.is_empty() {
+                    None
+                } else {
+                    Some(json!({
+                        "type": "buttons",
+                        "buttons": buttons
+                    }))
+                };
+                send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget).await;
+            }
+            "carousel" => {
+                let text = flow_node_data_text(&node, "text").unwrap_or_default();
+                let delay_ms = flow_node_data_u64(&node, "delayMs").unwrap_or(500);
+                let items = flow_node_data_carousel_items(&node, "items");
+                let widget = if items.is_empty() {
+                    None
+                } else {
+                    Some(json!({
+                        "type": "carousel",
+                        "items": items
+                    }))
+                };
+                send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget).await;
+            }
+            "select" => {
+                let text = flow_node_data_text(&node, "text").unwrap_or_default();
+                let delay_ms = flow_node_data_u64(&node, "delayMs").unwrap_or(420);
+                let options = flow_node_data_options(&node, "options");
+                let widget = if options.is_empty() {
+                    None
+                } else {
+                    Some(json!({
+                        "type": "select",
+                        "placeholder": node.data.get("placeholder").and_then(Value::as_str).unwrap_or("Choose an option"),
+                        "buttonLabel": node.data.get("buttonLabel").and_then(Value::as_str).unwrap_or("Send"),
+                        "options": options
+                    }))
+                };
+                send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget).await;
+            }
+            "input_form" => {
+                let text = flow_node_data_text(&node, "text").unwrap_or_default();
+                let delay_ms = flow_node_data_u64(&node, "delayMs").unwrap_or(420);
+                let fields = flow_node_data_fields(&node, "fields");
+                let widget = if fields.is_empty() {
+                    None
+                } else {
+                    Some(json!({
+                        "type": "input_form",
+                        "submitLabel": node.data.get("submitLabel").and_then(Value::as_str).unwrap_or("Submit"),
+                        "fields": fields
+                    }))
+                };
+                send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget).await;
+            }
+            "quick_input" => {
+                let text = flow_node_data_text(&node, "text").unwrap_or_default();
+                let delay_ms = flow_node_data_u64(&node, "delayMs").unwrap_or(420);
+                let placeholder = node
+                    .data
+                    .get("placeholder")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Enter value")
+                    .trim()
+                    .to_string();
+                let button_label = node
+                    .data
+                    .get("buttonLabel")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Send")
+                    .trim()
+                    .to_string();
+                let input_type = node
+                    .data
+                    .get("inputType")
+                    .and_then(Value::as_str)
+                    .unwrap_or("text")
+                    .trim()
+                    .to_string();
+                let widget = Some(json!({
+                    "type": "quick_input",
+                    "placeholder": placeholder,
+                    "buttonLabel": button_label,
+                    "inputType": input_type
+                }));
+                send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget).await;
             }
             "ai" => {
                 let prompt = flow_node_data_text(&node, "prompt").unwrap_or_default();
@@ -1108,6 +1435,7 @@ async fn execute_flow(
                     &decision.reply,
                     delay_ms,
                     suggestions_opt,
+                    None,
                 )
                 .await;
                 if decision.handover {
@@ -1121,6 +1449,7 @@ async fn execute_flow(
                                 &session_id,
                                 "system",
                                 "Conversation transferred to a human agent",
+                                None,
                                 None,
                             )
                             .await;
@@ -1155,7 +1484,7 @@ async fn execute_flow(
             "end" => break,
             _ => {
                 if let Some(text) = flow_node_data_text(&node, "text") {
-                    send_flow_agent_message(state.clone(), &session_id, &text, 320, None).await;
+                    send_flow_agent_message(state.clone(), &session_id, &text, 320, None, None).await;
                 }
             }
         }
@@ -1183,6 +1512,7 @@ async fn run_flow_for_visitor_message(
                     "system",
                     "Conversation transferred to a human agent",
                     None,
+                    None,
                 )
                 .await;
             }
@@ -1192,6 +1522,7 @@ async fn run_flow_for_visitor_message(
             &session_id,
             "Understood. I am transferring you to a human agent now.",
             450,
+            None,
             None,
         )
         .await;
@@ -1274,6 +1605,7 @@ async fn run_flow_for_visitor_message(
                 &decision.reply,
                 700,
                 suggestions_opt,
+                None,
             )
             .await;
             if decision.handover {
@@ -1288,6 +1620,7 @@ async fn run_flow_for_visitor_message(
                             "system",
                             "Conversation transferred to a human agent",
                             None,
+                            None,
                         )
                         .await;
                     }
@@ -1298,7 +1631,7 @@ async fn run_flow_for_visitor_message(
     }
 
     if visitor_text.trim().eq_ignore_ascii_case("okay") {
-        send_flow_agent_message(state, &session_id, "Glad I could help!", 900, None).await;
+        send_flow_agent_message(state, &session_id, "Glad I could help!", 900, None, None).await;
     }
 }
 
@@ -1349,7 +1682,7 @@ async fn post_message(
 
     let _ = ensure_session(state.clone(), &session_id).await;
 
-    let Some(message) = add_message(state.clone(), &session_id, sender, &body.text, None).await
+    let Some(message) = add_message(state.clone(), &session_id, sender, &body.text, None, None).await
     else {
         return (
             StatusCode::BAD_REQUEST,
@@ -1854,6 +2187,7 @@ async fn patch_session_handover(
             "system",
             "Conversation transferred to a human agent",
             None,
+            None,
         )
         .await;
     }
@@ -2182,7 +2516,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 let text = envelope.data.get("text").and_then(Value::as_str);
                 if let (Some(session_id), Some(text)) = (session_id, text) {
                     let _ = ensure_session(state.clone(), session_id).await;
-                    let _ = add_message(state.clone(), session_id, "visitor", text, None).await;
+                    let _ = add_message(state.clone(), session_id, "visitor", text, None, None).await;
                     let state_clone = state.clone();
                     let session_clone = session_id.to_string();
                     let text_clone = text.to_string();
@@ -2324,7 +2658,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 if let (Some(session_id), Some(text)) = (session_id, text) {
                     set_agent_human_typing(state.clone(), client_id, session_id, false).await;
                     let _ = ensure_session(state.clone(), session_id).await;
-                    let _ = add_message(state.clone(), session_id, "agent", text, None).await;
+                    let _ = add_message(state.clone(), session_id, "agent", text, None, None).await;
                 }
             }
             _ => {}
