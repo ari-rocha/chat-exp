@@ -59,7 +59,7 @@ body {
   overflow: hidden;
   box-shadow: 0 24px 68px rgba(0, 0, 0, 0.34);
   display: grid;
-  grid-template-rows: 54px 1fr 48px 24px;
+  grid-template-rows: 54px 1fr 48px 34px;
   transform-origin: bottom right;
   perspective: 1200px;
   transform-style: preserve-3d;
@@ -785,7 +785,8 @@ body {
   text-align: center;
   color: #555;
   font-size: 14px;
-  padding-top: 0;
+  padding-top: 2px;
+  padding-bottom: 8px;
   line-height: 24px;
 }
 
