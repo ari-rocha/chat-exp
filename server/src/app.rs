@@ -2019,16 +2019,24 @@ async fn execute_flow_from(
                     flow_vars.entry("contact.name".to_string()).or_insert(name);
                 }
                 if !email.is_empty() {
-                    flow_vars.entry("contact.email".to_string()).or_insert(email);
+                    flow_vars
+                        .entry("contact.email".to_string())
+                        .or_insert(email);
                 }
                 if !phone.is_empty() {
-                    flow_vars.entry("contact.phone".to_string()).or_insert(phone);
+                    flow_vars
+                        .entry("contact.phone".to_string())
+                        .or_insert(phone);
                 }
                 if !company.is_empty() {
-                    flow_vars.entry("contact.company".to_string()).or_insert(company);
+                    flow_vars
+                        .entry("contact.company".to_string())
+                        .or_insert(company);
                 }
                 if !location.is_empty() {
-                    flow_vars.entry("contact.location".to_string()).or_insert(location);
+                    flow_vars
+                        .entry("contact.location".to_string())
+                        .or_insert(location);
                 }
             }
             // Also load custom attributes as contact.attr.<key>

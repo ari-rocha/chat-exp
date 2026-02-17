@@ -715,12 +715,17 @@ const CONTACT_VARIABLES = [
   { key: "contact.location", displayName: "Contact Location" },
 ];
 
-function VariablePickerDropdown({ attributeDefs, flowInputVariables, onSelect }) {
+function VariablePickerDropdown({
+  attributeDefs,
+  flowInputVariables,
+  onSelect,
+}) {
   const [open, setOpen] = useState(false);
   const defs = attributeDefs || [];
   const flowVars = (flowInputVariables || []).filter((v) => v.key);
 
-  const hasAnything = CONTACT_VARIABLES.length > 0 || flowVars.length > 0 || defs.length > 0;
+  const hasAnything =
+    CONTACT_VARIABLES.length > 0 || flowVars.length > 0 || defs.length > 0;
   if (!hasAnything) return null;
 
   const renderGroup = (title, items, color) => {
@@ -769,7 +774,11 @@ function VariablePickerDropdown({ attributeDefs, flowInputVariables, onSelect })
         <div className="absolute right-0 top-8 z-50 w-56 rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
           <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
             <div>
-              {renderGroup("Contact", CONTACT_VARIABLES, "bg-sky-100 text-sky-600")}
+              {renderGroup(
+                "Contact",
+                CONTACT_VARIABLES,
+                "bg-sky-100 text-sky-600",
+              )}
             </div>
             {flowVars.length > 0 && (
               <div>
@@ -779,13 +788,17 @@ function VariablePickerDropdown({ attributeDefs, flowInputVariables, onSelect })
                     key: v.key,
                     displayName: v.label || v.key,
                   })),
-                  "bg-emerald-100 text-emerald-600"
+                  "bg-emerald-100 text-emerald-600",
                 )}
               </div>
             )}
             {defs.length > 0 && (
               <div>
-                {renderGroup("Custom Attributes", defs, "bg-violet-100 text-violet-600")}
+                {renderGroup(
+                  "Custom Attributes",
+                  defs,
+                  "bg-violet-100 text-violet-600",
+                )}
               </div>
             )}
           </div>
@@ -1137,7 +1150,9 @@ function SettingsPanel({
                           flowInputVariables={flowInputVariables}
                           onSelect={(varKey) => {
                             const cur = data?.prompt || "";
-                            updateSelectedNodeData({ prompt: cur + `{{${varKey}}}` });
+                            updateSelectedNodeData({
+                              prompt: cur + `{{${varKey}}}`,
+                            });
                           }}
                         />
                       </div>
@@ -1222,7 +1237,9 @@ function SettingsPanel({
                         flowInputVariables={flowInputVariables}
                         onSelect={(varKey) => {
                           const cur = data?.text || "";
-                          updateSelectedNodeData({ text: cur + `{{${varKey}}}` });
+                          updateSelectedNodeData({
+                            text: cur + `{{${varKey}}}`,
+                          });
                         }}
                       />
                     </div>
