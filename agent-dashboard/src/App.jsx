@@ -318,6 +318,7 @@ export default function App() {
 
   const [flowNodes, setFlowNodes, onFlowNodesChange] = useNodesState([]);
   const [flowEdges, setFlowEdges, onFlowEdgesChange] = useEdgesState([]);
+  const [flowInputVariables, setFlowInputVariables] = useState([]);
 
   const wsRef = useRef(null);
   const reconnectTimerRef = useRef(null);
@@ -437,6 +438,7 @@ export default function App() {
         .filter((edge) => edge.source && edge.target);
       setFlowNodes(safeNodes);
       setFlowEdges(safeEdges);
+      setFlowInputVariables(Array.isArray(flow.inputVariables) ? flow.inputVariables : []);
       setSelectedNodeId("");
     },
     [setFlowEdges, setFlowNodes],
@@ -1004,6 +1006,7 @@ export default function App() {
           enabled: flowEnabled,
           nodes: nodesPayload,
           edges: edgesPayload,
+          inputVariables: flowInputVariables,
         }),
       });
 
@@ -1376,6 +1379,8 @@ export default function App() {
           setAttributeDefs={setAttributeDefs}
           apiFetch={apiFetch}
           token={token}
+          flowInputVariables={flowInputVariables}
+          setFlowInputVariables={setFlowInputVariables}
         />
       </section>
     ) : view === "contacts" ? (

@@ -127,6 +127,18 @@ pub struct ChatFlow {
     pub updated_at: String,
     pub nodes: Vec<FlowNode>,
     pub edges: Vec<FlowEdge>,
+    #[serde(default)]
+    pub input_variables: Vec<FlowInputVariable>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowInputVariable {
+    pub key: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub required: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -521,6 +533,8 @@ pub struct CreateFlowBody {
     pub nodes: Vec<FlowNode>,
     #[serde(default)]
     pub edges: Vec<FlowEdge>,
+    #[serde(default)]
+    pub input_variables: Vec<FlowInputVariable>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -531,6 +545,7 @@ pub struct UpdateFlowBody {
     pub enabled: Option<bool>,
     pub nodes: Option<Vec<FlowNode>>,
     pub edges: Option<Vec<FlowEdge>>,
+    pub input_variables: Option<Vec<FlowInputVariable>>,
 }
 
 #[derive(Debug, Deserialize)]

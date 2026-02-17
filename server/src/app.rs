@@ -203,7 +203,7 @@ async fn get_session_messages_db(pool: &PgPool, session_id: &str) -> Vec<ChatMes
 
 async fn get_flow_by_id_db(pool: &PgPool, flow_id: &str) -> Option<ChatFlow> {
     let row = sqlx::query(
-        "SELECT id, tenant_id, name, description, enabled, created_at, updated_at, nodes, edges FROM flows WHERE id = $1",
+        "SELECT id, tenant_id, name, description, enabled, created_at, updated_at, nodes, edges, input_variables FROM flows WHERE id = $1",
     )
     .bind(flow_id)
     .fetch_optional(pool)
@@ -221,6 +221,8 @@ async fn get_flow_by_id_db(pool: &PgPool, flow_id: &str) -> Option<ChatFlow> {
         nodes: serde_json::from_str::<Vec<FlowNode>>(&row.get::<String, _>("nodes"))
             .unwrap_or_default(),
         edges: serde_json::from_str::<Vec<FlowEdge>>(&row.get::<String, _>("edges"))
+            .unwrap_or_default(),
+        input_variables: serde_json::from_str(&row.get::<String, _>("input_variables"))
             .unwrap_or_default(),
     })
 }
@@ -274,10 +276,25 @@ fn extract_title_tag(html: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
+fn is_visitor_visible_system_msg(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    lower.contains("ended the chat")
+        || lower.contains("conversation closed")
+        || lower.contains("reopened")
+}
+
 fn visible_messages_for_widget(messages: &[ChatMessage]) -> Vec<ChatMessage> {
     messages
         .iter()
-        .filter(|message| message.sender != "team" && message.sender != "system")
+        .filter(|message| {
+            if message.sender == "team" {
+                return false;
+            }
+            if message.sender == "system" {
+                return is_visitor_visible_system_msg(&message.text);
+            }
+            true
+        })
         .cloned()
         .collect::<Vec<_>>()
 }
@@ -799,8 +816,13 @@ async fn add_message(
         rt.agents.iter().copied().collect::<Vec<_>>()
     };
 
-    if sender == "team" || sender == "system" {
+    if sender == "team" {
         emit_to_clients(&state, &agents, "message:new", message.clone()).await;
+    } else if sender == "system" {
+        emit_to_clients(&state, &agents, "message:new", message.clone()).await;
+        if is_visitor_visible_system_msg(&message.text) {
+            emit_to_clients(&state, &watchers, "message:new", message.clone()).await;
+        }
     } else {
         emit_to_clients(&state, &watchers, "message:new", message.clone()).await;
         emit_to_clients(&state, &agents, "message:new", message.clone()).await;
@@ -2789,6 +2811,41 @@ async fn execute_flow_from(
                     let _ = req.send().await;
                 }
             }
+            "start_flow" => {
+                let target_flow_id = node
+                    .data
+                    .get("flowId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                if !target_flow_id.is_empty() {
+                    if let Some(target_flow) = get_flow_by_id_db(&state.db, target_flow_id).await {
+                        // Build initial variables for the sub-flow from bindings
+                        let mut sub_vars = HashMap::new();
+                        if let Some(bindings) = node.data.get("variableBindings").and_then(Value::as_object) {
+                            for (key, val) in bindings {
+                                let raw = val.as_str().unwrap_or("");
+                                let interpolated = interpolate_flow_vars(raw, &flow_vars);
+                                sub_vars.insert(key.clone(), interpolated);
+                            }
+                        }
+                        // Also carry over any current flow vars not explicitly bound
+                        for (k, v) in &flow_vars {
+                            sub_vars.entry(k.clone()).or_insert_with(|| v.clone());
+                        }
+                        // Execute the sub-flow on the same session (boxed to allow recursion)
+                        Box::pin(execute_flow_from(
+                            state.clone(),
+                            session_id.clone(),
+                            target_flow,
+                            visitor_text.clone(),
+                            None,
+                            sub_vars,
+                        ))
+                        .await;
+                        // After sub-flow, continue to next node in current flow
+                    }
+                }
+            }
             _ => {
                 if let Some(text) = flow_node_data_text(&node, "text") {
                     send_flow_agent_message(state.clone(), &session_id, &text, 320, None, None)
@@ -3145,7 +3202,7 @@ async fn close_session_by_visitor(
             state.clone(),
             &session_id,
             "system",
-            "You have ended the chat",
+            "User has ended the chat",
             None,
             None,
         )
@@ -4157,7 +4214,7 @@ async fn get_flows(State(state): State<Arc<AppState>>, headers: HeaderMap) -> im
     };
 
     let rows = sqlx::query(
-        "SELECT id, tenant_id, name, description, enabled, created_at, updated_at, nodes, edges FROM flows WHERE tenant_id = $1 ORDER BY created_at ASC",
+        "SELECT id, tenant_id, name, description, enabled, created_at, updated_at, nodes, edges, input_variables FROM flows WHERE tenant_id = $1 ORDER BY created_at ASC",
     )
     .bind(&tenant_id)
     .fetch_all(&state.db)
@@ -4176,6 +4233,8 @@ async fn get_flows(State(state): State<Arc<AppState>>, headers: HeaderMap) -> im
             nodes: serde_json::from_str::<Vec<FlowNode>>(&row.get::<String, _>("nodes"))
                 .unwrap_or_default(),
             edges: serde_json::from_str::<Vec<FlowEdge>>(&row.get::<String, _>("edges"))
+                .unwrap_or_default(),
+            input_variables: serde_json::from_str(&row.get::<String, _>("input_variables"))
                 .unwrap_or_default(),
         })
         .collect::<Vec<_>>();
@@ -4243,10 +4302,11 @@ async fn create_flow(
         updated_at: now,
         nodes: body.nodes,
         edges: body.edges,
+        input_variables: body.input_variables,
     };
 
     let _ = sqlx::query(
-        "INSERT INTO flows (id, tenant_id, name, description, enabled, created_at, updated_at, nodes, edges) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+        "INSERT INTO flows (id, tenant_id, name, description, enabled, created_at, updated_at, nodes, edges, input_variables) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
     )
     .bind(&flow.id)
     .bind(&flow.tenant_id)
@@ -4257,6 +4317,7 @@ async fn create_flow(
     .bind(&flow.updated_at)
     .bind(serde_json::to_string(&flow.nodes).unwrap_or_else(|_| "[]".to_string()))
     .bind(serde_json::to_string(&flow.edges).unwrap_or_else(|_| "[]".to_string()))
+    .bind(serde_json::to_string(&flow.input_variables).unwrap_or_else(|_| "[]".to_string()))
     .execute(&state.db)
     .await;
 
@@ -4316,9 +4377,12 @@ async fn update_flow(
     if let Some(edges) = body.edges {
         flow.edges = edges;
     }
+    if let Some(input_variables) = body.input_variables {
+        flow.input_variables = input_variables;
+    }
     flow.updated_at = now_iso();
     let _ = sqlx::query(
-        "UPDATE flows SET name = $1, description = $2, enabled = $3, updated_at = $4, nodes = $5, edges = $6 WHERE id = $7",
+        "UPDATE flows SET name = $1, description = $2, enabled = $3, updated_at = $4, nodes = $5, edges = $6, input_variables = $7 WHERE id = $8",
     )
     .bind(&flow.name)
     .bind(&flow.description)
@@ -4326,6 +4390,7 @@ async fn update_flow(
     .bind(&flow.updated_at)
     .bind(serde_json::to_string(&flow.nodes).unwrap_or_else(|_| "[]".to_string()))
     .bind(serde_json::to_string(&flow.edges).unwrap_or_else(|_| "[]".to_string()))
+    .bind(serde_json::to_string(&flow.input_variables).unwrap_or_else(|_| "[]".to_string()))
     .bind(&flow.id)
     .execute(&state.db)
     .await;
@@ -6005,10 +6070,11 @@ pub async fn run() {
                 data: json!({}),
             },
         ],
+        input_variables: vec![],
     };
 
     let _ = sqlx::query(
-        "INSERT INTO flows (id, tenant_id, name, description, enabled, created_at, updated_at, nodes, edges) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO flows (id, tenant_id, name, description, enabled, created_at, updated_at, nodes, edges, input_variables) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (id) DO NOTHING",
     )
     .bind(&default_flow.id)
     .bind(&default_flow.tenant_id)
@@ -6019,6 +6085,7 @@ pub async fn run() {
     .bind(&default_flow.updated_at)
     .bind(serde_json::to_string(&default_flow.nodes).unwrap_or_else(|_| "[]".to_string()))
     .bind(serde_json::to_string(&default_flow.edges).unwrap_or_else(|_| "[]".to_string()))
+    .bind("[]")
     .execute(&db)
     .await;
     let seed_now = now_iso();

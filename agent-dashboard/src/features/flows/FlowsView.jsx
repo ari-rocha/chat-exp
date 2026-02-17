@@ -44,6 +44,7 @@ import {
   Trash2,
   Upload,
   UserPlus,
+  Workflow,
   X,
   XCircle,
   Zap,
@@ -176,6 +177,12 @@ const NODE_COLORS = {
     icon: "#ea580c",
     iconBg: "#ffedd5",
   },
+  start_flow: {
+    bg: "#f0fdfa",
+    border: "#5eead4",
+    icon: "#0d9488",
+    iconBg: "#ccfbf1",
+  },
 };
 
 const NODE_ICONS = {
@@ -202,6 +209,7 @@ const NODE_ICONS = {
   set_attribute: Hash,
   note: StickyNote,
   webhook: Send,
+  start_flow: Workflow,
 };
 
 function displayTypeLabel(type) {
@@ -219,6 +227,7 @@ function displayTypeLabel(type) {
   if (type === "close_conversation") return "CLOSE CONVERSATION";
   if (type === "set_attribute") return "SET ATTRIBUTE";
   if (type === "csat") return "CSAT RATING";
+  if (type === "start_flow") return "START FLOW";
   return type.replace(/_/g, " ").toUpperCase();
 }
 
@@ -694,6 +703,7 @@ const FLOW_NODE_TYPES = {
   set_attribute: DifyNode,
   note: DifyNode,
   webhook: DifyNode,
+  start_flow: DifyNode,
 };
 
 /* ─── Variable Picker Dropdown ───────────────────────────── */
@@ -755,6 +765,10 @@ function SettingsPanel({
   setAttributeDefs,
   apiFetch,
   token,
+  flows,
+  activeFlowId,
+  flowInputVariables,
+  setFlowInputVariables,
 }) {
   const [activeTab, setActiveTab] = useState("settings");
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -1894,6 +1908,140 @@ function SettingsPanel({
                   </div>
                 </>
               )}
+              {/* ── Flow Input Variables ── */}
+              <div className="border-t border-slate-100 pt-3">
+                <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Input Variables
+                </label>
+                <p className="mb-2 text-[10px] text-slate-400">
+                  Define variables other flows must provide when calling this flow.
+                </p>
+                <div className="space-y-2">
+                  {(flowInputVariables || []).map((v, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <Input
+                        value={v.key}
+                        onChange={(e) => {
+                          const next = [...flowInputVariables];
+                          next[i] = { ...next[i], key: e.target.value };
+                          setFlowInputVariables(next);
+                        }}
+                        placeholder="key"
+                        className="flex-1 text-[12px] font-mono"
+                      />
+                      <Input
+                        value={v.label}
+                        onChange={(e) => {
+                          const next = [...flowInputVariables];
+                          next[i] = { ...next[i], label: e.target.value };
+                          setFlowInputVariables(next);
+                        }}
+                        placeholder="Label"
+                        className="flex-1 text-[12px]"
+                      />
+                      <label className="flex items-center gap-1 text-[10px] text-slate-500 whitespace-nowrap">
+                        <input
+                          type="checkbox"
+                          checked={v.required ?? false}
+                          onChange={(e) => {
+                            const next = [...flowInputVariables];
+                            next[i] = { ...next[i], required: e.target.checked };
+                            setFlowInputVariables(next);
+                          }}
+                          className="rounded"
+                        />
+                        Req
+                      </label>
+                      <button
+                        onClick={() => {
+                          const next = [...flowInputVariables];
+                          next.splice(i, 1);
+                          setFlowInputVariables(next);
+                        }}
+                        className="shrink-0 rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    onClick={() =>
+                      setFlowInputVariables([
+                        ...(flowInputVariables || []),
+                        { key: "", label: "", required: false },
+                      ])
+                    }
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-300 py-2 text-[11px] font-medium text-slate-500 transition-colors hover:border-teal-400 hover:bg-teal-50 hover:text-teal-600"
+                  >
+                    <Plus size={12} /> Add Input Variable
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Start Flow Node Settings ── */}
+          {type === "start_flow" && (
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Target Flow
+                </label>
+                <select
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px]"
+                  value={data?.flowId || ""}
+                  onChange={(e) => {
+                    const newFlowId = e.target.value;
+                    updateSelectedNodeData({ flowId: newFlowId, variableBindings: {} });
+                  }}
+                >
+                  <option value="">— Select a flow —</option>
+                  {(flows || [])
+                    .filter((f) => f.id !== activeFlowId)
+                    .map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              {(() => {
+                const targetFlow = (flows || []).find((f) => f.id === data?.flowId);
+                const targetVars = targetFlow?.inputVariables || [];
+                if (!targetFlow || targetVars.length === 0) return null;
+                const bindings = data?.variableBindings || {};
+                return (
+                  <div>
+                    <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                      Variable Bindings
+                    </label>
+                    <p className="mb-2 text-[10px] text-slate-400">
+                      Map values to the target flow's input variables. Use {"{{varName}}"} for interpolation.
+                    </p>
+                    <div className="space-y-2">
+                      {targetVars.map((v) => (
+                        <div key={v.key} className="flex items-center gap-2">
+                          <span className="shrink-0 rounded bg-teal-50 px-2 py-1 text-[11px] font-mono text-teal-700 border border-teal-200">
+                            {v.label || v.key}
+                            {v.required && <span className="ml-0.5 text-red-400">*</span>}
+                          </span>
+                          <Input
+                            value={bindings[v.key] || ""}
+                            onChange={(e) => {
+                              updateSelectedNodeData({
+                                variableBindings: { ...bindings, [v.key]: e.target.value },
+                              });
+                            }}
+                            placeholder={`Value or {{variable}}`}
+                            className="flex-1 text-[12px] font-mono"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -2795,6 +2943,7 @@ function AddNodePalette({ addFlowNode }) {
     { type: "set_attribute", label: "Set Attribute", icon: Hash },
     { type: "note", label: "Note", icon: StickyNote },
     { type: "webhook", label: "Webhook", icon: Send },
+    { type: "start_flow", label: "Start Flow", icon: Workflow },
     { type: "http", label: "HTTP Request", icon: Globe },
     { type: "code", label: "Code", icon: Code2 },
     { type: "end", label: "End", icon: CircleDot },
@@ -2883,6 +3032,8 @@ export default function FlowsView({
   setAttributeDefs,
   apiFetch,
   token,
+  flowInputVariables,
+  setFlowInputVariables,
 }) {
   return (
     <div className="grid h-full min-h-0 grid-cols-[260px_1fr_340px] bg-[#f0f2f7] max-[1200px]:grid-cols-[1fr]">
@@ -2995,6 +3146,10 @@ export default function FlowsView({
           setAttributeDefs={setAttributeDefs}
           apiFetch={apiFetch}
           token={token}
+          flows={flows}
+          activeFlowId={activeFlowId}
+          flowInputVariables={flowInputVariables}
+          setFlowInputVariables={setFlowInputVariables}
         />
       </aside>
     </div>

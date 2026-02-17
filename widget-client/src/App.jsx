@@ -298,7 +298,7 @@ export default function App() {
       if (message?.sender !== "system") continue;
       const text = String(message?.text || "").toLowerCase();
       if (text.includes("reopened")) return false;
-      if (text.includes("you have ended the chat")) return true;
+      if (text.includes("ended the chat")) return true;
       if (text.includes("conversation closed")) return true;
     }
     return false;
