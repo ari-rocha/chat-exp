@@ -1638,10 +1638,170 @@ fn find_missing_required_vars(flow: &ChatFlow, provided: &HashMap<String, String
             if v.label.is_empty() {
                 v.key.clone()
             } else {
-                format!("{} ({})", v.label, v.key)
+                v.label.clone()
             }
         })
         .collect()
+}
+
+/// Use a focused AI call to extract variable values from a visitor's message.
+/// Unlike generate_ai_reply, this uses a minimal prompt that just extracts JSON — no tools,
+/// no contact block, no conversation format.
+async fn extract_vars_with_ai(
+    state: &Arc<AppState>,
+    session_id: &str,
+    visitor_text: &str,
+    var_descriptions: &[(String, String)], // (key, label)
+) -> HashMap<String, String> {
+    let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+    if api_key.trim().is_empty() {
+        eprintln!("[extract_vars] No API key");
+        return HashMap::new();
+    }
+
+    // Include a large conversation window so the AI can see the full collection dialogue
+    let transcript = recent_session_context(state, session_id, 20).await;
+
+    // Build contact info block so the AI knows who the user is
+    let mut contact_block = String::new();
+    let contact_id: Option<String> =
+        sqlx::query_scalar("SELECT contact_id FROM sessions WHERE id = $1")
+            .bind(session_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
+    if let Some(cid) = &contact_id {
+        let contact_row = sqlx::query(
+            "SELECT display_name, email, phone, company, location FROM contacts WHERE id = $1",
+        )
+        .bind(cid)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+        if let Some(row) = contact_row {
+            let name: String = row.get("display_name");
+            let email: String = row.get("email");
+            let phone: String = row.get("phone");
+            let company: String = row.get("company");
+            let location: String = row.get("location");
+            contact_block.push_str("Known contact info:");
+            if !name.is_empty() { contact_block.push_str(&format!(" name={}", name)); }
+            if !email.is_empty() { contact_block.push_str(&format!(" email={}", email)); }
+            if !phone.is_empty() { contact_block.push_str(&format!(" phone={}", phone)); }
+            if !company.is_empty() { contact_block.push_str(&format!(" company={}", company)); }
+            if !location.is_empty() { contact_block.push_str(&format!(" location={}", location)); }
+        }
+    }
+
+    let var_list: Vec<String> = var_descriptions
+        .iter()
+        .map(|(key, label)| {
+            if label.is_empty() || label == key {
+                format!("\"{}\" ", key)
+            } else {
+                format!("\"{}\" ({})", key, label)
+            }
+        })
+        .collect();
+
+    let prompt = format!(
+        "You are a data extraction assistant. Extract values for the requested variables from the conversation and any known contact information.\n\
+         \n\
+         {contact}\n\
+         \n\
+         Conversation transcript:\n{transcript}\n\
+         \n\
+         Latest user message: \"{visitor}\"\n\
+         \n\
+         Extract values for these variables: [{vars}]\n\
+         \n\
+         Rules:\n\
+         - Look at the ENTIRE conversation and contact info to find values, not just the latest message.\n\
+         - If the user said something like \"its my name\" or \"you already know\", use the contact info to fill in the value.\n\
+         - If a value was clearly stated or can be inferred from context, include it.\n\
+         - If a value truly cannot be determined, set it to \"\".\n\
+         - Output ONLY a JSON object mapping variable keys to string values.\n\
+         - No explanation, no markdown, just the raw JSON object.\n\
+         \n\
+         Example output: {{\"first_name\": \"John\", \"purchase_id\": \"1234\"}}",
+        contact = contact_block,
+        transcript = transcript,
+        visitor = visitor_text,
+        vars = var_list.join(", "),
+    );
+
+    eprintln!("[extract_vars] Extracting vars: {:?}", var_descriptions);
+    eprintln!("[extract_vars] Contact: {}", contact_block);
+    eprintln!("[extract_vars] Visitor text: {}", visitor_text);
+
+    let response = state
+        .ai_client
+        .post("https://api.openai.com/v1/responses")
+        .bearer_auth(&api_key)
+        .json(&json!({
+            "model": "gpt-4o-mini",
+            "instructions": "You are a precise data extraction tool. Output ONLY valid JSON. No markdown, no explanation.",
+            "input": prompt,
+        }))
+        .send()
+        .await;
+
+    let Ok(response) = response else {
+        eprintln!("[extract_vars] API request failed");
+        return HashMap::new();
+    };
+
+    let payload = response.json::<Value>().await.unwrap_or_else(|_| json!({}));
+    let raw_text = payload
+        .get("output_text")
+        .and_then(Value::as_str)
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .or_else(|| {
+            payload
+                .get("output")
+                .and_then(Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(|item| item.get("content"))
+                .and_then(Value::as_array)
+                .and_then(|content| content.first())
+                .and_then(|item| item.get("text"))
+                .and_then(Value::as_str)
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+        })
+        .unwrap_or_default();
+
+    eprintln!("[extract_vars] Raw AI response: {}", raw_text);
+
+    // Find the JSON object in the response (may have markdown wrapping)
+    let json_str = if let Some(start) = raw_text.find('{') {
+        if let Some(end) = raw_text.rfind('}') {
+            &raw_text[start..=end]
+        } else {
+            &raw_text
+        }
+    } else {
+        &raw_text
+    };
+
+    let mut result = HashMap::new();
+    if let Ok(parsed) = serde_json::from_str::<HashMap<String, Value>>(json_str) {
+        for (key, val) in parsed {
+            let str_val = match val {
+                Value::String(s) => s,
+                other => other.to_string(),
+            };
+            if !str_val.is_empty() {
+                result.insert(key, str_val);
+            }
+        }
+    }
+    eprintln!("[extract_vars] Extracted: {:?}", result);
+    result
 }
 
 async fn send_flow_agent_message(
@@ -1946,6 +2106,103 @@ async fn execute_flow_from(
                     if !var_name.is_empty() {
                         flow_vars.insert(var_name, visitor_text.clone());
                     }
+                }
+                "start_flow" => {
+                    // Resuming from AI-collect on start_flow — extract vars from visitor reply
+                    let sf_target_id = flow_vars.remove("__sf_target_flow_id").unwrap_or_default();
+                    let sf_sub_vars_json = flow_vars.remove("__sf_sub_vars").unwrap_or_else(|| "{}".to_string());
+                    let mut sub_vars: HashMap<String, String> =
+                        serde_json::from_str(&sf_sub_vars_json).unwrap_or_default();
+
+                    eprintln!("[start_flow resume] target={}, sub_vars={:?}", sf_target_id, sub_vars);
+
+                    if let Some(target_flow) = get_flow_by_id_db(&state.db, &sf_target_id).await {
+                        // Always extract ALL required vars (not just missing) so the AI can
+                        // leverage accumulated context to fill previously-missed values
+                        let all_required_descs: Vec<(String, String)> = target_flow
+                            .input_variables
+                            .iter()
+                            .filter(|v| v.required)
+                            .map(|v| (v.key.clone(), v.label.clone()))
+                            .collect();
+
+                        if !all_required_descs.is_empty() {
+                            let extracted = extract_vars_with_ai(
+                                &state,
+                                &session_id,
+                                &visitor_text,
+                                &all_required_descs,
+                            )
+                            .await;
+                            // Merge extracted into sub_vars (only overwrite if new value is non-empty)
+                            for (key, val) in extracted {
+                                if !val.trim().is_empty() {
+                                    sub_vars.insert(key, val);
+                                }
+                            }
+                        }
+
+                        eprintln!("[start_flow resume] sub_vars after extraction: {:?}", sub_vars);
+
+                        // Check if we now have all required vars
+                        let still_missing = find_missing_required_vars(&target_flow, &sub_vars);
+                        eprintln!("[start_flow resume] still_missing: {:?}", still_missing);
+
+                        if still_missing.is_empty() {
+                            // All collected! Execute the sub-flow
+                            eprintln!("[start_flow resume] All vars collected, executing sub-flow");
+                            clear_flow_cursor(&state, &session_id).await;
+                            Box::pin(execute_flow_from(
+                                state.clone(),
+                                session_id.clone(),
+                                target_flow,
+                                visitor_text.clone(),
+                                None,
+                                sub_vars,
+                            ))
+                            .await;
+                            return;
+                        } else {
+                            // Still missing — ask again
+                            eprintln!("[start_flow resume] Still missing vars, asking again");
+                            flow_vars.insert("__sf_target_flow_id".to_string(), sf_target_id);
+                            flow_vars.insert("__sf_sub_vars".to_string(), serde_json::to_string(&sub_vars).unwrap_or_default());
+                            let ask_prompt = format!(
+                                "The user just said: \"{}\". You still need these values from the user: [{}]. \
+                                 Acknowledge what they provided (if anything), then ask for the remaining values in a friendly, concise way. \
+                                 Do NOT say you have everything or that you'll proceed — you are still waiting for more information.",
+                                visitor_text,
+                                still_missing.join(", ")
+                            );
+                            let ai_reply = generate_ai_reply(
+                                state.clone(),
+                                &session_id,
+                                &ask_prompt,
+                                &visitor_text,
+                            )
+                            .await;
+                            send_flow_agent_message(
+                                state.clone(),
+                                &session_id,
+                                &ai_reply.reply,
+                                500,
+                                None,
+                                None,
+                            )
+                            .await;
+                            save_flow_cursor(
+                                &state,
+                                &session_id,
+                                &flow.id,
+                                &node.id,
+                                "start_flow",
+                                &flow_vars,
+                            )
+                            .await;
+                            return;
+                        }
+                    }
+                    // If target flow not found, just continue
                 }
                 _ => {}
             }
@@ -3107,6 +3364,11 @@ async fn execute_flow_from(
                     .get("flowId")
                     .and_then(Value::as_str)
                     .unwrap_or("");
+                let ai_collect = node
+                    .data
+                    .get("aiCollectInputs")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 if !target_flow_id.is_empty() {
                     if let Some(target_flow) = get_flow_by_id_db(&state.db, target_flow_id).await {
                         // Build initial variables for the sub-flow from bindings
@@ -3124,6 +3386,62 @@ async fn execute_flow_from(
                         for (k, v) in &flow_vars {
                             sub_vars.entry(k.clone()).or_insert_with(|| v.clone());
                         }
+
+                        // Check for missing required vars
+                        let missing = find_missing_required_vars(&target_flow, &sub_vars);
+                        if !missing.is_empty() && ai_collect {
+                            // Store the target flow id + collected sub_vars in flow_vars for resume
+                            flow_vars.insert("__sf_target_flow_id".to_string(), target_flow_id.to_string());
+                            flow_vars.insert("__sf_sub_vars".to_string(), serde_json::to_string(&sub_vars).unwrap_or_default());
+
+                            // Ask the AI to collect the missing fields
+                            let fields_desc: Vec<String> = target_flow
+                                .input_variables
+                                .iter()
+                                .filter(|v| v.required)
+                                .filter(|v| sub_vars.get(&v.key).map(|val| val.trim().is_empty()).unwrap_or(true))
+                                .map(|v| {
+                                    if v.label.is_empty() {
+                                        v.key.clone()
+                                    } else {
+                                        v.label.clone()
+                                    }
+                                })
+                                .collect();
+                            let ask_prompt = format!(
+                                "You need to collect the following information from the user before proceeding: [{}]. \
+                                 Ask for these values in a friendly conversational way. Be concise.",
+                                fields_desc.join(", ")
+                            );
+                            let ai_reply = generate_ai_reply(
+                                state.clone(),
+                                &session_id,
+                                &ask_prompt,
+                                &visitor_text,
+                            )
+                            .await;
+                            send_flow_agent_message(
+                                state.clone(),
+                                &session_id,
+                                &ai_reply.reply,
+                                500,
+                                None,
+                                None,
+                            )
+                            .await;
+                            // Pause: save cursor at this start_flow node
+                            save_flow_cursor(
+                                &state,
+                                &session_id,
+                                &flow.id,
+                                &node.id,
+                                "start_flow",
+                                &flow_vars,
+                            )
+                            .await;
+                            return;
+                        }
+
                         // Execute the sub-flow on the same session (boxed to allow recursion)
                         Box::pin(execute_flow_from(
                             state.clone(),

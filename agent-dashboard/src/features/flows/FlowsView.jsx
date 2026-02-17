@@ -2291,6 +2291,43 @@ function SettingsPanel({
                   </div>
                 );
               })()}
+
+              {/* AI collect missing inputs */}
+              {(() => {
+                const targetFlow = (flows || []).find(
+                  (f) => f.id === data?.flowId,
+                );
+                const hasRequired = (targetFlow?.inputVariables || []).some(
+                  (v) => v.required,
+                );
+                if (!targetFlow || !hasRequired) return null;
+                return (
+                  <div className="rounded-lg border border-violet-200 bg-violet-50/50 p-3">
+                    <label className="flex items-start gap-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={!!data?.aiCollectInputs}
+                        onChange={(e) =>
+                          updateSelectedNodeData({
+                            aiCollectInputs: e.target.checked,
+                          })
+                        }
+                        className="mt-0.5 rounded border-slate-300"
+                      />
+                      <div>
+                        <span className="text-[12px] font-medium text-slate-700">
+                          Use AI to fill required inputs
+                        </span>
+                        <p className="mt-0.5 text-[10px] text-slate-400 leading-relaxed">
+                          When required variables are missing, the AI will
+                          conversationally ask the visitor for the values before
+                          starting the flow.
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+                );
+              })()}
             </div>
           )}
 
