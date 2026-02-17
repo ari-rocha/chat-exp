@@ -196,6 +196,7 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [activeId, setActiveId] = useState("");
   const [text, setText] = useState("");
+  const [conversationSearch, setConversationSearch] = useState("");
   const [visitorDraftBySession, setVisitorDraftBySession] = useState({});
 
   const [agents, setAgents] = useState([]);
@@ -243,6 +244,36 @@ export default function App() {
     if (draft) return `Typing: ${draft}`;
     return session.lastMessage?.text ?? "No messages yet";
   };
+
+  const filteredSessions = useMemo(() => {
+    const query = conversationSearch.trim().toLowerCase();
+    if (!query) return sessions;
+    return sessions.filter((session) => {
+      const draft = visitorDraftBySession[session.id];
+      const preview = (draft
+        ? `Typing: ${draft}`
+        : session.lastMessage?.text ?? "No messages yet"
+      ).toLowerCase();
+      const id = session.id.toLowerCase();
+      return id.includes(query) || preview.includes(query);
+    });
+  }, [sessions, conversationSearch, visitorDraftBySession]);
+
+  const waitingCount = useMemo(
+    () => sessions.filter((session) => !session.assigneeAgentId).length,
+    [sessions],
+  );
+  const handoverCount = useMemo(
+    () => sessions.filter((session) => session.handoverActive).length,
+    [sessions],
+  );
+  const channelCounts = useMemo(() => {
+    const map = new Map();
+    for (const session of sessions) {
+      map.set(session.channel, (map.get(session.channel) || 0) + 1);
+    }
+    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [sessions]);
 
   const loadFlowIntoEditor = useCallback(
     (flow) => {
@@ -902,52 +933,111 @@ export default function App() {
         </header>
 
         {view === "conversations" ? (
-          <div className="grid min-h-0 grid-cols-[320px_1fr_320px] bg-slate-50 max-[1080px]:grid-cols-[1fr]">
-            <aside className="border-r border-slate-200 bg-white max-[1080px]:hidden">
-              <div className="flex items-center justify-between border-b border-slate-200 p-4">
-                <div>
-                  <h2 className="text-sm font-semibold">Conversations</h2>
-                  <p className="text-xs text-slate-500">
-                    {sessions.length} total
-                  </p>
+          <div className="grid min-h-0 grid-cols-[280px_1fr_330px] bg-[#f5f7fb] max-[1220px]:grid-cols-[260px_1fr] max-[980px]:grid-cols-[1fr]">
+            <aside className="flex min-h-0 flex-col border-r border-slate-200 bg-white max-[980px]:hidden">
+              <div className="border-b border-slate-200 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <div>
+                    <h2 className="text-base font-semibold text-slate-900">
+                      Inbox
+                    </h2>
+                    <p className="text-xs text-slate-500">
+                      {sessions.length} conversations
+                    </p>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={createFlow}>
+                    + Flow
+                  </Button>
                 </div>
-                <Button size="sm" variant="outline" onClick={createFlow}>
-                  + Flow
-                </Button>
+                <Input
+                  value={conversationSearch}
+                  onChange={(e) => setConversationSearch(e.target.value)}
+                  placeholder="Search conversation"
+                  className="h-9"
+                />
               </div>
 
-              <div className="p-3">
-                <label className="mb-1 block text-xs text-slate-500">
-                  Status
-                </label>
-                <select
-                  className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
-                  value={agent?.status || "online"}
-                  onChange={(e) => updateAgentStatus(e.target.value)}
-                >
-                  <option value="online">online</option>
-                  <option value="away">away</option>
-                  <option value="paused">paused</option>
-                </select>
+              <div className="space-y-4 border-b border-slate-200 px-4 py-3">
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-center">
+                    <p className="text-[11px] text-slate-500">Open</p>
+                    <p className="text-sm font-semibold text-slate-900">
+                      {sessions.length}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-center">
+                    <p className="text-[11px] text-slate-500">Awaiting</p>
+                    <p className="text-sm font-semibold text-slate-900">
+                      {waitingCount}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-center">
+                    <p className="text-[11px] text-slate-500">Human</p>
+                    <p className="text-sm font-semibold text-slate-900">
+                      {handoverCount}
+                    </p>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-500">
+                    Status
+                  </label>
+                  <select
+                    className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
+                    value={agent?.status || "online"}
+                    onChange={(e) => updateAgentStatus(e.target.value)}
+                  >
+                    <option value="online">online</option>
+                    <option value="away">away</option>
+                    <option value="paused">paused</option>
+                  </select>
+                </div>
+
+                <div>
+                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    Channels
+                  </p>
+                  <div className="space-y-1">
+                    {channelCounts.map(([channel, count]) => (
+                      <div
+                        key={channel}
+                        className="flex items-center justify-between rounded-md px-1.5 py-1 text-xs text-slate-600"
+                      >
+                        <span className="capitalize">{channel}</span>
+                        <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">
+                          {count}
+                        </span>
+                      </div>
+                    ))}
+                    {channelCounts.length === 0 && (
+                      <p className="text-xs text-slate-400">
+                        No channels available.
+                      </p>
+                    )}
+                  </div>
+                </div>
               </div>
 
-              <ScrollArea className="h-[calc(100vh-182px)] p-2">
+              <ScrollArea className="h-full p-3">
                 <div className="space-y-2">
-                  {sessions.map((session) => {
+                  {filteredSessions.map((session) => {
                     const isActive = session.id === activeId;
                     return (
                       <button
                         key={session.id}
                         onClick={() => setActiveId(session.id)}
-                        className={`w-full rounded-lg border px-3 py-2 text-left ${
+                        className={`w-full rounded-xl border px-3 py-2.5 text-left transition ${
                           isActive
-                            ? "border-blue-200 bg-blue-50"
-                            : "border-transparent hover:border-slate-200 hover:bg-slate-50"
+                            ? "border-blue-200 bg-blue-50 shadow-sm"
+                            : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
                         }`}
                       >
-                        <div className="mb-1 flex items-center justify-between text-xs">
-                          <strong>{session.id.slice(0, 8)}</strong>
-                          <span className="text-slate-400">
+                        <div className="mb-1 flex items-center justify-between">
+                          <p className="text-sm font-semibold text-slate-900">
+                            {session.id.slice(0, 8)}
+                          </p>
+                          <span className="text-[11px] text-slate-400">
                             {formatTime(session.updatedAt)}
                           </span>
                         </div>
@@ -955,37 +1045,66 @@ export default function App() {
                           {sessionPreview(session)}
                         </p>
                         <p className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">
-                          {session.channel}{" "}
-                          {session.assigneeAgentId
-                            ? "• assigned"
-                            : "• unassigned"}
+                          {session.channel} •{" "}
+                          {session.assigneeAgentId ? "assigned" : "unassigned"}
                         </p>
                       </button>
                     );
                   })}
+                  {filteredSessions.length === 0 && (
+                    <p className="px-1 text-xs text-slate-400">
+                      No conversations found.
+                    </p>
+                  )}
                 </div>
               </ScrollArea>
             </aside>
 
-            <section className="grid min-h-0 grid-rows-[1fr_90px] bg-slate-100">
-              <ScrollArea className="h-full p-4">
+            <section className="grid min-h-0 grid-rows-[62px_1fr_84px] border-r border-slate-200 bg-white max-[1220px]:border-r-0">
+              <header className="flex items-center justify-between border-b border-slate-200 px-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    {activeSession
+                      ? `Session: ${activeSession.id}`
+                      : "Choose a conversation"}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {activeSession
+                      ? `${activeSession.channel} channel`
+                      : "Select a session on the left"}
+                  </p>
+                </div>
+                {activeSession && (
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="capitalize">
+                      {activeSession.channel}
+                    </Badge>
+                    <Badge
+                      variant={
+                        activeSession.handoverActive ? "default" : "secondary"
+                      }
+                    >
+                      {activeSession.handoverActive ? "Human" : "Bot"}
+                    </Badge>
+                  </div>
+                )}
+              </header>
+
+              <ScrollArea className="h-full bg-[#f8fafc] p-4">
                 <div className="space-y-3">
                   {messages.map((message) =>
                     message.sender === "system" ? (
-                      <div
-                        key={message.id}
-                        className="flex justify-center py-1"
-                      >
-                        <span className="rounded-full bg-slate-200 px-3 py-1 text-xs text-slate-600">
+                      <div key={message.id} className="flex justify-center py-1">
+                        <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500">
                           {String(message.text ?? "")}
                         </span>
                       </div>
                     ) : (
                       <article
                         key={message.id}
-                        className={`max-w-[72%] rounded-xl border px-3 py-2 text-sm ${
+                        className={`max-w-[78%] rounded-2xl border px-3 py-2.5 text-sm shadow-sm ${
                           message.sender === "agent"
-                            ? "ml-auto border-blue-200 bg-blue-600 text-white"
+                            ? "ml-auto border-blue-500 bg-blue-600 text-white"
                             : "border-slate-200 bg-white text-slate-900"
                         }`}
                       >
@@ -1011,7 +1130,7 @@ export default function App() {
                   )}
 
                   {activeId && visitorDraftBySession[activeId] && (
-                    <article className="max-w-[72%] rounded-xl border border-dashed border-slate-300 bg-white px-3 py-2 text-sm text-slate-700">
+                    <article className="max-w-[78%] rounded-2xl border border-dashed border-slate-300 bg-white px-3 py-2 text-sm text-slate-700">
                       <p className="whitespace-pre-wrap break-words">
                         {visitorDraftBySession[activeId]}
                       </p>
@@ -1042,7 +1161,7 @@ export default function App() {
                   onBlur={() => sendTypingState(false)}
                   disabled={!activeId}
                   rows={2}
-                  className="min-h-10 resize-none"
+                  className="min-h-10 resize-none bg-slate-50"
                 />
                 <Button
                   type="submit"
@@ -1054,193 +1173,262 @@ export default function App() {
               </form>
             </section>
 
-            <aside className="border-l border-slate-200 bg-white p-4 max-[1080px]:hidden">
-              <h3 className="text-sm font-semibold">Routing & Notes</h3>
-              <p className="mb-4 text-xs text-slate-500">
-                Inboxes, teams, assignees, channels, flow and notes.
-              </p>
-
-              <div className="space-y-3 text-sm">
-                <div className="rounded-md border border-slate-200 bg-slate-50 p-2">
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-xs font-semibold text-slate-600">
-                      Agent Handover
-                    </span>
-                    <Badge
-                      variant={
-                        activeSession?.handoverActive ? "default" : "secondary"
-                      }
-                    >
-                      {activeSession?.handoverActive ? "Human" : "Bot"}
-                    </Badge>
-                  </div>
-                  <Button
-                    size="sm"
-                    className="w-full"
-                    variant={
-                      activeSession?.handoverActive ? "outline" : "default"
-                    }
-                    disabled={!activeId}
-                    onClick={() =>
-                      setHandover(!Boolean(activeSession?.handoverActive))
-                    }
-                  >
-                    {activeSession?.handoverActive
-                      ? "Return To Bot"
-                      : "Take Over As Agent"}
-                  </Button>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Assignee
-                  </label>
-                  <select
-                    className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
-                    value={activeSession?.assigneeAgentId || ""}
-                    onChange={(e) =>
-                      patchActiveSession("assignee", {
-                        agentId: e.target.value || null,
-                      })
-                    }
-                    disabled={!activeId}
-                  >
-                    <option value="">Unassigned</option>
-                    {agents.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Channel
-                  </label>
-                  <select
-                    className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
-                    value={activeSession?.channel || "web"}
-                    onChange={(e) =>
-                      patchActiveSession("channel", { channel: e.target.value })
-                    }
-                    disabled={!activeId}
-                  >
-                    {channels.map((channel) => (
-                      <option key={channel} value={channel}>
-                        {channel}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Inbox
-                  </label>
-                  <select
-                    className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
-                    value={activeSession?.inboxId || ""}
-                    onChange={(e) =>
-                      patchActiveSession("inbox", {
-                        inboxId: e.target.value || null,
-                      })
-                    }
-                    disabled={!activeId}
-                  >
-                    <option value="">None</option>
-                    {inboxes.map((inbox) => (
-                      <option key={inbox.id} value={inbox.id}>
-                        {inbox.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Team
-                  </label>
-                  <select
-                    className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
-                    value={activeSession?.teamId || ""}
-                    onChange={(e) =>
-                      patchActiveSession("team", {
-                        teamId: e.target.value || null,
-                      })
-                    }
-                    disabled={!activeId}
-                  >
-                    <option value="">None</option>
-                    {teams.map((team) => (
-                      <option key={team.id} value={team.id}>
-                        {team.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Flow
-                  </label>
-                  <select
-                    className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
-                    value={activeSession?.flowId || ""}
-                    onChange={(e) =>
-                      patchActiveSession("flow", {
-                        flowId: e.target.value || null,
-                      })
-                    }
-                    disabled={!activeId}
-                  >
-                    <option value="">No flow</option>
-                    {flows.map((flow) => (
-                      <option key={flow.id} value={flow.id}>
-                        {flow.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+            <aside className="flex min-h-0 flex-col bg-white max-[1220px]:hidden">
+              <div className="border-b border-slate-200 p-4">
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Profile details
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  User information, routing and conversation notes.
+                </p>
               </div>
 
-              <Separator className="my-4" />
-
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Notes
-              </p>
-              <Textarea
-                value={noteText}
-                onChange={(e) => setNoteText(e.target.value)}
-                placeholder="Add a note for this conversation"
-                rows={3}
-                disabled={!activeId}
-              />
-              <Button
-                className="mt-2 w-full"
-                variant="secondary"
-                onClick={saveNote}
-                disabled={!activeId || !noteText.trim()}
-              >
-                Save Note
-              </Button>
-
-              <ScrollArea className="mt-3 h-[300px] rounded-md border border-slate-200 p-2">
-                <div className="space-y-2">
-                  {notes.map((note) => (
-                    <div
-                      key={note.id}
-                      className="rounded-md border border-slate-200 bg-slate-50 p-2 text-sm text-slate-700"
-                    >
-                      <p>{note.text}</p>
-                      <p className="mt-1 text-[11px] text-slate-400">
-                        {formatTime(note.createdAt)}
-                      </p>
+              <ScrollArea className="h-full p-4">
+                <div className="space-y-4 text-sm">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="mb-3 flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100 text-sm font-semibold text-blue-700">
+                        {activeSession?.id?.slice(0, 2).toUpperCase() || "--"}
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">
+                          {activeSession
+                            ? `Visitor ${activeSession.id.slice(0, 6)}`
+                            : "No visitor selected"}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {activeSession
+                            ? `Joined ${new Date(activeSession.createdAt).toLocaleDateString()}`
+                            : "Select a conversation"}
+                        </p>
+                      </div>
                     </div>
-                  ))}
-                  {notes.length === 0 && (
-                    <p className="text-xs text-slate-400">No notes yet.</p>
-                  )}
+
+                    <div className="space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>Assignee</span>
+                        <span className="font-medium text-slate-900">
+                          {agents.find(
+                            (item) => item.id === activeSession?.assigneeAgentId,
+                          )?.name || "Unassigned"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>Channel</span>
+                        <span className="font-medium capitalize text-slate-900">
+                          {activeSession?.channel || "web"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>Inbox</span>
+                        <span className="font-medium text-slate-900">
+                          {inboxes.find((item) => item.id === activeSession?.inboxId)
+                            ?.name || "None"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>Team</span>
+                        <span className="font-medium text-slate-900">
+                          {teams.find((item) => item.id === activeSession?.teamId)
+                            ?.name || "None"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>Messages</span>
+                        <span className="font-medium text-slate-900">
+                          {activeSession?.messageCount || 0}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Agent Handover
+                      </span>
+                      <Badge
+                        variant={
+                          activeSession?.handoverActive ? "default" : "secondary"
+                        }
+                      >
+                        {activeSession?.handoverActive ? "Human" : "Bot"}
+                      </Badge>
+                    </div>
+                    <Button
+                      size="sm"
+                      className="w-full"
+                      variant={
+                        activeSession?.handoverActive ? "outline" : "default"
+                      }
+                      disabled={!activeId}
+                      onClick={() =>
+                        setHandover(!Boolean(activeSession?.handoverActive))
+                      }
+                    >
+                      {activeSession?.handoverActive
+                        ? "Return To Bot"
+                        : "Take Over As Agent"}
+                    </Button>
+                  </div>
+
+                  <div className="space-y-3 rounded-xl border border-slate-200 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Routing
+                    </p>
+
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-500">
+                        Assignee
+                      </label>
+                      <select
+                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
+                        value={activeSession?.assigneeAgentId || ""}
+                        onChange={(e) =>
+                          patchActiveSession("assignee", {
+                            agentId: e.target.value || null,
+                          })
+                        }
+                        disabled={!activeId}
+                      >
+                        <option value="">Unassigned</option>
+                        {agents.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-500">
+                        Channel
+                      </label>
+                      <select
+                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
+                        value={activeSession?.channel || "web"}
+                        onChange={(e) =>
+                          patchActiveSession("channel", {
+                            channel: e.target.value,
+                          })
+                        }
+                        disabled={!activeId}
+                      >
+                        {channels.map((channel) => (
+                          <option key={channel} value={channel}>
+                            {channel}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-500">
+                        Inbox
+                      </label>
+                      <select
+                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
+                        value={activeSession?.inboxId || ""}
+                        onChange={(e) =>
+                          patchActiveSession("inbox", {
+                            inboxId: e.target.value || null,
+                          })
+                        }
+                        disabled={!activeId}
+                      >
+                        <option value="">None</option>
+                        {inboxes.map((inbox) => (
+                          <option key={inbox.id} value={inbox.id}>
+                            {inbox.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-500">
+                        Team
+                      </label>
+                      <select
+                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
+                        value={activeSession?.teamId || ""}
+                        onChange={(e) =>
+                          patchActiveSession("team", {
+                            teamId: e.target.value || null,
+                          })
+                        }
+                        disabled={!activeId}
+                      >
+                        <option value="">None</option>
+                        {teams.map((team) => (
+                          <option key={team.id} value={team.id}>
+                            {team.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-500">
+                        Flow
+                      </label>
+                      <select
+                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
+                        value={activeSession?.flowId || ""}
+                        onChange={(e) =>
+                          patchActiveSession("flow", {
+                            flowId: e.target.value || null,
+                          })
+                        }
+                        disabled={!activeId}
+                      >
+                        <option value="">No flow</option>
+                        {flows.map((flow) => (
+                          <option key={flow.id} value={flow.id}>
+                            {flow.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 p-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Notes
+                    </p>
+                    <Textarea
+                      value={noteText}
+                      onChange={(e) => setNoteText(e.target.value)}
+                      placeholder="Add a note for this conversation"
+                      rows={3}
+                      disabled={!activeId}
+                    />
+                    <Button
+                      className="mt-2 w-full"
+                      variant="secondary"
+                      onClick={saveNote}
+                      disabled={!activeId || !noteText.trim()}
+                    >
+                      Save Note
+                    </Button>
+
+                    <div className="mt-3 space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                      {notes.map((note) => (
+                        <div
+                          key={note.id}
+                          className="rounded-md border border-slate-200 bg-white p-2 text-sm text-slate-700"
+                        >
+                          <p>{note.text}</p>
+                          <p className="mt-1 text-[11px] text-slate-400">
+                            {formatTime(note.createdAt)}
+                          </p>
+                        </div>
+                      ))}
+                      {notes.length === 0 && (
+                        <p className="text-xs text-slate-400">No notes yet.</p>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </ScrollArea>
             </aside>
