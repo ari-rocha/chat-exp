@@ -595,6 +595,140 @@ async fn set_agent_human_typing(
     }
 }
 
+/// Extract email and phone from freeform text (visitor messages, form submissions).
+fn extract_identity_from_text(text: &str) -> (Option<String>, Option<String>, Option<String>) {
+    let email_re = Regex::new(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}").unwrap();
+    let phone_re = Regex::new(r"\+?[\d\s\-().]{7,15}").unwrap();
+
+    let email = email_re.find(text).map(|m| m.as_str().to_lowercase());
+    let phone = phone_re.find(text).map(|m| m.as_str().trim().to_string());
+
+    // Try to extract a name from "Name: value" or "First name: value" patterns
+    let mut name: Option<String> = None;
+    let name_re = Regex::new(r"(?i)(?:name|first[\s_]?name|full[\s_]?name)\s*:\s*([^,\n]+)").unwrap();
+    if let Some(cap) = name_re.captures(text) {
+        let n = cap[1].trim().to_string();
+        if !n.is_empty() {
+            name = Some(n);
+        }
+    }
+
+    (email, phone, name)
+}
+
+/// Try to find or create a contact from visitor-supplied data, then link to session.
+/// Returns true if a contact was linked.
+async fn auto_resolve_contact(
+    state: &Arc<AppState>,
+    session_id: &str,
+    visitor_text: &str,
+) -> bool {
+    // Skip if session already has a contact
+    let existing_contact: Option<Option<String>> =
+        sqlx::query_scalar("SELECT contact_id FROM sessions WHERE id = $1")
+            .bind(session_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+    if let Some(Some(ref cid)) = existing_contact {
+        if !cid.is_empty() {
+            return false;
+        }
+    }
+
+    let (email, phone, name) = extract_identity_from_text(visitor_text);
+
+    // Need at least an email or phone to resolve
+    if email.is_none() && phone.is_none() {
+        return false;
+    }
+
+    let tenant_id = sqlx::query_scalar::<_, String>("SELECT tenant_id FROM sessions WHERE id = $1")
+        .bind(session_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| state.default_tenant_id.clone());
+
+    // Try to find existing contact by email first, then phone
+    let mut contact_id: Option<String> = None;
+    if let Some(ref em) = email {
+        contact_id = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM contacts WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) LIMIT 1",
+        )
+        .bind(&tenant_id)
+        .bind(em)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+    }
+    if contact_id.is_none() {
+        if let Some(ref ph) = phone {
+            contact_id = sqlx::query_scalar::<_, String>(
+                "SELECT id FROM contacts WHERE tenant_id = $1 AND phone = $2 LIMIT 1",
+            )
+            .bind(&tenant_id)
+            .bind(ph)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+        }
+    }
+
+    // If no existing contact found, create one
+    let cid = if let Some(cid) = contact_id {
+        // Update name if we discovered one and the contact doesn't have one
+        if let Some(ref n) = name {
+            let _ = sqlx::query(
+                "UPDATE contacts SET display_name = $1 WHERE id = $2 AND (display_name = '' OR display_name IS NULL)",
+            )
+            .bind(n)
+            .bind(&cid)
+            .execute(&state.db)
+            .await;
+        }
+        cid
+    } else {
+        let new_id = Uuid::new_v4().to_string();
+        let now = now_iso();
+        let display = name.clone().unwrap_or_default();
+        let em = email.clone().unwrap_or_default();
+        let ph = phone.clone().unwrap_or_default();
+        let _ = sqlx::query(
+            "INSERT INTO contacts (id, tenant_id, display_name, email, phone, external_id, metadata, created_at, updated_at, company, location, avatar_url, last_seen_at, browser, os) \
+             VALUES ($1,$2,$3,$4,$5,'','{}', $6,$7,'','','','','','')",
+        )
+        .bind(&new_id)
+        .bind(&tenant_id)
+        .bind(&display)
+        .bind(&em)
+        .bind(&ph)
+        .bind(&now)
+        .bind(&now)
+        .execute(&state.db)
+        .await;
+        new_id
+    };
+
+    // Link to session
+    let _ = sqlx::query("UPDATE sessions SET contact_id = $1 WHERE id = $2")
+        .bind(&cid)
+        .bind(session_id)
+        .execute(&state.db)
+        .await;
+
+    // Emit session update so agent dashboard sees the linked contact
+    if let Some(summary) = get_session_summary_db(&state.db, session_id).await {
+        emit_session_update(state, summary).await;
+    }
+
+    true
+}
+
 async fn ensure_session(state: Arc<AppState>, session_id: &str) -> Session {
     let existing = sqlx::query(
         "SELECT id, tenant_id, created_at, updated_at, channel, assignee_agent_id, inbox_id, team_id, flow_id, handover_active, status, priority, contact_id FROM sessions WHERE id = $1",
@@ -2796,6 +2930,9 @@ async fn post_message(
     };
 
     if sender == "visitor" {
+        // Auto-resolve contact from visitor text (email, phone, name)
+        auto_resolve_contact(&state, &target_session_id, &body.text).await;
+
         let state_clone = state.clone();
         let session_clone = target_session_id.clone();
         let text_clone = body.text.clone();
@@ -5235,6 +5372,10 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         None,
                     )
                     .await;
+
+                    // Auto-resolve contact from visitor text (email, phone, name)
+                    auto_resolve_contact(&state, &target_session_id, text).await;
+
                     let state_clone = state.clone();
                     let session_clone = target_session_id;
                     let text_clone = text.to_string();
