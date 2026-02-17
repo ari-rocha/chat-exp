@@ -197,6 +197,7 @@ export default function App() {
   const [activeId, setActiveId] = useState("");
   const [text, setText] = useState("");
   const [conversationSearch, setConversationSearch] = useState("");
+  const [conversationFilter, setConversationFilter] = useState("all");
   const [visitorDraftBySession, setVisitorDraftBySession] = useState({});
   const [cannedReplies, setCannedReplies] = useState([]);
   const [cannedPanelOpen, setCannedPanelOpen] = useState(false);
@@ -238,6 +239,7 @@ export default function App() {
     () => sessions.find((session) => session.id === activeId) ?? null,
     [sessions, activeId],
   );
+  const isActiveSessionClosed = (activeSession?.status || "open") === "closed";
 
   const activeFlow = useMemo(
     () => flows.find((flow) => flow.id === activeFlowId) ?? null,
@@ -257,8 +259,13 @@ export default function App() {
 
   const filteredSessions = useMemo(() => {
     const query = conversationSearch.trim().toLowerCase();
-    if (!query) return sessions;
-    return sessions.filter((session) => {
+    const byStatus = sessions.filter((session) => {
+      const status = session.status || "open";
+      if (conversationFilter === "all") return true;
+      return status === conversationFilter;
+    });
+    if (!query) return byStatus;
+    return byStatus.filter((session) => {
       const draft = visitorDraftBySession[session.id];
       const preview = (draft
         ? `Typing: ${draft}`
@@ -267,7 +274,7 @@ export default function App() {
       const id = session.id.toLowerCase();
       return id.includes(query) || preview.includes(query);
     });
-  }, [sessions, conversationSearch, visitorDraftBySession]);
+  }, [sessions, conversationSearch, conversationFilter, visitorDraftBySession]);
 
   const openCount = useMemo(
     () => sessions.filter((session) => (session.status || "open") === "open").length,
@@ -279,9 +286,9 @@ export default function App() {
         .length,
     [sessions],
   );
-  const resolvedCount = useMemo(
+  const closedCount = useMemo(
     () =>
-      sessions.filter((session) => (session.status || "open") === "resolved")
+      sessions.filter((session) => (session.status || "open") === "closed")
         .length,
     [sessions],
   );
@@ -611,6 +618,12 @@ export default function App() {
 
   const sendMessage = (e) => {
     e.preventDefault();
+    if (
+      messageAudience === "user" &&
+      (activeSession?.status || "open") === "closed"
+    ) {
+      return;
+    }
     if (!activeId || !text.trim()) return;
     sendTypingState(false);
     sendWsEvent("agent:message", {
@@ -1081,11 +1094,27 @@ export default function App() {
                     </p>
                   </div>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-center">
-                    <p className="text-[11px] text-slate-500">Resolved</p>
+                    <p className="text-[11px] text-slate-500">Closed</p>
                     <p className="text-sm font-semibold text-slate-900">
-                      {resolvedCount}
+                      {closedCount}
                     </p>
                   </div>
+                </div>
+                <div className="grid grid-cols-4 gap-1">
+                  {["all", "open", "awaiting", "closed"].map((status) => (
+                    <button
+                      key={status}
+                      type="button"
+                      onClick={() => setConversationFilter(status)}
+                      className={`rounded-md border px-1.5 py-1 text-[11px] uppercase tracking-wide ${
+                        conversationFilter === status
+                          ? "border-blue-200 bg-blue-50 text-blue-700"
+                          : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+                      }`}
+                    >
+                      {status}
+                    </button>
+                  ))}
                 </div>
 
                 <div>
@@ -1308,17 +1337,17 @@ export default function App() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => patchSessionMeta({ status: "resolved" })}
+                    onClick={() => patchSessionMeta({ status: "closed" })}
                     disabled={!activeId}
                   >
-                    Mark resolved
+                    Close chat
                   </Button>
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
                     onClick={() => patchSessionMeta({ status: "open" })}
-                    disabled={!activeId}
+                    disabled={!activeId || !isActiveSessionClosed}
                   >
                     Reopen
                   </Button>
@@ -1386,7 +1415,9 @@ export default function App() {
                   <Textarea
                     placeholder={
                       activeId
-                        ? "Type your reply..."
+                        ? isActiveSessionClosed && messageAudience === "user"
+                          ? "This conversation is closed. Reopen to send a user message."
+                          : "Type your reply..."
                         : "Select a conversation to reply"
                     }
                     value={text}
@@ -1451,13 +1482,20 @@ export default function App() {
                         }
                       }
                     }}
-                    disabled={!activeId}
+                    disabled={
+                      !activeId ||
+                      (isActiveSessionClosed && messageAudience === "user")
+                    }
                     rows={2}
                     className="min-h-10 resize-none bg-slate-50"
                   />
                   <Button
                     type="submit"
-                    disabled={!activeId || !text.trim()}
+                    disabled={
+                      !activeId ||
+                      !text.trim() ||
+                      (isActiveSessionClosed && messageAudience === "user")
+                    }
                     className="h-10 self-end bg-blue-600 text-white hover:bg-blue-700"
                   >
                     Send
@@ -1600,6 +1638,7 @@ export default function App() {
                         <option value="awaiting">awaiting</option>
                         <option value="snoozed">snoozed</option>
                         <option value="resolved">resolved</option>
+                        <option value="closed">closed</option>
                       </select>
                     </div>
 

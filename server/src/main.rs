@@ -1183,6 +1183,7 @@ fn has_handover_intent(text: &str) -> bool {
 struct AiDecision {
     reply: String,
     handover: bool,
+    close_chat: bool,
     suggestions: Vec<String>,
 }
 
@@ -1233,6 +1234,11 @@ fn parse_ai_decision_from_text(raw: &str) -> Option<AiDecision> {
             .get("handover")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let close_chat = parsed
+            .get("closeChat")
+            .and_then(Value::as_bool)
+            .or_else(|| parsed.get("close_chat").and_then(Value::as_bool))
+            .unwrap_or(false);
         let suggestions = parsed
             .get("suggestions")
             .and_then(Value::as_array)
@@ -1250,6 +1256,7 @@ fn parse_ai_decision_from_text(raw: &str) -> Option<AiDecision> {
         return Some(AiDecision {
             reply,
             handover,
+            close_chat,
             suggestions,
         });
     }
@@ -1266,6 +1273,20 @@ async fn set_session_handover(
     let session = sessions.get_mut(session_id)?;
     let changed = session.handover_active != active;
     session.handover_active = active;
+    Some((session_summary(session), changed))
+}
+
+async fn set_session_status(
+    state: &Arc<AppState>,
+    session_id: &str,
+    status: &str,
+) -> Option<(SessionSummary, bool)> {
+    let normalized = status.trim().to_ascii_lowercase();
+    let mut sessions = state.sessions.write().await;
+    let session = sessions.get_mut(session_id)?;
+    let changed = session.status != normalized;
+    session.status = normalized;
+    session.updated_at = now_iso();
     Some((session_summary(session), changed))
 }
 
@@ -1301,7 +1322,8 @@ async fn generate_ai_reply(
 
     let system_instruction = if prompt.trim().is_empty() {
         "You are a support agent in a chat flow. Use prior conversation context and respond briefly and helpfully. \
-If user asks for a human, transfer, escalation, or representative, set handover=true."
+If user asks for a human, transfer, escalation, or representative, set handover=true. \
+If the conversation is clearly complete and resolved, set closeChat=true."
             .to_string()
     } else {
         prompt.trim().to_string()
@@ -1321,6 +1343,7 @@ If user asks for a human, transfer, escalation, or representative, set handover=
         return AiDecision {
             reply: fallback,
             handover: has_handover_intent(visitor_text),
+            close_chat: false,
             suggestions: vec![],
         };
     }
@@ -1333,7 +1356,7 @@ If user asks for a human, transfer, escalation, or representative, set handover=
             "model": "gpt-4o-mini",
             "instructions": system_instruction,
             "input": format!(
-                "Conversation transcript (oldest to newest):\n{}\n\nLatest visitor message:\n{}\n\nReturn ONLY JSON: {{\"reply\":\"string\",\"handover\":boolean,\"suggestions\":[\"short option\", \"another option\"]}}",
+                "Conversation transcript (oldest to newest):\n{}\n\nLatest visitor message:\n{}\n\nReturn ONLY JSON: {{\"reply\":\"string\",\"handover\":boolean,\"closeChat\":boolean,\"suggestions\":[\"short option\", \"another option\"]}}",
                 transcript,
                 visitor_text.trim()
             ),
@@ -1346,6 +1369,7 @@ If user asks for a human, transfer, escalation, or representative, set handover=
             reply: "I had a temporary issue generating an AI reply. Could you rephrase?"
                 .to_string(),
             handover: has_handover_intent(visitor_text),
+            close_chat: false,
             suggestions: vec![],
         };
     };
@@ -1379,6 +1403,7 @@ If user asks for a human, transfer, escalation, or representative, set handover=
         return AiDecision {
             reply: raw_text,
             handover: has_handover_intent(visitor_text),
+            close_chat: false,
             suggestions: vec![],
         };
     }
@@ -1399,6 +1424,7 @@ If user asks for a human, transfer, escalation, or representative, set handover=
     AiDecision {
         reply,
         handover: has_handover_intent(visitor_text),
+        close_chat: false,
         suggestions: vec![],
     }
 }
@@ -1610,6 +1636,25 @@ async fn execute_flow(
                     }
                     break;
                 }
+                if decision.close_chat {
+                    if let Some((summary, changed)) =
+                        set_session_status(&state, &session_id, "closed").await
+                    {
+                        emit_session_update(&state, summary).await;
+                        if changed {
+                            let _ = add_message(
+                                state.clone(),
+                                &session_id,
+                                "system",
+                                "Conversation closed by bot",
+                                None,
+                                None,
+                            )
+                            .await;
+                        }
+                    }
+                    break;
+                }
             }
             "condition" => {
                 let contains = flow_node_data_text(&node, "contains")
@@ -1772,6 +1817,24 @@ async fn run_flow_for_visitor_message(
                             &session_id,
                             "system",
                             "Conversation transferred to a human agent",
+                            None,
+                            None,
+                        )
+                        .await;
+                    }
+                }
+            }
+            if decision.close_chat {
+                if let Some((summary, changed)) =
+                    set_session_status(&state, &session_id, "closed").await
+                {
+                    emit_session_update(&state, summary).await;
+                    if changed {
+                        let _ = add_message(
+                            state.clone(),
+                            &session_id,
+                            "system",
+                            "Conversation closed by bot",
                             None,
                             None,
                         )
@@ -2359,49 +2422,79 @@ async fn patch_session_meta(
         return err.into_response();
     }
 
-    let mut sessions = state.sessions.write().await;
-    let Some(session) = sessions.get_mut(&session_id) else {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "session not found" })),
+    let (summary, changed_to_closed, changed_from_closed_to_open) = {
+        let mut sessions = state.sessions.write().await;
+        let Some(session) = sessions.get_mut(&session_id) else {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "session not found" })),
+            )
+                .into_response();
+        };
+
+        let previous_status = session.status.clone();
+
+        if let Some(status) = body.status {
+            let normalized = status.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "open" | "resolved" | "awaiting" | "snoozed" | "closed" => {
+                    session.status = normalized
+                }
+                _ => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({ "error": "invalid status" })),
+                    )
+                        .into_response()
+                }
+            }
+        }
+
+        if let Some(priority) = body.priority {
+            let normalized = priority.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "low" | "normal" | "high" | "urgent" => session.priority = normalized,
+                _ => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({ "error": "invalid priority" })),
+                    )
+                        .into_response()
+                }
+            }
+        }
+        session.updated_at = now_iso();
+
+        (
+            session_summary(session),
+            previous_status != "closed" && session.status == "closed",
+            previous_status == "closed" && session.status == "open",
         )
-            .into_response();
     };
 
-    if let Some(status) = body.status {
-        let normalized = status.trim().to_ascii_lowercase();
-        match normalized.as_str() {
-            "open" | "resolved" | "awaiting" | "snoozed" => session.status = normalized,
-            _ => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(json!({ "error": "invalid status" })),
-                )
-                    .into_response()
-            }
-        }
+    if changed_to_closed {
+        let _ = add_message(
+            state.clone(),
+            &session_id,
+            "system",
+            "Conversation closed by agent",
+            None,
+            None,
+        )
+        .await;
+    } else if changed_from_closed_to_open {
+        let _ = add_message(
+            state.clone(),
+            &session_id,
+            "system",
+            "Conversation reopened",
+            None,
+            None,
+        )
+        .await;
     }
 
-    if let Some(priority) = body.priority {
-        let normalized = priority.trim().to_ascii_lowercase();
-        match normalized.as_str() {
-            "low" | "normal" | "high" | "urgent" => session.priority = normalized,
-            _ => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(json!({ "error": "invalid priority" })),
-                )
-                    .into_response()
-            }
-        }
-    }
-    session.updated_at = now_iso();
-
-    (
-        StatusCode::OK,
-        Json(json!({ "session": session_summary(session) })),
-    )
-        .into_response()
+    (StatusCode::OK, Json(json!({ "session": summary }))).into_response()
 }
 
 async fn get_canned_replies(
