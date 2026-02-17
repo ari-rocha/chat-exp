@@ -3040,7 +3040,9 @@ async fn execute_flow_from(
                     .unwrap_or(false);
                 if send_csat {
                     let csat_text = "How would you rate your experience?";
-                    let rating_type = node.data.get("csatRatingType")
+                    let rating_type = node
+                        .data
+                        .get("csatRatingType")
                         .and_then(Value::as_str)
                         .unwrap_or("emoji");
                     let widget = Some(serde_json::json!({
@@ -3096,7 +3098,9 @@ async fn execute_flow_from(
                 let text = flow_node_data_text(&node, "text")
                     .unwrap_or_else(|| "How would you rate your experience?".to_string());
                 let delay_ms = flow_node_data_u64(&node, "delayMs").unwrap_or(420);
-                let rating_type = node.data.get("ratingType")
+                let rating_type = node
+                    .data
+                    .get("ratingType")
                     .and_then(Value::as_str)
                     .unwrap_or("emoji");
                 let widget = Some(serde_json::json!({
