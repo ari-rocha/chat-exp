@@ -19,12 +19,14 @@ import {
   ChevronDown,
   ChevronRight,
   CircleDot,
+  Clock,
   Code2,
   Copy,
   Eye,
   FileText,
   Globe,
   GripVertical,
+  Hash,
   Image,
   MessageSquare,
   MoreHorizontal,
@@ -33,11 +35,17 @@ import {
   Plus,
   Puzzle,
   RefreshCw,
+  Send,
   Settings2,
   Sparkles,
+  Star,
+  StickyNote,
+  Tag,
   Trash2,
   Upload,
+  UserPlus,
   X,
+  XCircle,
   Zap,
 } from "lucide-react";
 import { useState } from "react";
@@ -120,6 +128,54 @@ const NODE_COLORS = {
     icon: "#7c3aed",
     iconBg: "#ede9fe",
   },
+  wait: {
+    bg: "#fffbeb",
+    border: "#fde68a",
+    icon: "#d97706",
+    iconBg: "#fef3c7",
+  },
+  assign: {
+    bg: "#f0fdf4",
+    border: "#bbf7d0",
+    icon: "#16a34a",
+    iconBg: "#dcfce7",
+  },
+  close_conversation: {
+    bg: "#fef2f2",
+    border: "#fecaca",
+    icon: "#dc2626",
+    iconBg: "#fee2e2",
+  },
+  csat: {
+    bg: "#fffbeb",
+    border: "#fde68a",
+    icon: "#eab308",
+    iconBg: "#fef9c3",
+  },
+  tag: {
+    bg: "#fdf4ff",
+    border: "#f0abfc",
+    icon: "#c026d3",
+    iconBg: "#fae8ff",
+  },
+  set_attribute: {
+    bg: "#f0fdfa",
+    border: "#99f6e4",
+    icon: "#0d9488",
+    iconBg: "#ccfbf1",
+  },
+  note: {
+    bg: "#fefce8",
+    border: "#fef08a",
+    icon: "#ca8a04",
+    iconBg: "#fef9c3",
+  },
+  webhook: {
+    bg: "#fff7ed",
+    border: "#fed7aa",
+    icon: "#ea580c",
+    iconBg: "#ffedd5",
+  },
 };
 
 const NODE_ICONS = {
@@ -138,6 +194,14 @@ const NODE_ICONS = {
   select: FileText,
   input_form: FileText,
   quick_input: Pencil,
+  wait: Clock,
+  assign: UserPlus,
+  close_conversation: XCircle,
+  csat: Star,
+  tag: Tag,
+  set_attribute: Hash,
+  note: StickyNote,
+  webhook: Send,
 };
 
 function displayTypeLabel(type) {
@@ -152,6 +216,9 @@ function displayTypeLabel(type) {
   if (type === "quick_input") return "QUICK INPUT";
   if (type === "condition") return "IF / ELSE";
   if (type === "trigger") return "TRIGGER";
+  if (type === "close_conversation") return "CLOSE CONVERSATION";
+  if (type === "set_attribute") return "SET ATTRIBUTE";
+  if (type === "csat") return "CSAT RATING";
   return type.replace(/_/g, " ").toUpperCase();
 }
 
@@ -397,6 +464,124 @@ function DifyNode({ data, type, selected }) {
             </div>
           )}
 
+          {/* WAIT body */}
+          {type === "wait" && (
+            <div className="flex items-center gap-1.5">
+              <Clock size={12} className="text-amber-500" />
+              <span className="text-slate-600">
+                {data?.duration || 60} {data?.unit || "seconds"}
+              </span>
+            </div>
+          )}
+
+          {/* ASSIGN body */}
+          {type === "assign" && (
+            <div className="space-y-1">
+              <div className="flex items-center gap-1.5">
+                <UserPlus size={12} className="text-green-500" />
+                <span className="text-slate-600">
+                  {data?.assignTo === "agent" ? "Agent" : "Team"}:{" "}
+                  <span className="font-medium">
+                    {(data?.assignTo === "agent"
+                      ? data?.agentEmail
+                      : data?.teamName) || "Not set"}
+                  </span>
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* CLOSE CONVERSATION body */}
+          {type === "close_conversation" && (
+            <div className="space-y-1">
+              <div className="flex items-center gap-1.5">
+                <XCircle size={12} className="text-red-500" />
+                <span className="text-slate-600">Close conversation</span>
+              </div>
+              {data?.sendCsat && (
+                <span className="text-[10px] text-amber-600 font-medium">
+                  + CSAT survey
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* CSAT body */}
+          {type === "csat" && (
+            <div className="space-y-1">
+              {data?.text && <p className="text-slate-500 mb-1">{data.text}</p>}
+              <div className="flex items-center gap-0.5">
+                {["😡", "😟", "😐", "😊", "😍"].map((e, i) => (
+                  <span key={i} className="text-[14px]">
+                    {e}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* TAG body */}
+          {type === "tag" && (
+            <div className="space-y-1">
+              <span className="text-[10px] font-medium text-purple-600 uppercase">
+                {data?.action === "remove" ? "Remove" : "Add"} tags
+              </span>
+              <div className="flex flex-wrap gap-1">
+                {(data?.tags || []).filter(Boolean).map((t, i) => (
+                  <span
+                    key={i}
+                    className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-700"
+                  >
+                    {t}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* SET_ATTRIBUTE body */}
+          {type === "set_attribute" && (
+            <div className="space-y-1">
+              <span className="text-[10px] font-medium text-teal-600 uppercase">
+                {data?.target || "contact"}
+              </span>
+              <div className="flex items-center gap-1">
+                <span className="font-medium text-slate-700 truncate">
+                  {data?.attributeName || "attribute"}
+                </span>
+                <span className="text-slate-400">=</span>
+                <span className="text-slate-600 truncate">
+                  {data?.attributeValue || "value"}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* NOTE body */}
+          {type === "note" && (
+            <div className="flex items-start gap-1.5">
+              <StickyNote
+                size={12}
+                className="text-yellow-600 mt-0.5 shrink-0"
+              />
+              <p className="text-slate-600 line-clamp-2">
+                {data?.text || "Internal note"}
+              </p>
+            </div>
+          )}
+
+          {/* WEBHOOK body */}
+          {type === "webhook" && (
+            <div className="flex items-center gap-2">
+              <span className="rounded bg-orange-100 px-1.5 py-0.5 text-[9px] font-bold text-orange-700">
+                {data?.method || "POST"}
+              </span>
+              <span className="truncate text-slate-500">
+                {data?.url || "https://hooks.example.com/..."}
+              </span>
+            </div>
+          )}
+
           {/* Generic fallback body */}
           {!isStart &&
             type !== "llm" &&
@@ -406,7 +591,15 @@ function DifyNode({ data, type, selected }) {
             type !== "end" &&
             type !== "buttons" &&
             type !== "select" &&
-            type !== "input_form" && (
+            type !== "input_form" &&
+            type !== "wait" &&
+            type !== "assign" &&
+            type !== "close_conversation" &&
+            type !== "csat" &&
+            type !== "tag" &&
+            type !== "set_attribute" &&
+            type !== "note" &&
+            type !== "webhook" && (
               <p className="text-slate-600 line-clamp-2">
                 {data?.text || data?.label || ""}
               </p>
@@ -462,6 +655,14 @@ const FLOW_NODE_TYPES = {
   question_classifier: DifyNode,
   http: DifyNode,
   code: DifyNode,
+  wait: DifyNode,
+  assign: DifyNode,
+  close_conversation: DifyNode,
+  csat: DifyNode,
+  tag: DifyNode,
+  set_attribute: DifyNode,
+  note: DifyNode,
+  webhook: DifyNode,
 };
 
 /* ─── Right Sidebar — Settings Panel ─────────────────────── */
@@ -1397,13 +1598,466 @@ function SettingsPanel({
             </div>
           )}
 
+          {/* ── Wait Settings ── */}
+          {type === "wait" && (
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Label
+                </label>
+                <Input
+                  value={data?.label || ""}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ label: e.target.value })
+                  }
+                  placeholder="Wait"
+                  className="text-[12px]"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Duration
+                </label>
+                <div className="flex gap-2">
+                  <Input
+                    type="number"
+                    min={1}
+                    value={data?.duration ?? 60}
+                    onChange={(e) =>
+                      updateSelectedNodeData({
+                        duration: Number(e.target.value) || 60,
+                      })
+                    }
+                    className="flex-1 text-[12px]"
+                  />
+                  <select
+                    className="w-28 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px]"
+                    value={data?.unit || "seconds"}
+                    onChange={(e) =>
+                      updateSelectedNodeData({ unit: e.target.value })
+                    }
+                  >
+                    <option value="seconds">Seconds</option>
+                    <option value="minutes">Minutes</option>
+                    <option value="hours">Hours</option>
+                    <option value="days">Days</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Assign Settings ── */}
+          {type === "assign" && (
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Label
+                </label>
+                <Input
+                  value={data?.label || ""}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ label: e.target.value })
+                  }
+                  placeholder="Assign"
+                  className="text-[12px]"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Assign To
+                </label>
+                <select
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px]"
+                  value={data?.assignTo || "team"}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ assignTo: e.target.value })
+                  }
+                >
+                  <option value="team">Team</option>
+                  <option value="agent">Specific Agent</option>
+                </select>
+              </div>
+              {data?.assignTo === "team" && (
+                <div>
+                  <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    Team Name
+                  </label>
+                  <Input
+                    value={data?.teamName || ""}
+                    onChange={(e) =>
+                      updateSelectedNodeData({ teamName: e.target.value })
+                    }
+                    placeholder="e.g. Support"
+                    className="text-[12px]"
+                  />
+                </div>
+              )}
+              {data?.assignTo === "agent" && (
+                <div>
+                  <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    Agent Email
+                  </label>
+                  <Input
+                    value={data?.agentEmail || ""}
+                    onChange={(e) =>
+                      updateSelectedNodeData({ agentEmail: e.target.value })
+                    }
+                    placeholder="agent@company.com"
+                    className="text-[12px]"
+                  />
+                </div>
+              )}
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Message (optional)
+                </label>
+                <Input
+                  value={data?.message || ""}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ message: e.target.value })
+                  }
+                  placeholder="You've been assigned to this conversation"
+                  className="text-[12px]"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* ── Close Conversation Settings ── */}
+          {type === "close_conversation" && (
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Label
+                </label>
+                <Input
+                  value={data?.label || ""}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ label: e.target.value })
+                  }
+                  placeholder="Close Conversation"
+                  className="text-[12px]"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Closing Message (optional)
+                </label>
+                <Textarea
+                  rows={2}
+                  value={data?.message || ""}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ message: e.target.value })
+                  }
+                  placeholder="Thanks for contacting us!"
+                  className="text-[12px]"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-[11px] text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={data?.sendCsat ?? false}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ sendCsat: e.target.checked })
+                  }
+                  className="rounded border-slate-300"
+                />
+                Send CSAT survey before closing
+              </label>
+            </div>
+          )}
+
+          {/* ── CSAT Settings ── */}
+          {type === "csat" && (
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Label
+                </label>
+                <Input
+                  value={data?.label || ""}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ label: e.target.value })
+                  }
+                  placeholder="CSAT Rating"
+                  className="text-[12px]"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Question Text
+                </label>
+                <Textarea
+                  rows={2}
+                  value={data?.text || ""}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ text: e.target.value })
+                  }
+                  placeholder="How would you rate your experience?"
+                  className="text-[12px]"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* ── Tag Settings ── */}
+          {type === "tag" && (
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Label
+                </label>
+                <Input
+                  value={data?.label || ""}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ label: e.target.value })
+                  }
+                  placeholder="Tag"
+                  className="text-[12px]"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Action
+                </label>
+                <select
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px]"
+                  value={data?.action || "add"}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ action: e.target.value })
+                  }
+                >
+                  <option value="add">Add tags</option>
+                  <option value="remove">Remove tags</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Tags
+                </label>
+                <div className="space-y-2">
+                  {(data?.tags || []).map((t, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-purple-100 text-[10px] font-bold text-purple-600">
+                        {i + 1}
+                      </div>
+                      <Input
+                        value={t}
+                        onChange={(e) => {
+                          const tags = [...(data.tags || [])];
+                          tags[i] = e.target.value;
+                          updateSelectedNodeData({ tags });
+                        }}
+                        placeholder={`Tag ${i + 1}`}
+                        className="flex-1 text-[12px]"
+                      />
+                      <button
+                        onClick={() => {
+                          const tags = [...(data.tags || [])];
+                          tags.splice(i, 1);
+                          updateSelectedNodeData({ tags });
+                        }}
+                        className="shrink-0 rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    onClick={() =>
+                      updateSelectedNodeData({
+                        tags: [...(data.tags || []), ""],
+                      })
+                    }
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-300 py-2 text-[11px] font-medium text-slate-500 transition-colors hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600"
+                  >
+                    <Plus size={12} /> Add Tag
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Set Attribute Settings ── */}
+          {type === "set_attribute" && (
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Label
+                </label>
+                <Input
+                  value={data?.label || ""}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ label: e.target.value })
+                  }
+                  placeholder="Set Attribute"
+                  className="text-[12px]"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Target
+                </label>
+                <select
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px]"
+                  value={data?.target || "contact"}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ target: e.target.value })
+                  }
+                >
+                  <option value="contact">Contact</option>
+                  <option value="conversation">Conversation</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Attribute Name
+                </label>
+                <Input
+                  value={data?.attributeName || ""}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ attributeName: e.target.value })
+                  }
+                  placeholder="e.g. plan, company, priority"
+                  className="text-[12px]"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Attribute Value
+                </label>
+                <Input
+                  value={data?.attributeValue || ""}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ attributeValue: e.target.value })
+                  }
+                  placeholder="e.g. premium, Acme Inc"
+                  className="text-[12px]"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* ── Note Settings ── */}
+          {type === "note" && (
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Label
+                </label>
+                <Input
+                  value={data?.label || ""}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ label: e.target.value })
+                  }
+                  placeholder="Note"
+                  className="text-[12px]"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Internal Note
+                </label>
+                <Textarea
+                  rows={4}
+                  value={data?.text || ""}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ text: e.target.value })
+                  }
+                  placeholder="Note visible only to agents..."
+                  className="text-[12px]"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* ── Webhook Settings ── */}
+          {type === "webhook" && (
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Label
+                </label>
+                <Input
+                  value={data?.label || ""}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ label: e.target.value })
+                  }
+                  placeholder="Webhook"
+                  className="text-[12px]"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Method
+                </label>
+                <select
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px]"
+                  value={data?.method || "POST"}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ method: e.target.value })
+                  }
+                >
+                  <option value="POST">POST</option>
+                  <option value="PUT">PUT</option>
+                  <option value="PATCH">PATCH</option>
+                  <option value="GET">GET</option>
+                  <option value="DELETE">DELETE</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  URL
+                </label>
+                <Input
+                  value={data?.url || ""}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ url: e.target.value })
+                  }
+                  placeholder="https://hooks.example.com/webhook"
+                  className="text-[12px]"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Headers (JSON)
+                </label>
+                <Textarea
+                  rows={2}
+                  value={data?.headers || "{}"}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ headers: e.target.value })
+                  }
+                  placeholder='{"Content-Type": "application/json"}'
+                  className="font-mono text-[11px]"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Body (JSON)
+                </label>
+                <Textarea
+                  rows={4}
+                  value={data?.body || "{}"}
+                  onChange={(e) =>
+                    updateSelectedNodeData({ body: e.target.value })
+                  }
+                  placeholder='{"event": "conversation.closed"}'
+                  className="font-mono text-[11px]"
+                />
+              </div>
+            </div>
+          )}
+
           {/* ── Delay (all message-sending nodes) ── */}
           {(type === "message" ||
             type === "buttons" ||
             type === "carousel" ||
             type === "select" ||
             type === "input_form" ||
-            type === "quick_input") && (
+            type === "quick_input" ||
+            type === "csat") && (
             <div>
               <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                 Typing Delay (ms)
@@ -1504,6 +2158,14 @@ function AddNodePalette({ addFlowNode }) {
     { type: "buttons", label: "Buttons", icon: Puzzle },
     { type: "input_form", label: "Input Form", icon: FileText },
     { type: "quick_input", label: "Quick Input", icon: Pencil },
+    { type: "csat", label: "CSAT Rating", icon: Star },
+    { type: "wait", label: "Wait / Snooze", icon: Clock },
+    { type: "assign", label: "Assign", icon: UserPlus },
+    { type: "close_conversation", label: "Close Conversation", icon: XCircle },
+    { type: "tag", label: "Tag", icon: Tag },
+    { type: "set_attribute", label: "Set Attribute", icon: Hash },
+    { type: "note", label: "Note", icon: StickyNote },
+    { type: "webhook", label: "Webhook", icon: Send },
     { type: "http", label: "HTTP Request", icon: Globe },
     { type: "code", label: "Code", icon: Code2 },
     { type: "end", label: "End", icon: CircleDot },

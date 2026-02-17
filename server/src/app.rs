@@ -60,8 +60,8 @@ async fn persist_session(pool: &PgPool, session: &Session) {
         r#"
         INSERT INTO sessions (
             id, tenant_id, created_at, updated_at, channel, assignee_agent_id, inbox_id, team_id, flow_id,
-            handover_active, status, priority
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+            handover_active, status, priority, contact_id
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
         ON CONFLICT (id) DO UPDATE SET
             tenant_id = EXCLUDED.tenant_id,
             updated_at = EXCLUDED.updated_at,
@@ -72,7 +72,8 @@ async fn persist_session(pool: &PgPool, session: &Session) {
             flow_id = EXCLUDED.flow_id,
             handover_active = EXCLUDED.handover_active,
             status = EXCLUDED.status,
-            priority = EXCLUDED.priority
+            priority = EXCLUDED.priority,
+            contact_id = EXCLUDED.contact_id
         "#,
     )
     .bind(&session.id)
@@ -87,6 +88,7 @@ async fn persist_session(pool: &PgPool, session: &Session) {
     .bind(session.handover_active)
     .bind(&session.status)
     .bind(&session.priority)
+    .bind(&session.contact_id)
     .execute(pool)
     .await;
 }
@@ -115,7 +117,7 @@ async fn persist_message(pool: &PgPool, message: &ChatMessage) {
 
 async fn get_session_summary_db(pool: &PgPool, session_id: &str) -> Option<SessionSummary> {
     let session_row = sqlx::query(
-        "SELECT id, tenant_id, created_at, updated_at, channel, assignee_agent_id, inbox_id, team_id, flow_id, handover_active, status, priority FROM sessions WHERE id = $1",
+        "SELECT id, tenant_id, created_at, updated_at, channel, assignee_agent_id, inbox_id, team_id, flow_id, handover_active, status, priority, contact_id FROM sessions WHERE id = $1",
     )
     .bind(session_id)
     .fetch_optional(pool)
@@ -165,6 +167,7 @@ async fn get_session_summary_db(pool: &PgPool, session_id: &str) -> Option<Sessi
         inbox_id: session_row.get("inbox_id"),
         team_id: session_row.get("team_id"),
         flow_id: session_row.get("flow_id"),
+        contact_id: session_row.get("contact_id"),
         handover_active: session_row.get("handover_active"),
         status: session_row.get("status"),
         priority: session_row.get("priority"),
@@ -594,7 +597,7 @@ async fn set_agent_human_typing(
 
 async fn ensure_session(state: Arc<AppState>, session_id: &str) -> Session {
     let existing = sqlx::query(
-        "SELECT id, tenant_id, created_at, updated_at, channel, assignee_agent_id, inbox_id, team_id, flow_id, handover_active, status, priority FROM sessions WHERE id = $1",
+        "SELECT id, tenant_id, created_at, updated_at, channel, assignee_agent_id, inbox_id, team_id, flow_id, handover_active, status, priority, contact_id FROM sessions WHERE id = $1",
     )
     .bind(session_id)
     .fetch_optional(&state.db)
@@ -614,6 +617,7 @@ async fn ensure_session(state: Arc<AppState>, session_id: &str) -> Session {
             inbox_id: row.get("inbox_id"),
             team_id: row.get("team_id"),
             flow_id: row.get("flow_id"),
+            contact_id: row.get("contact_id"),
             handover_active: row.get("handover_active"),
             status: row.get("status"),
             priority: row.get("priority"),
@@ -633,6 +637,7 @@ async fn ensure_session(state: Arc<AppState>, session_id: &str) -> Session {
             inbox_id: None,
             team_id: None,
             flow_id: Some(state.default_flow_id.clone()),
+            contact_id: None,
             handover_active: false,
             status: "open".to_string(),
             priority: "normal".to_string(),
@@ -1519,7 +1524,7 @@ fn resolve_interactive_next(
             }
             edges.first().map(|e| e.target.clone())
         }
-        // quick_input, input_form — just continue to the first outgoing edge
+        // quick_input, input_form, csat, close_conversation — just continue to the first outgoing edge
         _ => edges.first().map(|e| e.target.clone()),
     }
 }
@@ -1554,6 +1559,36 @@ async fn execute_flow_from(
         let paused_node = node_by_id.get(resume_id);
         let edges_from_paused = outgoing.get(resume_id).cloned().unwrap_or_default();
         if let Some(node) = paused_node {
+            // If resuming from close_conversation (CSAT was collected), close session now
+            if node.node_type == "close_conversation" {
+                let msg = node
+                    .data
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if !msg.is_empty() {
+                    send_flow_agent_message(state.clone(), &session_id, msg, 300, None, None).await;
+                }
+                if let Some((summary, changed)) =
+                    set_session_status(&state, &session_id, "closed").await
+                {
+                    emit_session_update(&state, summary).await;
+                    if changed {
+                        let _ = add_message(
+                            state.clone(),
+                            &session_id,
+                            "system",
+                            "Conversation closed by bot",
+                            None,
+                            None,
+                        )
+                        .await;
+                    }
+                }
+                clear_flow_cursor(&state, &session_id).await;
+                return;
+            }
             resolve_interactive_next(node, &edges_from_paused, &visitor_text)
         } else {
             None
@@ -1870,6 +1905,417 @@ async fn execute_flow_from(
                 }
                 clear_flow_cursor(&state, &session_id).await;
                 break;
+            }
+            "wait" => {
+                let duration = flow_node_data_u64(&node, "duration").unwrap_or(60);
+                let unit = node
+                    .data
+                    .get("unit")
+                    .and_then(Value::as_str)
+                    .unwrap_or("seconds");
+                let millis: u64 = match unit {
+                    "minutes" => duration * 60 * 1000,
+                    "hours" => duration * 60 * 60 * 1000,
+                    "days" => duration * 24 * 60 * 60 * 1000,
+                    _ => duration * 1000, // seconds
+                };
+                // Cap at 5 minutes for in-flow waits to prevent hanging
+                let capped = millis.min(300_000);
+                tokio::time::sleep(tokio::time::Duration::from_millis(capped)).await;
+            }
+            "assign" => {
+                let assign_to = node
+                    .data
+                    .get("assignTo")
+                    .and_then(Value::as_str)
+                    .unwrap_or("team");
+                let msg = node
+                    .data
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                // Enable handover so a human agent picks up
+                if let Some((summary, _changed)) =
+                    set_session_handover(&state, &session_id, true).await
+                {
+                    emit_session_update(&state, summary).await;
+                }
+                let assignment_note = if assign_to == "agent" {
+                    let email = node
+                        .data
+                        .get("agentEmail")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unassigned");
+                    // Try to find agent by email and actually assign
+                    let agent_id =
+                        sqlx::query_scalar::<_, String>("SELECT id FROM agents WHERE email = $1")
+                            .bind(email)
+                            .fetch_optional(&state.db)
+                            .await
+                            .ok()
+                            .flatten();
+                    if let Some(aid) = &agent_id {
+                        let _ = sqlx::query("UPDATE sessions SET assignee_agent_id = $1, updated_at = $2 WHERE id = $3")
+                            .bind(aid)
+                            .bind(now_iso())
+                            .bind(&session_id)
+                            .execute(&state.db)
+                            .await;
+                        if let Some(s) = get_session_summary_db(&state.db, &session_id).await {
+                            emit_session_update(&state, s).await;
+                        }
+                    }
+                    format!("Conversation assigned to agent: {}", email)
+                } else {
+                    let team_name = node
+                        .data
+                        .get("teamName")
+                        .and_then(Value::as_str)
+                        .unwrap_or("default");
+                    // Try to find team by name and actually assign
+                    let team_id =
+                        sqlx::query_scalar::<_, String>("SELECT id FROM teams WHERE name = $1")
+                            .bind(team_name)
+                            .fetch_optional(&state.db)
+                            .await
+                            .ok()
+                            .flatten();
+                    if let Some(tid) = &team_id {
+                        let _ = sqlx::query(
+                            "UPDATE sessions SET team_id = $1, updated_at = $2 WHERE id = $3",
+                        )
+                        .bind(tid)
+                        .bind(now_iso())
+                        .bind(&session_id)
+                        .execute(&state.db)
+                        .await;
+                        if let Some(s) = get_session_summary_db(&state.db, &session_id).await {
+                            emit_session_update(&state, s).await;
+                        }
+                    }
+                    format!("Conversation assigned to team: {}", team_name)
+                };
+                let _ = add_message(
+                    state.clone(),
+                    &session_id,
+                    "system",
+                    &assignment_note,
+                    None,
+                    None,
+                )
+                .await;
+                if !msg.is_empty() {
+                    send_flow_agent_message(state.clone(), &session_id, msg, 300, None, None).await;
+                }
+            }
+            "close_conversation" => {
+                let msg = node
+                    .data
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                let send_csat = node
+                    .data
+                    .get("sendCsat")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                if send_csat {
+                    let csat_text = "How would you rate your experience?";
+                    let widget = Some(serde_json::json!({
+                        "type": "csat",
+                        "question": csat_text
+                    }));
+                    send_flow_agent_message(
+                        state.clone(),
+                        &session_id,
+                        csat_text,
+                        420,
+                        None,
+                        widget,
+                    )
+                    .await;
+                    // Pause for CSAT response
+                    save_flow_cursor(
+                        &state,
+                        &session_id,
+                        &flow.id,
+                        &node.id,
+                        "close_conversation",
+                    )
+                    .await;
+                    return;
+                }
+                if !msg.is_empty() {
+                    send_flow_agent_message(state.clone(), &session_id, msg, 300, None, None).await;
+                }
+                if let Some((summary, changed)) =
+                    set_session_status(&state, &session_id, "closed").await
+                {
+                    emit_session_update(&state, summary).await;
+                    if changed {
+                        let _ = add_message(
+                            state.clone(),
+                            &session_id,
+                            "system",
+                            "Conversation closed by bot",
+                            None,
+                            None,
+                        )
+                        .await;
+                    }
+                }
+                clear_flow_cursor(&state, &session_id).await;
+                break;
+            }
+            "csat" => {
+                let text = flow_node_data_text(&node, "text")
+                    .unwrap_or_else(|| "How would you rate your experience?".to_string());
+                let delay_ms = flow_node_data_u64(&node, "delayMs").unwrap_or(420);
+                let widget = Some(serde_json::json!({
+                    "type": "csat",
+                    "question": text
+                }));
+                send_flow_agent_message(state.clone(), &session_id, &text, delay_ms, None, widget)
+                    .await;
+                // Pause for rating response
+                save_flow_cursor(&state, &session_id, &flow.id, &node.id, "csat").await;
+                return;
+            }
+            "tag" => {
+                let action = node
+                    .data
+                    .get("action")
+                    .and_then(Value::as_str)
+                    .unwrap_or("add");
+                let tags: Vec<String> = node
+                    .data
+                    .get("tags")
+                    .and_then(Value::as_array)
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(Value::as_str)
+                            .map(|s| s.to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if !tags.is_empty() {
+                    // Get tenant_id for this session
+                    let sess_tenant = sqlx::query_scalar::<_, String>(
+                        "SELECT tenant_id FROM sessions WHERE id = $1",
+                    )
+                    .bind(&session_id)
+                    .fetch_optional(&state.db)
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| state.default_tenant_id.clone());
+
+                    for tag_name in &tags {
+                        if action == "remove" {
+                            // Remove tag from conversation
+                            let _ = sqlx::query(
+                                "DELETE FROM conversation_tags WHERE session_id = $1 AND tag_id IN (SELECT id FROM tags WHERE tenant_id = $2 AND name = $3)",
+                            )
+                            .bind(&session_id)
+                            .bind(&sess_tenant)
+                            .bind(tag_name)
+                            .execute(&state.db)
+                            .await;
+                        } else {
+                            // Ensure tag exists, then link it
+                            let tag_id = Uuid::new_v4().to_string();
+                            let _ = sqlx::query(
+                                "INSERT INTO tags (id, tenant_id, name, color, created_at) VALUES ($1,$2,$3,'#6366f1',$4) ON CONFLICT (tenant_id, name) DO NOTHING",
+                            )
+                            .bind(&tag_id)
+                            .bind(&sess_tenant)
+                            .bind(tag_name)
+                            .bind(now_iso())
+                            .execute(&state.db)
+                            .await;
+                            // Get the real tag id (might be existing)
+                            let real_tag_id = sqlx::query_scalar::<_, String>(
+                                "SELECT id FROM tags WHERE tenant_id = $1 AND name = $2",
+                            )
+                            .bind(&sess_tenant)
+                            .bind(tag_name)
+                            .fetch_optional(&state.db)
+                            .await
+                            .ok()
+                            .flatten()
+                            .unwrap_or(tag_id);
+                            let _ = sqlx::query(
+                                "INSERT INTO conversation_tags (session_id, tag_id, created_at) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+                            )
+                            .bind(&session_id)
+                            .bind(&real_tag_id)
+                            .bind(now_iso())
+                            .execute(&state.db)
+                            .await;
+                        }
+                    }
+                    let note = format!(
+                        "Tags {}: {}",
+                        if action == "remove" {
+                            "removed"
+                        } else {
+                            "added"
+                        },
+                        tags.join(", ")
+                    );
+                    let _ =
+                        add_message(state.clone(), &session_id, "system", &note, None, None).await;
+                }
+            }
+            "set_attribute" => {
+                let target = node
+                    .data
+                    .get("target")
+                    .and_then(Value::as_str)
+                    .unwrap_or("contact");
+                let attr_name = node
+                    .data
+                    .get("attributeName")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let attr_value = node
+                    .data
+                    .get("attributeValue")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                if !attr_name.is_empty() {
+                    let now = now_iso();
+                    if target == "conversation" {
+                        // Set attribute on the conversation (session)
+                        let attr_id = Uuid::new_v4().to_string();
+                        let _ = sqlx::query(
+                            r#"INSERT INTO conversation_custom_attributes (id, session_id, attribute_key, attribute_value, created_at, updated_at)
+                               VALUES ($1,$2,$3,$4,$5,$6)
+                               ON CONFLICT (session_id, attribute_key) DO UPDATE SET attribute_value = EXCLUDED.attribute_value, updated_at = EXCLUDED.updated_at"#,
+                        )
+                        .bind(&attr_id)
+                        .bind(&session_id)
+                        .bind(attr_name)
+                        .bind(attr_value)
+                        .bind(&now)
+                        .bind(&now)
+                        .execute(&state.db)
+                        .await;
+                    } else {
+                        // Set attribute on the linked contact (if any)
+                        let contact_id = sqlx::query_scalar::<_, Option<String>>(
+                            "SELECT contact_id FROM sessions WHERE id = $1",
+                        )
+                        .bind(&session_id)
+                        .fetch_optional(&state.db)
+                        .await
+                        .ok()
+                        .flatten()
+                        .flatten();
+                        if let Some(cid) = contact_id {
+                            let attr_id = Uuid::new_v4().to_string();
+                            let _ = sqlx::query(
+                                r#"INSERT INTO contact_custom_attributes (id, contact_id, attribute_key, attribute_value, created_at, updated_at)
+                                   VALUES ($1,$2,$3,$4,$5,$6)
+                                   ON CONFLICT (contact_id, attribute_key) DO UPDATE SET attribute_value = EXCLUDED.attribute_value, updated_at = EXCLUDED.updated_at"#,
+                            )
+                            .bind(&attr_id)
+                            .bind(&cid)
+                            .bind(attr_name)
+                            .bind(attr_value)
+                            .bind(&now)
+                            .bind(&now)
+                            .execute(&state.db)
+                            .await;
+                        }
+                    }
+                    let note = format!("Set {} attribute: {} = {}", target, attr_name, attr_value);
+                    let _ =
+                        add_message(state.clone(), &session_id, "system", &note, None, None).await;
+                }
+            }
+            "note" => {
+                let text = flow_node_data_text(&node, "text").unwrap_or_default();
+                if !text.is_empty() {
+                    // Persist as a real conversation note
+                    let note_id = Uuid::new_v4().to_string();
+                    let sess_tenant = sqlx::query_scalar::<_, String>(
+                        "SELECT tenant_id FROM sessions WHERE id = $1",
+                    )
+                    .bind(&session_id)
+                    .fetch_optional(&state.db)
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| state.default_tenant_id.clone());
+                    let _ = sqlx::query(
+                        "INSERT INTO conversation_notes (id, tenant_id, session_id, agent_id, text, created_at) VALUES ($1,$2,$3,'bot',$4,$5)",
+                    )
+                    .bind(&note_id)
+                    .bind(&sess_tenant)
+                    .bind(&session_id)
+                    .bind(&text)
+                    .bind(now_iso())
+                    .execute(&state.db)
+                    .await;
+                    // Also send as internal note message
+                    let _ =
+                        add_message(state.clone(), &session_id, "note", &text, None, None).await;
+                }
+            }
+            "webhook" => {
+                let url = node
+                    .data
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let method = node
+                    .data
+                    .get("method")
+                    .and_then(Value::as_str)
+                    .unwrap_or("POST");
+                let body_str = node
+                    .data
+                    .get("body")
+                    .and_then(Value::as_str)
+                    .unwrap_or("{}");
+                let headers_str = node
+                    .data
+                    .get("headers")
+                    .and_then(Value::as_str)
+                    .unwrap_or("{}");
+                if !url.is_empty() {
+                    let client = reqwest::Client::new();
+                    let mut req = match method {
+                        "GET" => client.get(&url),
+                        "PUT" => client.put(&url),
+                        "PATCH" => client.patch(&url),
+                        "DELETE" => client.delete(&url),
+                        _ => client.post(&url),
+                    };
+                    // Parse and apply custom headers
+                    if let Ok(hdrs) =
+                        serde_json::from_str::<serde_json::Map<String, Value>>(headers_str)
+                    {
+                        for (k, v) in hdrs {
+                            if let Some(val) = v.as_str() {
+                                req = req.header(k.as_str(), val);
+                            }
+                        }
+                    }
+                    if method != "GET" && method != "DELETE" {
+                        req = req
+                            .header("Content-Type", "application/json")
+                            .body(body_str.to_string());
+                    }
+                    // Fire-and-forget, ignore errors
+                    let _ = req.send().await;
+                }
             }
             _ => {
                 if let Some(text) = flow_node_data_text(&node, "text") {
@@ -3805,7 +4251,7 @@ async fn get_contacts(State(state): State<Arc<AppState>>, headers: HeaderMap) ->
         Err(err) => return err.into_response(),
     };
     let rows = sqlx::query(
-        "SELECT id, tenant_id, display_name, email, phone, external_id, metadata, created_at, updated_at FROM contacts WHERE tenant_id = $1 ORDER BY created_at DESC",
+        "SELECT id, tenant_id, display_name, email, phone, external_id, metadata, company, location, avatar_url, last_seen_at, browser, os, created_at, updated_at FROM contacts WHERE tenant_id = $1 ORDER BY created_at DESC",
     )
     .bind(&tenant_id)
     .fetch_all(&state.db)
@@ -3821,6 +4267,12 @@ async fn get_contacts(State(state): State<Arc<AppState>>, headers: HeaderMap) ->
             phone: row.get("phone"),
             external_id: row.get("external_id"),
             metadata: parse_json_text(&row.get::<String, _>("metadata")),
+            company: row.get("company"),
+            location: row.get("location"),
+            avatar_url: row.get("avatar_url"),
+            last_seen_at: row.get("last_seen_at"),
+            browser: row.get("browser"),
+            os: row.get("os"),
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
         })
@@ -3849,11 +4301,17 @@ async fn create_contact(
         phone: body.phone.unwrap_or_default(),
         external_id: body.external_id.unwrap_or_default(),
         metadata: body.metadata.unwrap_or_else(|| json!({})),
+        company: body.company.unwrap_or_default(),
+        location: body.location.unwrap_or_default(),
+        avatar_url: String::new(),
+        last_seen_at: String::new(),
+        browser: String::new(),
+        os: String::new(),
         created_at: now.clone(),
         updated_at: now,
     };
     let _ = sqlx::query(
-        "INSERT INTO contacts (id, tenant_id, display_name, email, phone, external_id, metadata, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+        "INSERT INTO contacts (id, tenant_id, display_name, email, phone, external_id, metadata, company, location, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
     )
     .bind(&contact.id)
     .bind(&contact.tenant_id)
@@ -3862,6 +4320,8 @@ async fn create_contact(
     .bind(&contact.phone)
     .bind(&contact.external_id)
     .bind(json_text(&contact.metadata))
+    .bind(&contact.company)
+    .bind(&contact.location)
     .bind(&contact.created_at)
     .bind(&contact.updated_at)
     .execute(&state.db)
@@ -3883,7 +4343,7 @@ async fn patch_contact(
         Err(err) => return err.into_response(),
     };
     let row = sqlx::query(
-        "SELECT id, tenant_id, display_name, email, phone, external_id, metadata, created_at, updated_at FROM contacts WHERE id = $1 AND tenant_id = $2",
+        "SELECT id, tenant_id, display_name, email, phone, external_id, metadata, company, location, avatar_url, last_seen_at, browser, os, created_at, updated_at FROM contacts WHERE id = $1 AND tenant_id = $2",
     )
     .bind(&contact_id)
     .bind(&tenant_id)
@@ -3906,6 +4366,12 @@ async fn patch_contact(
         phone: row.get("phone"),
         external_id: row.get("external_id"),
         metadata: parse_json_text(&row.get::<String, _>("metadata")),
+        company: row.get("company"),
+        location: row.get("location"),
+        avatar_url: row.get("avatar_url"),
+        last_seen_at: row.get("last_seen_at"),
+        browser: row.get("browser"),
+        os: row.get("os"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     };
@@ -3924,21 +4390,432 @@ async fn patch_contact(
     if let Some(v) = body.metadata {
         contact.metadata = v;
     }
+    if let Some(v) = body.company {
+        contact.company = v;
+    }
+    if let Some(v) = body.location {
+        contact.location = v;
+    }
+    if let Some(v) = body.avatar_url {
+        contact.avatar_url = v;
+    }
     contact.updated_at = now_iso();
     let _ = sqlx::query(
-        "UPDATE contacts SET display_name = $1, email = $2, phone = $3, external_id = $4, metadata = $5, updated_at = $6 WHERE id = $7 AND tenant_id = $8",
+        "UPDATE contacts SET display_name = $1, email = $2, phone = $3, external_id = $4, metadata = $5, company = $6, location = $7, avatar_url = $8, updated_at = $9 WHERE id = $10 AND tenant_id = $11",
     )
     .bind(&contact.display_name)
     .bind(&contact.email)
     .bind(&contact.phone)
     .bind(&contact.external_id)
     .bind(json_text(&contact.metadata))
+    .bind(&contact.company)
+    .bind(&contact.location)
+    .bind(&contact.avatar_url)
     .bind(&contact.updated_at)
     .bind(&contact.id)
     .bind(&tenant_id)
     .execute(&state.db)
     .await;
     (StatusCode::OK, Json(json!({ "contact": contact }))).into_response()
+}
+
+// ── Delete contact ───────────────────────────────────────────────────
+async fn delete_contact(
+    Path(contact_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let _ = sqlx::query("DELETE FROM contacts WHERE id = $1 AND tenant_id = $2")
+        .bind(&contact_id)
+        .bind(&tenant_id)
+        .execute(&state.db)
+        .await;
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
+// ── Get single contact ──────────────────────────────────────────────
+async fn get_contact(
+    Path(contact_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let row = sqlx::query(
+        "SELECT id, tenant_id, display_name, email, phone, external_id, metadata, company, location, avatar_url, last_seen_at, browser, os, created_at, updated_at FROM contacts WHERE id = $1 AND tenant_id = $2",
+    )
+    .bind(&contact_id)
+    .bind(&tenant_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let Some(row) = row else {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": "not found" }))).into_response();
+    };
+    let contact = Contact {
+        id: row.get("id"),
+        tenant_id: row.get("tenant_id"),
+        display_name: row.get("display_name"),
+        email: row.get("email"),
+        phone: row.get("phone"),
+        external_id: row.get("external_id"),
+        metadata: parse_json_text(&row.get::<String, _>("metadata")),
+        company: row.get("company"),
+        location: row.get("location"),
+        avatar_url: row.get("avatar_url"),
+        last_seen_at: row.get("last_seen_at"),
+        browser: row.get("browser"),
+        os: row.get("os"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    };
+    (StatusCode::OK, Json(json!({ "contact": contact }))).into_response()
+}
+
+// ── Contact conversations ───────────────────────────────────────────
+async fn get_contact_conversations(
+    Path(contact_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let rows =
+        sqlx::query("SELECT id FROM sessions WHERE contact_id = $1 ORDER BY updated_at DESC")
+            .bind(&contact_id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
+    let mut summaries = Vec::new();
+    for row in rows {
+        let sid: String = row.get("id");
+        if let Some(s) = get_session_summary_db(&state.db, &sid).await {
+            summaries.push(s);
+        }
+    }
+    (StatusCode::OK, Json(json!({ "conversations": summaries }))).into_response()
+}
+
+// ── Contact attributes ──────────────────────────────────────────────
+async fn get_contact_attributes(
+    Path(contact_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let rows = sqlx::query(
+        "SELECT id, contact_id, attribute_key, attribute_value, created_at, updated_at FROM contact_custom_attributes WHERE contact_id = $1 ORDER BY attribute_key ASC",
+    )
+    .bind(&contact_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let attrs: Vec<ContactAttribute> = rows
+        .into_iter()
+        .map(|r| ContactAttribute {
+            id: r.get("id"),
+            contact_id: r.get("contact_id"),
+            attribute_key: r.get("attribute_key"),
+            attribute_value: r.get("attribute_value"),
+            created_at: r.get("created_at"),
+            updated_at: r.get("updated_at"),
+        })
+        .collect();
+    (StatusCode::OK, Json(json!({ "attributes": attrs }))).into_response()
+}
+
+async fn set_contact_attribute(
+    Path(contact_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<SetAttributeBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let now = now_iso();
+    let id = Uuid::new_v4().to_string();
+    let _ = sqlx::query(
+        r#"INSERT INTO contact_custom_attributes (id, contact_id, attribute_key, attribute_value, created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6)
+           ON CONFLICT (contact_id, attribute_key) DO UPDATE SET attribute_value = EXCLUDED.attribute_value, updated_at = EXCLUDED.updated_at"#,
+    )
+    .bind(&id)
+    .bind(&contact_id)
+    .bind(&body.attribute_key)
+    .bind(&body.attribute_value)
+    .bind(&now)
+    .bind(&now)
+    .execute(&state.db)
+    .await;
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
+async fn delete_contact_attribute(
+    Path((contact_id, attr_key)): Path<(String, String)>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let _ = sqlx::query(
+        "DELETE FROM contact_custom_attributes WHERE contact_id = $1 AND attribute_key = $2",
+    )
+    .bind(&contact_id)
+    .bind(&attr_key)
+    .execute(&state.db)
+    .await;
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
+// ── Tags CRUD ───────────────────────────────────────────────────────
+async fn get_tags(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let rows = sqlx::query("SELECT id, tenant_id, name, color, created_at FROM tags WHERE tenant_id = $1 ORDER BY name ASC")
+        .bind(&tenant_id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+    let tags: Vec<Tag> = rows
+        .into_iter()
+        .map(|r| Tag {
+            id: r.get("id"),
+            tenant_id: r.get("tenant_id"),
+            name: r.get("name"),
+            color: r.get("color"),
+            created_at: r.get("created_at"),
+        })
+        .collect();
+    (StatusCode::OK, Json(json!({ "tags": tags }))).into_response()
+}
+
+async fn create_tag(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<CreateTagBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let tag = Tag {
+        id: Uuid::new_v4().to_string(),
+        tenant_id,
+        name: body.name.trim().to_string(),
+        color: body.color,
+        created_at: now_iso(),
+    };
+    let _ = sqlx::query("INSERT INTO tags (id, tenant_id, name, color, created_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (tenant_id, name) DO NOTHING")
+        .bind(&tag.id)
+        .bind(&tag.tenant_id)
+        .bind(&tag.name)
+        .bind(&tag.color)
+        .bind(&tag.created_at)
+        .execute(&state.db)
+        .await;
+    (StatusCode::CREATED, Json(json!({ "tag": tag }))).into_response()
+}
+
+async fn delete_tag(
+    Path(tag_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let _ = sqlx::query("DELETE FROM tags WHERE id = $1")
+        .bind(&tag_id)
+        .execute(&state.db)
+        .await;
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
+// ── Session tags ────────────────────────────────────────────────────
+async fn get_session_tags(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let rows = sqlx::query(
+        "SELECT t.id, t.tenant_id, t.name, t.color, t.created_at FROM tags t INNER JOIN conversation_tags ct ON ct.tag_id = t.id WHERE ct.session_id = $1 ORDER BY t.name ASC",
+    )
+    .bind(&session_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let tags: Vec<Tag> = rows
+        .into_iter()
+        .map(|r| Tag {
+            id: r.get("id"),
+            tenant_id: r.get("tenant_id"),
+            name: r.get("name"),
+            color: r.get("color"),
+            created_at: r.get("created_at"),
+        })
+        .collect();
+    (StatusCode::OK, Json(json!({ "tags": tags }))).into_response()
+}
+
+async fn add_session_tag(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<SessionTagBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let _ = sqlx::query("INSERT INTO conversation_tags (session_id, tag_id, created_at) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING")
+        .bind(&session_id)
+        .bind(&body.tag_id)
+        .bind(now_iso())
+        .execute(&state.db)
+        .await;
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
+async fn remove_session_tag(
+    Path((session_id, tag_id)): Path<(String, String)>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let _ = sqlx::query("DELETE FROM conversation_tags WHERE session_id = $1 AND tag_id = $2")
+        .bind(&session_id)
+        .bind(&tag_id)
+        .execute(&state.db)
+        .await;
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
+// ── Session ↔ Contact linking ───────────────────────────────────────
+async fn patch_session_contact(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<SessionContactBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let _ = sqlx::query("UPDATE sessions SET contact_id = $1, updated_at = $2 WHERE id = $3")
+        .bind(&body.contact_id)
+        .bind(now_iso())
+        .bind(&session_id)
+        .execute(&state.db)
+        .await;
+    let summary = get_session_summary_db(&state.db, &session_id).await;
+    if let Some(s) = &summary {
+        emit_session_update(&state, s.clone()).await;
+    }
+    (StatusCode::OK, Json(json!({ "session": summary }))).into_response()
+}
+
+// ── Conversation custom attributes ──────────────────────────────────
+async fn get_conversation_attributes(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let rows = sqlx::query(
+        "SELECT id, session_id, attribute_key, attribute_value, created_at, updated_at FROM conversation_custom_attributes WHERE session_id = $1 ORDER BY attribute_key ASC",
+    )
+    .bind(&session_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let attrs: Vec<ConversationAttribute> = rows
+        .into_iter()
+        .map(|r| ConversationAttribute {
+            id: r.get("id"),
+            session_id: r.get("session_id"),
+            attribute_key: r.get("attribute_key"),
+            attribute_value: r.get("attribute_value"),
+            created_at: r.get("created_at"),
+            updated_at: r.get("updated_at"),
+        })
+        .collect();
+    (StatusCode::OK, Json(json!({ "attributes": attrs }))).into_response()
+}
+
+async fn set_conversation_attribute(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<SetAttributeBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let now = now_iso();
+    let id = Uuid::new_v4().to_string();
+    let _ = sqlx::query(
+        r#"INSERT INTO conversation_custom_attributes (id, session_id, attribute_key, attribute_value, created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6)
+           ON CONFLICT (session_id, attribute_key) DO UPDATE SET attribute_value = EXCLUDED.attribute_value, updated_at = EXCLUDED.updated_at"#,
+    )
+    .bind(&id)
+    .bind(&session_id)
+    .bind(&body.attribute_key)
+    .bind(&body.attribute_value)
+    .bind(&now)
+    .bind(&now)
+    .execute(&state.db)
+    .await;
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
+async fn delete_conversation_attribute(
+    Path((session_id, attr_key)): Path<(String, String)>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let _ = sqlx::query(
+        "DELETE FROM conversation_custom_attributes WHERE session_id = $1 AND attribute_key = $2",
+    )
+    .bind(&session_id)
+    .bind(&attr_key)
+    .execute(&state.db)
+    .await;
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
 }
 
 async fn submit_csat(
@@ -4565,7 +5442,24 @@ pub async fn run() {
         )
         .route("/api/agent/status", patch(patch_agent_status))
         .route("/api/contacts", get(get_contacts).post(create_contact))
-        .route("/api/contacts/{contact_id}", patch(patch_contact))
+        .route(
+            "/api/contacts/{contact_id}",
+            get(get_contact).patch(patch_contact).delete(delete_contact),
+        )
+        .route(
+            "/api/contacts/{contact_id}/conversations",
+            get(get_contact_conversations),
+        )
+        .route(
+            "/api/contacts/{contact_id}/attributes",
+            get(get_contact_attributes).post(set_contact_attribute),
+        )
+        .route(
+            "/api/contacts/{contact_id}/attributes/{attr_key}",
+            axum::routing::delete(delete_contact_attribute),
+        )
+        .route("/api/tags", get(get_tags).post(create_tag))
+        .route("/api/tags/{tag_id}", axum::routing::delete(delete_tag))
         .route("/api/teams", get(get_teams).post(create_team))
         .route("/api/teams/{team_id}/members", post(add_member_to_team))
         .route("/api/inboxes", get(get_inboxes).post(create_inbox))
@@ -4611,6 +5505,26 @@ pub async fn run() {
             patch(patch_session_handover),
         )
         .route("/api/session/{session_id}/meta", patch(patch_session_meta))
+        .route(
+            "/api/session/{session_id}/contact",
+            patch(patch_session_contact),
+        )
+        .route(
+            "/api/session/{session_id}/tags",
+            get(get_session_tags).post(add_session_tag),
+        )
+        .route(
+            "/api/session/{session_id}/tags/{tag_id}",
+            axum::routing::delete(remove_session_tag),
+        )
+        .route(
+            "/api/session/{session_id}/attributes",
+            get(get_conversation_attributes).post(set_conversation_attribute),
+        )
+        .route(
+            "/api/session/{session_id}/attributes/{attr_key}",
+            axum::routing::delete(delete_conversation_attribute),
+        )
         .route(
             "/api/session/{session_id}/notes",
             get(get_notes).post(add_note),

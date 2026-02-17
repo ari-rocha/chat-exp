@@ -34,6 +34,7 @@ pub struct Session {
     pub inbox_id: Option<String>,
     pub team_id: Option<String>,
     pub flow_id: Option<String>,
+    pub contact_id: Option<String>,
     pub handover_active: bool,
     pub status: String,
     pub priority: String,
@@ -53,6 +54,7 @@ pub struct SessionSummary {
     pub inbox_id: Option<String>,
     pub team_id: Option<String>,
     pub flow_id: Option<String>,
+    pub contact_id: Option<String>,
     pub handover_active: bool,
     pub status: String,
     pub priority: String,
@@ -200,6 +202,44 @@ pub struct Contact {
     pub phone: String,
     pub external_id: String,
     pub metadata: Value,
+    pub company: String,
+    pub location: String,
+    pub avatar_url: String,
+    pub last_seen_at: String,
+    pub browser: String,
+    pub os: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Tag {
+    pub id: String,
+    pub tenant_id: String,
+    pub name: String,
+    pub color: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactAttribute {
+    pub id: String,
+    pub contact_id: String,
+    pub attribute_key: String,
+    pub attribute_value: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationAttribute {
+    pub id: String,
+    pub session_id: String,
+    pub attribute_key: String,
+    pub attribute_value: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -351,6 +391,8 @@ pub struct CreateContactBody {
     pub phone: Option<String>,
     pub external_id: Option<String>,
     pub metadata: Option<Value>,
+    pub company: Option<String>,
+    pub location: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -361,6 +403,40 @@ pub struct PatchContactBody {
     pub phone: Option<String>,
     pub external_id: Option<String>,
     pub metadata: Option<Value>,
+    pub company: Option<String>,
+    pub location: Option<String>,
+    pub avatar_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateTagBody {
+    pub name: String,
+    #[serde(default = "default_tag_color")]
+    pub color: String,
+}
+
+fn default_tag_color() -> String {
+    "#6366f1".to_string()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionTagBody {
+    pub tag_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionContactBody {
+    pub contact_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetAttributeBody {
+    pub attribute_key: String,
+    pub attribute_value: String,
 }
 
 #[derive(Debug, Deserialize)]

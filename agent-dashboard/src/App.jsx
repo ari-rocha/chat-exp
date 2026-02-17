@@ -99,6 +99,50 @@ const FLOW_NODE_PRESETS = {
     closeMessage: "",
     handoverMessage: "",
   },
+  wait: {
+    label: "Wait",
+    duration: 60,
+    unit: "seconds",
+  },
+  assign: {
+    label: "Assign",
+    assignTo: "team",
+    teamName: "",
+    agentEmail: "",
+    message: "",
+  },
+  close_conversation: {
+    label: "Close Conversation",
+    message: "",
+    sendCsat: false,
+  },
+  csat: {
+    label: "CSAT Rating",
+    text: "How would you rate your experience?",
+    delayMs: 420,
+  },
+  tag: {
+    label: "Tag",
+    action: "add",
+    tags: [""],
+  },
+  set_attribute: {
+    label: "Set Attribute",
+    target: "contact",
+    attributeName: "",
+    attributeValue: "",
+  },
+  note: {
+    label: "Note",
+    text: "",
+  },
+  webhook: {
+    label: "Webhook",
+    url: "",
+    method: "POST",
+    headers: "{}",
+    body: "{}",
+  },
 };
 
 const formatTime = (iso) => {
@@ -250,6 +294,13 @@ export default function App() {
     email: "",
     phone: "",
   });
+
+  const [tags, setTags] = useState([]);
+  const [sessionTags, setSessionTags] = useState([]);
+  const [sessionContact, setSessionContact] = useState(null);
+  const [conversationAttrs, setConversationAttrs] = useState([]);
+  const [newConvAttrKey, setNewConvAttrKey] = useState("");
+  const [newConvAttrValue, setNewConvAttrValue] = useState("");
 
   const [flows, setFlows] = useState([]);
   const [activeFlowId, setActiveFlowId] = useState("");
@@ -441,6 +492,7 @@ export default function App() {
       settingsRes,
       contactsRes,
       csatRes,
+      tagsRes,
     ] = await Promise.all([
       apiFetch("/api/auth/me", authToken),
       apiFetch("/api/sessions", authToken),
@@ -454,6 +506,7 @@ export default function App() {
       apiFetch("/api/tenant/settings", authToken),
       apiFetch("/api/contacts", authToken),
       apiFetch("/api/reports/csat", authToken),
+      apiFetch("/api/tags", authToken),
     ]);
 
     setAgent(meRes.agent ?? null);
@@ -471,6 +524,7 @@ export default function App() {
       average: csatRes.average ?? 0,
       surveys: csatRes.surveys ?? [],
     });
+    setTags(tagsRes.tags ?? []);
 
     const nextFlows = flowsRes.flows ?? [];
     setFlows(nextFlows);
@@ -622,6 +676,11 @@ export default function App() {
     if (!activeId) {
       setMessages([]);
       setNotes([]);
+      setSessionTags([]);
+      setSessionContact(null);
+      setConversationAttrs([]);
+      setNewConvAttrKey("");
+      setNewConvAttrValue("");
       return;
     }
 
@@ -632,12 +691,30 @@ export default function App() {
       apiFetch(`/api/session/${activeId}/notes`, token)
         .then((payload) => setNotes(payload.notes ?? []))
         .catch((error) => console.error("failed to load notes", error));
+      apiFetch(`/api/session/${activeId}/tags`, token)
+        .then((payload) => setSessionTags(payload.tags ?? []))
+        .catch((error) => console.error("failed to load session tags", error));
+      apiFetch(`/api/session/${activeId}/attributes`, token)
+        .then((payload) => setConversationAttrs(payload.attributes ?? []))
+        .catch((error) => console.error("failed to load conv attrs", error));
     }
   }, [activeId, token]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages, activeId, visitorDraftBySession]);
+
+  /* ── Load linked contact when activeSession changes ── */
+  useEffect(() => {
+    const cid = activeSession?.contactId;
+    if (!cid || !token) {
+      setSessionContact(null);
+      return;
+    }
+    apiFetch(`/api/contacts/${cid}`, token)
+      .then((payload) => setSessionContact(payload.contact ?? null))
+      .catch(() => setSessionContact(null));
+  }, [activeSession?.contactId, token]);
 
   const submitAuth = async (e) => {
     e.preventDefault();
@@ -667,6 +744,11 @@ export default function App() {
     setNotes([]);
     setFlows([]);
     setCannedReplies([]);
+    setTags([]);
+    setSessionTags([]);
+    setSessionContact(null);
+    setConversationAttrs([]);
+    setContacts([]);
   };
 
   const sendMessage = (e) => {
@@ -728,6 +810,95 @@ export default function App() {
       setContacts((prev) => [payload.contact, ...prev]);
       setNewContact({ displayName: "", email: "", phone: "" });
     }
+  };
+
+  const deleteContact = async (contactId) => {
+    if (!token || !contactId) return;
+    await apiFetch(`/api/contacts/${contactId}`, token, { method: "DELETE" });
+    setContacts((prev) => prev.filter((c) => c.id !== contactId));
+  };
+
+  const patchContact = async (contactId, patch) => {
+    if (!token || !contactId) return;
+    const payload = await apiFetch(`/api/contacts/${contactId}`, token, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+    if (payload.contact) {
+      setContacts((prev) =>
+        prev.map((c) => (c.id === contactId ? payload.contact : c)),
+      );
+      if (sessionContact?.id === contactId) setSessionContact(payload.contact);
+    }
+  };
+
+  const addSessionTag = async (tagId) => {
+    if (!token || !activeId || !tagId) return;
+    await apiFetch(`/api/session/${activeId}/tags`, token, {
+      method: "POST",
+      body: JSON.stringify({ tagId }),
+    });
+    const payload = await apiFetch(`/api/session/${activeId}/tags`, token);
+    setSessionTags(payload.tags ?? []);
+  };
+
+  const removeSessionTag = async (tagId) => {
+    if (!token || !activeId || !tagId) return;
+    await apiFetch(`/api/session/${activeId}/tags/${tagId}`, token, {
+      method: "DELETE",
+    });
+    setSessionTags((prev) => prev.filter((t) => t.id !== tagId));
+  };
+
+  const patchSessionContact = async (contactId) => {
+    if (!token || !activeId) return;
+    const payload = await apiFetch(`/api/session/${activeId}/contact`, token, {
+      method: "PATCH",
+      body: JSON.stringify({ contactId: contactId || null }),
+    });
+    if (payload?.session) {
+      setSessions((prev) => {
+        const next = prev.filter((s) => s.id !== payload.session.id);
+        return [payload.session, ...next];
+      });
+    }
+    if (contactId) {
+      apiFetch(`/api/contacts/${contactId}`, token)
+        .then((res) => setSessionContact(res.contact ?? null))
+        .catch(() => setSessionContact(null));
+    } else {
+      setSessionContact(null);
+    }
+  };
+
+  const addConversationAttr = async () => {
+    if (!token || !activeId || !(newConvAttrKey || "").trim()) return;
+    await apiFetch(`/api/session/${activeId}/attributes`, token, {
+      method: "POST",
+      body: JSON.stringify({
+        attributeKey: newConvAttrKey.trim(),
+        attributeValue: newConvAttrValue.trim(),
+      }),
+    });
+    const payload = await apiFetch(
+      `/api/session/${activeId}/attributes`,
+      token,
+    );
+    setConversationAttrs(payload.attributes ?? []);
+    setNewConvAttrKey("");
+    setNewConvAttrValue("");
+  };
+
+  const deleteConversationAttr = async (attrKey) => {
+    if (!token || !activeId || !attrKey) return;
+    await apiFetch(
+      `/api/session/${activeId}/attributes/${encodeURIComponent(attrKey)}`,
+      token,
+      { method: "DELETE" },
+    );
+    setConversationAttrs((prev) =>
+      prev.filter((a) => a.attributeKey !== attrKey),
+    );
   };
 
   const patchSessionMeta = async (patch) => {
@@ -1144,6 +1315,20 @@ export default function App() {
           setNewCanned={setNewCanned}
           cannedSaving={cannedSaving}
           renderMessageWidget={renderMessageWidget}
+          contacts={contacts}
+          tags={tags}
+          sessionTags={sessionTags}
+          sessionContact={sessionContact}
+          conversationAttrs={conversationAttrs}
+          addSessionTag={addSessionTag}
+          removeSessionTag={removeSessionTag}
+          patchSessionContact={patchSessionContact}
+          addConversationAttr={addConversationAttr}
+          deleteConversationAttr={deleteConversationAttr}
+          newConvAttrKey={newConvAttrKey}
+          setNewConvAttrKey={setNewConvAttrKey}
+          newConvAttrValue={newConvAttrValue}
+          setNewConvAttrValue={setNewConvAttrValue}
         />
       </div>
     );
@@ -1187,6 +1372,12 @@ export default function App() {
           newContact={newContact}
           setNewContact={setNewContact}
           createContact={createContact}
+          deleteContact={deleteContact}
+          patchContact={patchContact}
+          tags={tags}
+          apiFetch={apiFetch}
+          token={token}
+          formatTime={formatTime}
         />
       </section>
     ) : view === "customization" ? (
