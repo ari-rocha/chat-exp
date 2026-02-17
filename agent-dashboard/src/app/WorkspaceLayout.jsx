@@ -1,5 +1,10 @@
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   CircleUserRound,
@@ -27,7 +32,7 @@ const STATUS_ITEMS = [
 ];
 
 function titleCase(value) {
-  return String(value || "").replace(/^\\w/, (m) => m.toUpperCase());
+  return String(value || "").replace(/^\w/, (m) => m.toUpperCase());
 }
 
 function getSessionTitle(session) {
@@ -89,7 +94,7 @@ export default function WorkspaceLayout({
       <div
         className={`crm-surface grid h-full min-h-0 overflow-hidden rounded-2xl border border-slate-300 bg-white max-[980px]:grid-cols-[1fr] ${
           showConversationPanels
-            ? "grid-cols-[64px_250px_1fr_320px_300px] max-[1500px]:grid-cols-[64px_240px_1fr_300px] max-[1220px]:grid-cols-[64px_240px_1fr]"
+            ? "grid-cols-[64px_250px_1fr] max-[1220px]:grid-cols-[64px_240px_1fr]"
             : detailsPanel
               ? "grid-cols-[64px_1fr_300px] max-[1500px]:grid-cols-[64px_1fr]"
               : "grid-cols-[64px_1fr]"
@@ -196,53 +201,73 @@ export default function WorkspaceLayout({
         ) : null}
 
         {showConversationPanels ? (
-          <aside className="crm-list flex min-h-0 flex-col border-r border-slate-200 bg-white max-[980px]:hidden">
-          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-            <div className="flex items-center gap-2">
-              <CircleUserRound size={16} className="text-slate-500" />
-              <p className="text-sm font-semibold text-slate-900">Conversations</p>
-            </div>
-            <Badge variant="secondary" className="text-[10px]">Newest</Badge>
-          </div>
+          <ResizablePanelGroup direction="horizontal" className="min-h-0">
+            <ResizablePanel defaultSize={32} minSize={20} className="min-h-0">
+              <aside className="crm-list flex h-full min-h-0 flex-col bg-white max-[980px]:hidden">
+                <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <CircleUserRound size={16} className="text-slate-500" />
+                    <p className="text-sm font-semibold text-slate-900">Conversations</p>
+                  </div>
+                  <Badge variant="secondary" className="text-[10px]">Newest</Badge>
+                </div>
 
-          <ScrollArea className="h-full p-2">
-            <div className="space-y-1.5">
-              {filteredSessions.map((session) => {
-                const isActive = session.id === activeId;
-                return (
-                  <button
-                    key={session.id}
-                    type="button"
-                    onClick={() => setActiveId(session.id)}
-                    className={`w-full rounded-xl border px-3 py-2 text-left transition ${
-                      isActive
-                        ? "border-blue-200 bg-blue-50"
-                        : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"
-                    }`}
-                  >
-                    <div className="mb-1 flex items-start justify-between gap-3">
-                      <p className="truncate text-sm font-medium text-slate-900">{getSessionTitle(session)}</p>
-                      <span className="shrink-0 text-[10px] text-slate-400">{formatTime(session.updatedAt)}</span>
-                    </div>
-                    <p className="truncate text-xs text-slate-500">{sessionPreview(session) || getSessionSubtitle(session)}</p>
-                    <div className="mt-1.5 flex items-center justify-between">
-                      <p className="text-[10px] uppercase tracking-wide text-slate-400">{titleCase(session.channel)} • {session.status || "open"}</p>
-                      {(session.unreadCount || 0) > 0 ? (
-                        <span className="rounded-full bg-orange-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">{session.unreadCount}</span>
-                      ) : null}
-                    </div>
-                  </button>
-                );
-              })}
-              {filteredSessions.length === 0 ? <p className="px-2 py-6 text-xs text-slate-400">No conversations found.</p> : null}
-            </div>
-          </ScrollArea>
-          </aside>
-        ) : null}
+                <ScrollArea className="h-full p-2">
+                  <div className="space-y-1.5">
+                    {filteredSessions.map((session) => {
+                      const isActive = session.id === activeId;
+                      return (
+                        <button
+                          key={session.id}
+                          type="button"
+                          onClick={() => setActiveId(session.id)}
+                          className={`w-full rounded-xl border px-3 py-2 text-left transition ${
+                            isActive
+                              ? "border-blue-200 bg-blue-50"
+                              : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"
+                          }`}
+                        >
+                          <div className="mb-1 flex items-start justify-between gap-3">
+                            <p className="truncate text-sm font-medium text-slate-900">{getSessionTitle(session)}</p>
+                            <span className="shrink-0 text-[10px] text-slate-400">{formatTime(session.updatedAt)}</span>
+                          </div>
+                          <p className="truncate text-xs text-slate-500">{sessionPreview(session) || getSessionSubtitle(session)}</p>
+                          <div className="mt-1.5 flex items-center justify-between">
+                            <p className="text-[10px] uppercase tracking-wide text-slate-400">{titleCase(session.channel)} • {session.status || "open"}</p>
+                            {(session.unreadCount || 0) > 0 ? (
+                              <span className="rounded-full bg-orange-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">{session.unreadCount}</span>
+                            ) : null}
+                          </div>
+                        </button>
+                      );
+                    })}
+                    {filteredSessions.length === 0 ? <p className="px-2 py-6 text-xs text-slate-400">No conversations found.</p> : null}
+                  </div>
+                </ScrollArea>
+              </aside>
+            </ResizablePanel>
 
-        {mainPanel}
+            <ResizableHandle withHandle />
 
-        {detailsPanel || null}
+            <ResizablePanel defaultSize={detailsPanel ? 45 : 68} minSize={30} className="min-h-0">
+              {mainPanel}
+            </ResizablePanel>
+
+            {detailsPanel ? (
+              <>
+                <ResizableHandle withHandle />
+                <ResizablePanel defaultSize={23} minSize={16} className="min-h-0 max-[1500px]:hidden">
+                  {detailsPanel}
+                </ResizablePanel>
+              </>
+            ) : null}
+          </ResizablePanelGroup>
+        ) : (
+          <>
+            {mainPanel}
+            {detailsPanel || null}
+          </>
+        )}
       </div>
     </div>
   );

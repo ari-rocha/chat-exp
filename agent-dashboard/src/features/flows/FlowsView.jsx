@@ -40,7 +40,7 @@ export default function FlowsView({
   removeSelectedNode,
 }) {
   return (
-    <div className="grid min-h-0 grid-cols-[280px_1fr_320px] bg-slate-50 max-[1200px]:grid-cols-[1fr]">
+    <div className="grid h-full min-h-0 grid-cols-[280px_1fr_320px] bg-slate-50 max-[1200px]:grid-cols-[1fr]">
       <aside className="grid min-h-0 grid-rows-[auto_1fr] border-r border-slate-200 bg-white p-3 max-[1200px]:hidden">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-semibold">Flows</h3>
@@ -98,7 +98,7 @@ export default function FlowsView({
         </div>
       </section>
 
-      <aside className="border-l border-slate-200 bg-white p-3 max-[1200px]:hidden">
+      <aside className="min-h-0 border-l border-slate-200 bg-white p-3 max-[1200px]:hidden">
         <h3 className="text-sm font-semibold">Flow Inspector</h3>
         <p className="mb-3 text-xs text-slate-500">Add nodes, edit node data, and configure AI behavior.</p>
 

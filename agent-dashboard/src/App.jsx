@@ -1092,7 +1092,7 @@ export default function App() {
 
   const mainPanel =
     view === "flows" ? (
-      <section className="crm-main min-h-0 bg-[#f8f9fb]">
+      <section className="crm-main h-full min-h-0 bg-[#f8f9fb]">
         <FlowsView
           flows={flows}
           createFlow={createFlow}
@@ -1122,7 +1122,7 @@ export default function App() {
         />
       </section>
     ) : view === "contacts" ? (
-      <section className="crm-main min-h-0 bg-[#f8f9fb]">
+      <section className="crm-main h-full min-h-0 bg-[#f8f9fb]">
         <ContactsView
           contacts={contacts}
           newContact={newContact}
@@ -1131,7 +1131,7 @@ export default function App() {
         />
       </section>
     ) : view === "customization" ? (
-      <section className="crm-main min-h-0 bg-[#f8f9fb]">
+      <section className="crm-main h-full min-h-0 bg-[#f8f9fb]">
         <CustomizationView
           tenantSettings={tenantSettings}
           setTenantSettings={setTenantSettings}
@@ -1140,7 +1140,7 @@ export default function App() {
         />
       </section>
     ) : view === "csat" ? (
-      <section className="crm-main min-h-0 bg-[#f8f9fb]">
+      <section className="crm-main h-full min-h-0 bg-[#f8f9fb]">
         <CsatView csatReport={csatReport} />
       </section>
     ) : null;

@@ -155,7 +155,7 @@ export default function ConversationsView({
       formatTime={formatTime}
       sessionPreview={sessionPreview}
       mainPanel={
-        <section className="crm-main grid min-h-0 grid-rows-[56px_1fr_132px] bg-[#f8f9fb]">
+        <section className="crm-main grid h-full min-h-0 overflow-hidden grid-rows-[56px_1fr_132px] bg-[#f8f9fb]">
           <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4">
             <div className="flex items-center gap-2">
               <div className="flex h-7 w-7 items-center justify-center rounded-full bg-fuchsia-100 text-[10px] font-semibold text-fuchsia-700">
@@ -177,7 +177,7 @@ export default function ConversationsView({
             </div>
           </header>
 
-          <ScrollArea className="conversation-thread h-full px-5 py-4">
+          <ScrollArea className="conversation-thread h-full min-h-0 px-5 py-4">
             <div className="space-y-3">
               {messages.map((message) => {
                 if (message.sender === "system") {
