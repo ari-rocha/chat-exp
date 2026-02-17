@@ -216,6 +216,19 @@ export default function App() {
   const [channels, setChannels] = useState([]);
   const [notes, setNotes] = useState([]);
   const [noteText, setNoteText] = useState("");
+  const [tenants, setTenants] = useState([]);
+  const [tenantSettings, setTenantSettings] = useState(null);
+  const [contacts, setContacts] = useState([]);
+  const [csatReport, setCsatReport] = useState({
+    count: 0,
+    average: 0,
+    surveys: [],
+  });
+  const [newContact, setNewContact] = useState({
+    displayName: "",
+    email: "",
+    phone: "",
+  });
 
   const [flows, setFlows] = useState([]);
   const [activeFlowId, setActiveFlowId] = useState("");
@@ -400,6 +413,10 @@ export default function App() {
       agentsRes,
       flowsRes,
       cannedRes,
+      tenantsRes,
+      settingsRes,
+      contactsRes,
+      csatRes,
     ] = await Promise.all([
       apiFetch("/api/auth/me", authToken),
       apiFetch("/api/sessions", authToken),
@@ -409,6 +426,10 @@ export default function App() {
       apiFetch("/api/agents", authToken),
       apiFetch("/api/flows", authToken),
       apiFetch("/api/canned-replies", authToken),
+      apiFetch("/api/tenants", authToken),
+      apiFetch("/api/tenant/settings", authToken),
+      apiFetch("/api/contacts", authToken),
+      apiFetch("/api/reports/csat", authToken),
     ]);
 
     setAgent(meRes.agent ?? null);
@@ -418,6 +439,14 @@ export default function App() {
     setChannels(channelsRes.channels ?? []);
     setAgents(agentsRes.agents ?? []);
     setCannedReplies(cannedRes.cannedReplies ?? []);
+    setTenants(tenantsRes.tenants ?? []);
+    setTenantSettings(settingsRes.settings ?? null);
+    setContacts(contactsRes.contacts ?? []);
+    setCsatReport({
+      count: csatRes.count ?? 0,
+      average: csatRes.average ?? 0,
+      surveys: csatRes.surveys ?? [],
+    });
 
     const nextFlows = flowsRes.flows ?? [];
     setFlows(nextFlows);
@@ -653,6 +682,28 @@ export default function App() {
       body: JSON.stringify({ status }),
     });
     setAgent(payload.agent);
+  };
+
+  const saveTenantSettings = async () => {
+    if (!token || !tenantSettings) return;
+    const payload = await apiFetch("/api/tenant/settings", token, {
+      method: "PATCH",
+      body: JSON.stringify(tenantSettings),
+    });
+    setTenantSettings(payload.settings ?? null);
+  };
+
+  const createContact = async (e) => {
+    e.preventDefault();
+    if (!token) return;
+    const payload = await apiFetch("/api/contacts", token, {
+      method: "POST",
+      body: JSON.stringify(newContact),
+    });
+    if (payload.contact) {
+      setContacts((prev) => [payload.contact, ...prev]);
+      setNewContact({ displayName: "", email: "", phone: "" });
+    }
   };
 
   const patchSessionMeta = async (patch) => {
@@ -1043,6 +1094,27 @@ export default function App() {
               onClick={() => setView("flows")}
             >
               Flow Builder
+            </Button>
+            <Button
+              variant={view === "contacts" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setView("contacts")}
+            >
+              Contacts
+            </Button>
+            <Button
+              variant={view === "customization" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setView("customization")}
+            >
+              Customization
+            </Button>
+            <Button
+              variant={view === "csat" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setView("csat")}
+            >
+              CSAT
             </Button>
           </div>
 
@@ -1881,7 +1953,7 @@ export default function App() {
               </ScrollArea>
             </aside>
           </div>
-        ) : (
+        ) : view === "flows" ? (
           <div className="grid min-h-0 grid-cols-[280px_1fr_320px] bg-slate-50 max-[1200px]:grid-cols-[1fr]">
             <aside className="border-r border-slate-200 bg-white p-3 max-[1200px]:hidden">
               <div className="mb-3 flex items-center justify-between">
@@ -2374,7 +2446,229 @@ export default function App() {
               )}
             </aside>
           </div>
-        )}
+        ) : view === "contacts" ? (
+          <div className="grid min-h-0 grid-cols-[340px_1fr] gap-4 bg-slate-50 p-4 max-[1000px]:grid-cols-[1fr]">
+            <aside className="rounded-xl border border-slate-200 bg-white p-4">
+              <h3 className="text-sm font-semibold text-slate-900">
+                Create contact
+              </h3>
+              <p className="mb-3 text-xs text-slate-500">
+                Contacts are scoped to the current tenant/workspace.
+              </p>
+              <form className="space-y-2" onSubmit={createContact}>
+                <Input
+                  value={newContact.displayName}
+                  onChange={(e) =>
+                    setNewContact((prev) => ({
+                      ...prev,
+                      displayName: e.target.value,
+                    }))
+                  }
+                  placeholder="Display name"
+                />
+                <Input
+                  value={newContact.email}
+                  onChange={(e) =>
+                    setNewContact((prev) => ({ ...prev, email: e.target.value }))
+                  }
+                  placeholder="Email"
+                />
+                <Input
+                  value={newContact.phone}
+                  onChange={(e) =>
+                    setNewContact((prev) => ({ ...prev, phone: e.target.value }))
+                  }
+                  placeholder="Phone"
+                />
+                <Button
+                  type="submit"
+                  className="w-full bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  Save contact
+                </Button>
+              </form>
+            </aside>
+
+            <section className="rounded-xl border border-slate-200 bg-white p-4">
+              <h3 className="mb-3 text-sm font-semibold text-slate-900">
+                Contacts ({contacts.length})
+              </h3>
+              <ScrollArea className="h-[calc(100vh-170px)]">
+                <div className="space-y-2 pr-2">
+                  {contacts.map((contact) => (
+                    <article
+                      key={contact.id}
+                      className="rounded-lg border border-slate-200 bg-slate-50 p-3"
+                    >
+                      <p className="text-sm font-medium text-slate-900">
+                        {contact.displayName || "Unnamed contact"}
+                      </p>
+                      <p className="text-xs text-slate-600">
+                        {contact.email || "No email"}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {contact.phone || "No phone"}
+                      </p>
+                    </article>
+                  ))}
+                  {contacts.length === 0 && (
+                    <p className="text-xs text-slate-400">No contacts yet.</p>
+                  )}
+                </div>
+              </ScrollArea>
+            </section>
+          </div>
+        ) : view === "customization" ? (
+          <div className="grid min-h-0 grid-cols-[1fr_320px] gap-4 bg-slate-50 p-4 max-[1080px]:grid-cols-[1fr]">
+            <section className="rounded-xl border border-slate-200 bg-white p-4">
+              <h3 className="text-sm font-semibold text-slate-900">
+                Workspace customization
+              </h3>
+              <p className="mb-3 text-xs text-slate-500">
+                Configure branding and widget behavior for this tenant.
+              </p>
+              <div className="grid gap-2">
+                <Input
+                  value={tenantSettings?.brandName || ""}
+                  onChange={(e) =>
+                    setTenantSettings((prev) => ({
+                      ...(prev || {}),
+                      brandName: e.target.value,
+                    }))
+                  }
+                  placeholder="Brand name"
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <Input
+                    value={tenantSettings?.primaryColor || ""}
+                    onChange={(e) =>
+                      setTenantSettings((prev) => ({
+                        ...(prev || {}),
+                        primaryColor: e.target.value,
+                      }))
+                    }
+                    placeholder="Primary color (#hex)"
+                  />
+                  <Input
+                    value={tenantSettings?.accentColor || ""}
+                    onChange={(e) =>
+                      setTenantSettings((prev) => ({
+                        ...(prev || {}),
+                        accentColor: e.target.value,
+                      }))
+                    }
+                    placeholder="Accent color (#hex)"
+                  />
+                </div>
+                <Input
+                  value={tenantSettings?.logoUrl || ""}
+                  onChange={(e) =>
+                    setTenantSettings((prev) => ({
+                      ...(prev || {}),
+                      logoUrl: e.target.value,
+                    }))
+                  }
+                  placeholder="Logo URL"
+                />
+                <Input
+                  value={tenantSettings?.privacyUrl || ""}
+                  onChange={(e) =>
+                    setTenantSettings((prev) => ({
+                      ...(prev || {}),
+                      privacyUrl: e.target.value,
+                    }))
+                  }
+                  placeholder="Privacy URL"
+                />
+                <Textarea
+                  rows={3}
+                  value={tenantSettings?.welcomeText || ""}
+                  onChange={(e) =>
+                    setTenantSettings((prev) => ({
+                      ...(prev || {}),
+                      welcomeText: e.target.value,
+                    }))
+                  }
+                  placeholder="Welcome text"
+                />
+                <Button
+                  className="w-full bg-blue-600 text-white hover:bg-blue-700"
+                  onClick={saveTenantSettings}
+                >
+                  Save customization
+                </Button>
+              </div>
+            </section>
+            <aside className="rounded-xl border border-slate-200 bg-white p-4">
+              <h4 className="text-sm font-semibold text-slate-900">Tenant</h4>
+              <div className="mt-3 space-y-2">
+                {tenants.map((tenant) => (
+                  <div
+                    key={tenant.id}
+                    className="rounded-md border border-slate-200 bg-slate-50 p-2"
+                  >
+                    <p className="text-sm font-medium text-slate-900">
+                      {tenant.name}
+                    </p>
+                    <p className="text-xs text-slate-500">{tenant.slug}</p>
+                  </div>
+                ))}
+              </div>
+            </aside>
+          </div>
+        ) : view === "csat" ? (
+          <div className="grid min-h-0 grid-cols-[320px_1fr] gap-4 bg-slate-50 p-4 max-[1080px]:grid-cols-[1fr]">
+            <aside className="rounded-xl border border-slate-200 bg-white p-4">
+              <h3 className="text-sm font-semibold text-slate-900">
+                CSAT Overview
+              </h3>
+              <div className="mt-3 space-y-2">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Responses</p>
+                  <p className="text-2xl font-semibold text-slate-900">
+                    {csatReport.count || 0}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Average score</p>
+                  <p className="text-2xl font-semibold text-slate-900">
+                    {Number(csatReport.average || 0).toFixed(2)}
+                  </p>
+                </div>
+              </div>
+            </aside>
+            <section className="rounded-xl border border-slate-200 bg-white p-4">
+              <h3 className="mb-3 text-sm font-semibold text-slate-900">
+                CSAT submissions
+              </h3>
+              <ScrollArea className="h-[calc(100vh-170px)]">
+                <div className="space-y-2 pr-2">
+                  {(csatReport.surveys || []).map((survey) => (
+                    <article
+                      key={survey.id}
+                      className="rounded-lg border border-slate-200 bg-slate-50 p-3"
+                    >
+                      <p className="text-sm font-semibold text-slate-900">
+                        Score: {survey.score}/5
+                      </p>
+                      <p className="text-xs text-slate-600">
+                        {survey.comment || "No comment"}
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        {formatTime(survey.submittedAt)}
+                      </p>
+                    </article>
+                  ))}
+                  {(csatReport.surveys || []).length === 0 && (
+                    <p className="text-xs text-slate-400">
+                      No CSAT submissions yet.
+                    </p>
+                  )}
+                </div>
+              </ScrollArea>
+            </section>
+          </div>
+        ) : null}
       </div>
     </div>
   );
