@@ -64,6 +64,9 @@ body {
   perspective: 1200px;
   transform-style: preserve-3d;
   will-change: transform, opacity, filter;
+  transition: opacity 220ms cubic-bezier(0.22, 0.88, 0.34, 1),
+    transform 220ms cubic-bezier(0.22, 0.88, 0.34, 1),
+    filter 220ms cubic-bezier(0.22, 0.88, 0.34, 1);
 }
 
 .panel-open {
@@ -75,7 +78,8 @@ body {
 .panel-closed {
   opacity: 0;
   pointer-events: none;
-  transform: scale(0.75) translateY(22px);
+  transform: scale(0.84) translateY(16px) rotateX(4deg);
+  filter: blur(1.3px);
 }
 
 @keyframes openPanel {
