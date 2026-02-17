@@ -605,7 +605,8 @@ fn extract_identity_from_text(text: &str) -> (Option<String>, Option<String>, Op
 
     // Try to extract a name from "Name: value" or "First name: value" patterns
     let mut name: Option<String> = None;
-    let name_re = Regex::new(r"(?i)(?:name|first[\s_]?name|full[\s_]?name)\s*:\s*([^,\n]+)").unwrap();
+    let name_re =
+        Regex::new(r"(?i)(?:name|first[\s_]?name|full[\s_]?name)\s*:\s*([^,\n]+)").unwrap();
     if let Some(cap) = name_re.captures(text) {
         let n = cap[1].trim().to_string();
         if !n.is_empty() {
@@ -618,11 +619,7 @@ fn extract_identity_from_text(text: &str) -> (Option<String>, Option<String>, Op
 
 /// Try to find or create a contact from visitor-supplied data, then link to session.
 /// Returns true if a contact was linked.
-async fn auto_resolve_contact(
-    state: &Arc<AppState>,
-    session_id: &str,
-    visitor_text: &str,
-) -> bool {
+async fn auto_resolve_contact(state: &Arc<AppState>, session_id: &str, visitor_text: &str) -> bool {
     // Skip if session already has a contact
     let existing_contact: Option<Option<String>> =
         sqlx::query_scalar("SELECT contact_id FROM sessions WHERE id = $1")
