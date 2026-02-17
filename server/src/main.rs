@@ -53,6 +53,8 @@ struct Session {
     team_id: Option<String>,
     flow_id: Option<String>,
     handover_active: bool,
+    status: String,
+    priority: String,
     fired_triggers: HashSet<String>,
 }
 
@@ -70,6 +72,20 @@ struct SessionSummary {
     team_id: Option<String>,
     flow_id: Option<String>,
     handover_active: bool,
+    status: String,
+    priority: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CannedReply {
+    id: String,
+    title: String,
+    shortcut: String,
+    category: String,
+    body: String,
+    created_at: String,
+    updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,6 +204,7 @@ struct AppState {
     teams: RwLock<HashMap<String, Team>>,
     inboxes: RwLock<HashMap<String, Inbox>>,
     flows: RwLock<HashMap<String, ChatFlow>>,
+    canned_replies: RwLock<HashMap<String, CannedReply>>,
     default_flow_id: String,
     realtime: Mutex<RealtimeState>,
     next_client_id: AtomicUsize,
@@ -285,6 +302,33 @@ struct SessionHandoverBody {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SessionMetaBody {
+    status: Option<String>,
+    priority: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateCannedReplyBody {
+    title: String,
+    body: String,
+    #[serde(default)]
+    shortcut: String,
+    #[serde(default)]
+    category: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateCannedReplyBody {
+    title: Option<String>,
+    body: Option<String>,
+    shortcut: Option<String>,
+    category: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CreateFlowBody {
     name: String,
     #[serde(default)]
@@ -319,9 +363,30 @@ fn now_iso() -> String {
 }
 
 fn first_http_url(text: &str) -> Option<String> {
+    // Prefer markdown destination URLs, e.g. [label](https://real-link.example)
+    let markdown_regex = Regex::new(r#"(?is)\[[^\]]*\]\(\s*(https?://[^)\s]+)\s*\)"#).ok()?;
+    if let Some(capture) = markdown_regex.captures(text) {
+        if let Some(url) = capture.get(1) {
+            let cleaned = url
+                .as_str()
+                .trim()
+                .trim_end_matches(&['.', ',', ';', ')', ']'][..])
+                .to_string();
+            if !cleaned.is_empty() {
+                return Some(cleaned);
+            }
+        }
+    }
+
+    // Fallback to plain URL detection.
     let regex = Regex::new(r#"https?://[^\s<>()"]+"#).ok()?;
     let capture = regex.find(text)?;
-    Some(capture.as_str().trim_end_matches(&['.', ',', ';', ')', ']'][..]).to_string())
+    Some(
+        capture
+            .as_str()
+            .trim_end_matches(&['.', ',', ';', ')', ']'][..])
+            .to_string(),
+    )
 }
 
 fn extract_meta_tag(html: &str, property: &str) -> Option<String> {
@@ -359,7 +424,17 @@ fn session_summary(session: &Session) -> SessionSummary {
         team_id: session.team_id.clone(),
         flow_id: session.flow_id.clone(),
         handover_active: session.handover_active,
+        status: session.status.clone(),
+        priority: session.priority.clone(),
     }
+}
+
+fn visible_messages_for_widget(messages: &[ChatMessage]) -> Vec<ChatMessage> {
+    messages
+        .iter()
+        .filter(|message| message.sender != "team")
+        .cloned()
+        .collect::<Vec<_>>()
 }
 
 fn event_payload<T: Serialize>(event: &str, data: T) -> Option<String> {
@@ -663,6 +738,8 @@ async fn ensure_session(state: Arc<AppState>, session_id: &str) -> Session {
                 team_id: None,
                 flow_id: Some(state.default_flow_id.clone()),
                 handover_active: false,
+                status: "open".to_string(),
+                priority: "normal".to_string(),
                 fired_triggers: HashSet::new(),
             };
             sessions.insert(session_id.to_string(), session.clone());
@@ -734,12 +811,17 @@ async fn add_message(
             .unwrap_or_default()
     };
 
-    emit_to_clients(&state, &watchers, "message:new", message.clone()).await;
-
     let agents = {
         let rt = state.realtime.lock().await;
         rt.agents.iter().copied().collect::<Vec<_>>()
     };
+
+    if sender == "team" {
+        emit_to_clients(&state, &agents, "message:new", message.clone()).await;
+    } else {
+        emit_to_clients(&state, &watchers, "message:new", message.clone()).await;
+        emit_to_clients(&state, &agents, "message:new", message.clone()).await;
+    }
 
     emit_to_clients(&state, &agents, "session:updated", summary).await;
 
@@ -1730,7 +1812,7 @@ async fn get_messages(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     let session = ensure_session(state, &session_id).await;
-    Json(json!({ "messages": session.messages }))
+    Json(json!({ "messages": visible_messages_for_widget(&session.messages) }))
 }
 
 async fn post_message(
@@ -1747,6 +1829,7 @@ async fn post_message(
     }
 
     let sender = match body.sender.as_deref() {
+        Some("team") => "team",
         Some("agent") => "agent",
         _ => "visitor",
     };
@@ -2266,6 +2349,191 @@ async fn patch_session_handover(
     (StatusCode::OK, Json(json!({ "session": summary }))).into_response()
 }
 
+async fn patch_session_meta(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<SessionMetaBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+
+    let mut sessions = state.sessions.write().await;
+    let Some(session) = sessions.get_mut(&session_id) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "session not found" })),
+        )
+            .into_response();
+    };
+
+    if let Some(status) = body.status {
+        let normalized = status.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "open" | "resolved" | "awaiting" | "snoozed" => session.status = normalized,
+            _ => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "invalid status" })),
+                )
+                    .into_response()
+            }
+        }
+    }
+
+    if let Some(priority) = body.priority {
+        let normalized = priority.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "low" | "normal" | "high" | "urgent" => session.priority = normalized,
+            _ => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "invalid priority" })),
+                )
+                    .into_response()
+            }
+        }
+    }
+    session.updated_at = now_iso();
+
+    (
+        StatusCode::OK,
+        Json(json!({ "session": session_summary(session) })),
+    )
+        .into_response()
+}
+
+async fn get_canned_replies(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+
+    let mut canned = {
+        let canned = state.canned_replies.read().await;
+        canned.values().cloned().collect::<Vec<_>>()
+    };
+    canned.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+
+    (StatusCode::OK, Json(json!({ "cannedReplies": canned }))).into_response()
+}
+
+async fn create_canned_reply(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<CreateCannedReplyBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+
+    let title = body.title.trim().to_string();
+    let content = body.body.trim().to_string();
+    if title.is_empty() || content.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "title and body are required" })),
+        )
+            .into_response();
+    }
+
+    let now = now_iso();
+    let canned = CannedReply {
+        id: Uuid::new_v4().to_string(),
+        title,
+        shortcut: body.shortcut.trim().to_string(),
+        category: body.category.trim().to_string(),
+        body: content,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+
+    {
+        let mut replies = state.canned_replies.write().await;
+        replies.insert(canned.id.clone(), canned.clone());
+    }
+
+    (StatusCode::CREATED, Json(json!({ "cannedReply": canned }))).into_response()
+}
+
+async fn update_canned_reply(
+    Path(canned_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateCannedReplyBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+
+    let mut replies = state.canned_replies.write().await;
+    let Some(reply) = replies.get_mut(&canned_id) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "canned reply not found" })),
+        )
+            .into_response();
+    };
+
+    if let Some(title) = body.title {
+        let trimmed = title.trim();
+        if trimmed.is_empty() {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "title cannot be empty" })),
+            )
+                .into_response();
+        }
+        reply.title = trimmed.to_string();
+    }
+    if let Some(content) = body.body {
+        let trimmed = content.trim();
+        if trimmed.is_empty() {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "body cannot be empty" })),
+            )
+                .into_response();
+        }
+        reply.body = trimmed.to_string();
+    }
+    if let Some(shortcut) = body.shortcut {
+        reply.shortcut = shortcut.trim().to_string();
+    }
+    if let Some(category) = body.category {
+        reply.category = category.trim().to_string();
+    }
+    reply.updated_at = now_iso();
+
+    (StatusCode::OK, Json(json!({ "cannedReply": reply }))).into_response()
+}
+
+async fn delete_canned_reply(
+    Path(canned_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+
+    {
+        let mut replies = state.canned_replies.write().await;
+        if replies.remove(&canned_id).is_none() {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "canned reply not found" })),
+            )
+                .into_response();
+        }
+    }
+
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
 async fn get_flows(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
     if let Err(err) = auth_agent_from_headers(&state, &headers).await {
         return err.into_response();
@@ -2529,6 +2797,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
             "widget:join" => {
                 if let Some(session_id) = envelope.data.get("sessionId").and_then(Value::as_str) {
                     let session = ensure_session(state.clone(), session_id).await;
+                    let visible_history = visible_messages_for_widget(&session.messages);
 
                     {
                         let mut rt = state.realtime.lock().await;
@@ -2538,7 +2807,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                             .insert(client_id);
                     }
 
-                    emit_to_client(&state, client_id, "session:history", session.messages).await;
+                    emit_to_client(&state, client_id, "session:history", visible_history).await;
                     if is_agent_typing(&state, session_id).await {
                         emit_to_client(
                             &state,
@@ -2726,10 +2995,16 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
             "agent:message" => {
                 let session_id = envelope.data.get("sessionId").and_then(Value::as_str);
                 let text = envelope.data.get("text").and_then(Value::as_str);
+                let internal = envelope
+                    .data
+                    .get("internal")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 if let (Some(session_id), Some(text)) = (session_id, text) {
                     set_agent_human_typing(state.clone(), client_id, session_id, false).await;
                     let _ = ensure_session(state.clone(), session_id).await;
-                    let _ = add_message(state.clone(), session_id, "agent", text, None, None).await;
+                    let sender = if internal { "team" } else { "agent" };
+                    let _ = add_message(state.clone(), session_id, sender, text, None, None).await;
                 }
             }
             _ => {}
@@ -2896,6 +3171,45 @@ async fn main() {
             flows.insert(default_flow.id.clone(), default_flow);
             flows
         }),
+        canned_replies: RwLock::new({
+            let mut replies = HashMap::new();
+            let now = now_iso();
+
+            let first = CannedReply {
+                id: Uuid::new_v4().to_string(),
+                title: "Greeting".to_string(),
+                shortcut: "/greet".to_string(),
+                category: "General".to_string(),
+                body: "Hi {{visitor_id}}, thanks for reaching out. I am {{agent_name}} and I can help you with this.".to_string(),
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            };
+            replies.insert(first.id.clone(), first);
+
+            let second = CannedReply {
+                id: Uuid::new_v4().to_string(),
+                title: "Ask for details".to_string(),
+                shortcut: "/details".to_string(),
+                category: "Troubleshooting".to_string(),
+                body: "Could you share a bit more detail about what happened, including any error message and when it started?".to_string(),
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            };
+            replies.insert(second.id.clone(), second);
+
+            let third = CannedReply {
+                id: Uuid::new_v4().to_string(),
+                title: "Resolution follow-up".to_string(),
+                shortcut: "/resolved".to_string(),
+                category: "Wrap up".to_string(),
+                body: "Glad this is resolved. If anything else comes up, reply here and we will help right away.".to_string(),
+                created_at: now.clone(),
+                updated_at: now,
+            };
+            replies.insert(third.id.clone(), third);
+
+            replies
+        }),
         default_flow_id,
         realtime: Mutex::new(RealtimeState::default()),
         next_client_id: AtomicUsize::new(0),
@@ -2917,6 +3231,11 @@ async fn main() {
         )
         .route("/api/channels", get(list_channels))
         .route("/api/agents", get(get_agents))
+        .route("/api/canned-replies", get(get_canned_replies).post(create_canned_reply))
+        .route(
+            "/api/canned-replies/{canned_id}",
+            patch(update_canned_reply).delete(delete_canned_reply),
+        )
         .route("/api/session", post(post_session))
         .route("/api/sessions", get(get_sessions))
         .route("/api/session/{session_id}/messages", get(get_messages))
@@ -2939,6 +3258,7 @@ async fn main() {
             "/api/session/{session_id}/handover",
             patch(patch_session_handover),
         )
+        .route("/api/session/{session_id}/meta", patch(patch_session_meta))
         .route(
             "/api/session/{session_id}/notes",
             get(get_notes).post(add_note),

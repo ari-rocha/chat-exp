@@ -198,6 +198,16 @@ export default function App() {
   const [text, setText] = useState("");
   const [conversationSearch, setConversationSearch] = useState("");
   const [visitorDraftBySession, setVisitorDraftBySession] = useState({});
+  const [cannedReplies, setCannedReplies] = useState([]);
+  const [cannedPanelOpen, setCannedPanelOpen] = useState(false);
+  const [messageAudience, setMessageAudience] = useState("user");
+  const [newCanned, setNewCanned] = useState({
+    title: "",
+    body: "",
+    shortcut: "",
+    category: "",
+  });
+  const [cannedSaving, setCannedSaving] = useState(false);
 
   const [agents, setAgents] = useState([]);
   const [teams, setTeams] = useState([]);
@@ -259,12 +269,20 @@ export default function App() {
     });
   }, [sessions, conversationSearch, visitorDraftBySession]);
 
-  const waitingCount = useMemo(
-    () => sessions.filter((session) => !session.assigneeAgentId).length,
+  const openCount = useMemo(
+    () => sessions.filter((session) => (session.status || "open") === "open").length,
     [sessions],
   );
-  const handoverCount = useMemo(
-    () => sessions.filter((session) => session.handoverActive).length,
+  const waitingCount = useMemo(
+    () =>
+      sessions.filter((session) => (session.status || "open") === "awaiting")
+        .length,
+    [sessions],
+  );
+  const resolvedCount = useMemo(
+    () =>
+      sessions.filter((session) => (session.status || "open") === "resolved")
+        .length,
     [sessions],
   );
   const channelCounts = useMemo(() => {
@@ -274,6 +292,35 @@ export default function App() {
     }
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   }, [sessions]);
+
+  const slashQuery = useMemo(() => {
+    const trimmed = text.trimStart();
+    if (!trimmed.startsWith("/")) return "";
+    return trimmed.slice(1).trim().toLowerCase();
+  }, [text]);
+
+  const filteredCannedReplies = useMemo(() => {
+    const query = slashQuery;
+    if (!query) return cannedReplies;
+    return cannedReplies.filter((reply) => {
+      const shortcut = (reply.shortcut || "").trim().toLowerCase();
+      const normalizedShortcut = shortcut.startsWith("/")
+        ? shortcut.slice(1)
+        : shortcut;
+      const haystack = [
+        reply.title,
+        reply.body,
+        reply.category,
+      ]
+        .join(" ")
+        .toLowerCase();
+      return (
+        normalizedShortcut.includes(query) ||
+        shortcut.includes(`/${query}`) ||
+        haystack.includes(query)
+      );
+    });
+  }, [cannedReplies, slashQuery]);
 
   const loadFlowIntoEditor = useCallback(
     (flow) => {
@@ -345,6 +392,7 @@ export default function App() {
       channelsRes,
       agentsRes,
       flowsRes,
+      cannedRes,
     ] = await Promise.all([
       apiFetch("/api/auth/me", authToken),
       apiFetch("/api/sessions", authToken),
@@ -353,6 +401,7 @@ export default function App() {
       apiFetch("/api/channels", authToken),
       apiFetch("/api/agents", authToken),
       apiFetch("/api/flows", authToken),
+      apiFetch("/api/canned-replies", authToken),
     ]);
 
     setAgent(meRes.agent ?? null);
@@ -361,6 +410,7 @@ export default function App() {
     setInboxes(inboxesRes.inboxes ?? []);
     setChannels(channelsRes.channels ?? []);
     setAgents(agentsRes.agents ?? []);
+    setCannedReplies(cannedRes.cannedReplies ?? []);
 
     const nextFlows = flowsRes.flows ?? [];
     setFlows(nextFlows);
@@ -556,14 +606,21 @@ export default function App() {
     setActiveId("");
     setNotes([]);
     setFlows([]);
+    setCannedReplies([]);
   };
 
   const sendMessage = (e) => {
     e.preventDefault();
     if (!activeId || !text.trim()) return;
     sendTypingState(false);
-    sendWsEvent("agent:message", { sessionId: activeId, text: text.trim() });
+    sendWsEvent("agent:message", {
+      sessionId: activeId,
+      text: text.trim(),
+      internal: messageAudience === "team",
+    });
     setText("");
+    setMessageAudience("user");
+    setCannedPanelOpen(false);
   };
 
   const saveNote = async () => {
@@ -583,6 +640,58 @@ export default function App() {
       body: JSON.stringify({ status }),
     });
     setAgent(payload.agent);
+  };
+
+  const patchSessionMeta = async (patch) => {
+    if (!activeId) return;
+    await patchActiveSession("meta", patch);
+  };
+
+  const resolveTemplate = (body) => {
+    if (!body) return "";
+    return body
+      .replaceAll("{{agent_name}}", agent?.name || "Agent")
+      .replaceAll("{{visitor_id}}", activeSession?.id?.slice(0, 8) || "visitor")
+      .replaceAll("{{channel}}", activeSession?.channel || "web");
+  };
+
+  const insertCannedReply = (reply) => {
+    const expanded = resolveTemplate(reply?.body || "");
+    if (!expanded.trim()) return;
+    setText((prev) => (prev.trim() ? `${prev}\n${expanded}` : expanded));
+    setCannedPanelOpen(false);
+  };
+
+  const createCannedReply = async (e) => {
+    e.preventDefault();
+    if (!token || !newCanned.title.trim() || !newCanned.body.trim()) return;
+    setCannedSaving(true);
+    try {
+      const payload = await apiFetch("/api/canned-replies", token, {
+        method: "POST",
+        body: JSON.stringify({
+          title: newCanned.title.trim(),
+          body: newCanned.body.trim(),
+          shortcut: newCanned.shortcut.trim(),
+          category: newCanned.category.trim(),
+        }),
+      });
+      const created = payload.cannedReply;
+      if (created) {
+        setCannedReplies((prev) =>
+          [...prev, created].sort((a, b) => a.title.localeCompare(b.title)),
+        );
+        setNewCanned({ title: "", body: "", shortcut: "", category: "" });
+      }
+    } finally {
+      setCannedSaving(false);
+    }
+  };
+
+  const deleteCannedReply = async (replyId) => {
+    if (!token || !replyId) return;
+    await apiFetch(`/api/canned-replies/${replyId}`, token, { method: "DELETE" });
+    setCannedReplies((prev) => prev.filter((reply) => reply.id !== replyId));
   };
 
   const createFlow = async () => {
@@ -962,7 +1071,7 @@ export default function App() {
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-center">
                     <p className="text-[11px] text-slate-500">Open</p>
                     <p className="text-sm font-semibold text-slate-900">
-                      {sessions.length}
+                      {openCount}
                     </p>
                   </div>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-center">
@@ -972,9 +1081,9 @@ export default function App() {
                     </p>
                   </div>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-center">
-                    <p className="text-[11px] text-slate-500">Human</p>
+                    <p className="text-[11px] text-slate-500">Resolved</p>
                     <p className="text-sm font-semibold text-slate-900">
-                      {handoverCount}
+                      {resolvedCount}
                     </p>
                   </div>
                 </div>
@@ -1045,8 +1154,7 @@ export default function App() {
                           {sessionPreview(session)}
                         </p>
                         <p className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">
-                          {session.channel} •{" "}
-                          {session.assigneeAgentId ? "assigned" : "unassigned"}
+                          {session.channel} • {(session.status || "open").toUpperCase()}
                         </p>
                       </button>
                     );
@@ -1060,7 +1168,7 @@ export default function App() {
               </ScrollArea>
             </aside>
 
-            <section className="grid min-h-0 grid-rows-[62px_1fr_84px] border-r border-slate-200 bg-white max-[1220px]:border-r-0">
+            <section className="grid min-h-0 grid-rows-[62px_1fr_118px] border-r border-slate-200 bg-white max-[1220px]:border-r-0">
               <header className="flex items-center justify-between border-b border-slate-200 px-4">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-900">
@@ -1076,6 +1184,12 @@ export default function App() {
                 </div>
                 {activeSession && (
                   <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="uppercase">
+                      {activeSession.status || "open"}
+                    </Badge>
+                    <Badge variant="outline" className="uppercase">
+                      {activeSession.priority || "normal"}
+                    </Badge>
                     <Badge variant="secondary" className="capitalize">
                       {activeSession.channel}
                     </Badge>
@@ -1102,12 +1216,19 @@ export default function App() {
                     ) : (
                       <article
                         key={message.id}
-                        className={`max-w-[78%] rounded-2xl border px-3 py-2.5 text-sm shadow-sm ${
+                        className={`w-fit max-w-[78%] rounded-2xl border px-3 py-2.5 text-sm shadow-sm ${
                           message.sender === "agent"
                             ? "ml-auto border-blue-500 bg-blue-600 text-white"
-                            : "border-slate-200 bg-white text-slate-900"
+                            : message.sender === "team"
+                              ? "ml-auto border-amber-300 bg-amber-100 text-amber-950"
+                              : "border-slate-200 bg-white text-slate-900"
                         }`}
                       >
+                        {message.sender === "team" ? (
+                          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-amber-700">
+                            Internal note
+                          </p>
+                        ) : null}
                         <div
                           className={`dashboard-md ${message.sender === "agent" ? "dashboard-md-agent" : ""}`}
                         >
@@ -1120,6 +1241,8 @@ export default function App() {
                           className={`mt-1 block text-right text-[11px] ${
                             message.sender === "agent"
                               ? "text-blue-100"
+                              : message.sender === "team"
+                                ? "text-amber-700"
                               : "text-slate-400"
                           }`}
                         >
@@ -1145,31 +1268,201 @@ export default function App() {
 
               <form
                 onSubmit={sendMessage}
-                className="grid grid-cols-[1fr_auto] gap-2 border-t border-slate-200 bg-white p-3"
+                className="relative grid grid-rows-[auto_1fr] gap-2 border-t border-slate-200 bg-white p-3"
               >
-                <Textarea
-                  placeholder={
-                    activeId
-                      ? "Type your reply..."
-                      : "Select a conversation to reply"
-                  }
-                  value={text}
-                  onChange={(e) => {
-                    setText(e.target.value);
-                    bumpTyping();
-                  }}
-                  onBlur={() => sendTypingState(false)}
-                  disabled={!activeId}
-                  rows={2}
-                  className="min-h-10 resize-none bg-slate-50"
-                />
-                <Button
-                  type="submit"
-                  disabled={!activeId || !text.trim()}
-                  className="h-10 self-end bg-blue-600 text-white hover:bg-blue-700"
-                >
-                  Send
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="inline-flex rounded-md border border-slate-300 bg-slate-50 p-0.5">
+                    <button
+                      type="button"
+                      className={`rounded px-2 py-1 text-xs font-medium transition ${
+                        messageAudience === "user"
+                          ? "bg-white text-slate-900 shadow-sm"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                      onClick={() => setMessageAudience("user")}
+                    >
+                      User message
+                    </button>
+                    <button
+                      type="button"
+                      className={`rounded px-2 py-1 text-xs font-medium transition ${
+                        messageAudience === "team"
+                          ? "bg-amber-100 text-amber-900 shadow-sm"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                      onClick={() => setMessageAudience("team")}
+                    >
+                      Team note
+                    </button>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCannedPanelOpen((v) => !v)}
+                    disabled={!activeId}
+                  >
+                    Canned replies
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => patchSessionMeta({ status: "resolved" })}
+                    disabled={!activeId}
+                  >
+                    Mark resolved
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => patchSessionMeta({ status: "open" })}
+                    disabled={!activeId}
+                  >
+                    Reopen
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => patchSessionMeta({ priority: "high" })}
+                    disabled={!activeId}
+                  >
+                    Set high priority
+                  </Button>
+                  <span className="text-[11px] text-slate-400">
+                    Shortcuts: `Ctrl/Cmd+Enter` send, `/shortcut` expand.
+                  </span>
+                </div>
+
+                {(cannedPanelOpen || slashQuery.length > 0) && (
+                  <div className="absolute bottom-[108px] left-3 right-3 z-20 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+                    {slashQuery ? (
+                      <p className="mb-2 text-[11px] text-slate-500">
+                        Filtering canned replies by: <strong>/{slashQuery}</strong>
+                      </p>
+                    ) : null}
+                    <div className="max-h-36 space-y-1 overflow-y-auto">
+                      {filteredCannedReplies.map((reply) => (
+                        <div
+                          key={reply.id}
+                          className="flex items-center gap-2 rounded-md border border-slate-200 bg-white p-1.5"
+                        >
+                          <button
+                            type="button"
+                            className="flex-1 text-left"
+                            onClick={() => insertCannedReply(reply)}
+                          >
+                            <p className="text-xs font-semibold text-slate-800">
+                              {reply.title}
+                            </p>
+                            <p className="truncate text-[11px] text-slate-500">
+                              {reply.shortcut ? `${reply.shortcut} • ` : ""}
+                              {reply.body}
+                            </p>
+                          </button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-xs text-red-600 hover:text-red-700"
+                            onClick={() => deleteCannedReply(reply.id)}
+                          >
+                            Delete
+                          </Button>
+                        </div>
+                      ))}
+                      {filteredCannedReplies.length === 0 && (
+                        <p className="text-xs text-slate-400">
+                          No canned replies found.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-[1fr_auto] gap-2">
+                  <Textarea
+                    placeholder={
+                      activeId
+                        ? "Type your reply..."
+                        : "Select a conversation to reply"
+                    }
+                    value={text}
+                    onChange={(e) => {
+                      setText(e.target.value);
+                      bumpTyping();
+                    }}
+                    onBlur={() => sendTypingState(false)}
+                    onKeyDown={(e) => {
+                      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                        e.preventDefault();
+                        if (activeId && text.trim()) {
+                          sendTypingState(false);
+                          sendWsEvent("agent:message", {
+                            sessionId: activeId,
+                            text: text.trim(),
+                            internal: messageAudience === "team",
+                          });
+                          setText("");
+                          setMessageAudience("user");
+                          setCannedPanelOpen(false);
+                        }
+                        return;
+                      }
+
+                      if (e.key === "Escape") {
+                        setCannedPanelOpen(false);
+                      }
+
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        const candidate = text.trim().toLowerCase();
+                        if (candidate.startsWith("/")) {
+                          const matched = cannedReplies.find(
+                            (reply) =>
+                              (reply.shortcut || "").trim().toLowerCase() ===
+                              candidate,
+                          );
+                          const firstFiltered = filteredCannedReplies[0];
+                          if (matched) {
+                            e.preventDefault();
+                            setText(resolveTemplate(matched.body));
+                            setCannedPanelOpen(false);
+                            return;
+                          }
+                          if (firstFiltered) {
+                            e.preventDefault();
+                            setText(resolveTemplate(firstFiltered.body));
+                            setCannedPanelOpen(false);
+                            return;
+                          }
+                          e.preventDefault();
+                          return;
+                        }
+                      }
+
+                      if (e.key === "Tab" && slashQuery.length > 0) {
+                        const firstFiltered = filteredCannedReplies[0];
+                        if (firstFiltered) {
+                          e.preventDefault();
+                          setText(resolveTemplate(firstFiltered.body));
+                          setCannedPanelOpen(false);
+                        }
+                      }
+                    }}
+                    disabled={!activeId}
+                    rows={2}
+                    className="min-h-10 resize-none bg-slate-50"
+                  />
+                  <Button
+                    type="submit"
+                    disabled={!activeId || !text.trim()}
+                    className="h-10 self-end bg-blue-600 text-white hover:bg-blue-700"
+                  >
+                    Send
+                  </Button>
+                </div>
               </form>
             </section>
 
@@ -1239,6 +1532,18 @@ export default function App() {
                           {activeSession?.messageCount || 0}
                         </span>
                       </div>
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>Status</span>
+                        <span className="font-medium uppercase text-slate-900">
+                          {activeSession?.status || "open"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>Priority</span>
+                        <span className="font-medium uppercase text-slate-900">
+                          {activeSession?.priority || "normal"}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
@@ -1276,6 +1581,48 @@ export default function App() {
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                       Routing
                     </p>
+
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-500">
+                        Status
+                      </label>
+                      <select
+                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
+                        value={activeSession?.status || "open"}
+                        onChange={(e) =>
+                          patchSessionMeta({
+                            status: e.target.value,
+                          })
+                        }
+                        disabled={!activeId}
+                      >
+                        <option value="open">open</option>
+                        <option value="awaiting">awaiting</option>
+                        <option value="snoozed">snoozed</option>
+                        <option value="resolved">resolved</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-500">
+                        Priority
+                      </label>
+                      <select
+                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
+                        value={activeSession?.priority || "normal"}
+                        onChange={(e) =>
+                          patchSessionMeta({
+                            priority: e.target.value,
+                          })
+                        }
+                        disabled={!activeId}
+                      >
+                        <option value="low">low</option>
+                        <option value="normal">normal</option>
+                        <option value="high">high</option>
+                        <option value="urgent">urgent</option>
+                      </select>
+                    </div>
 
                     <div>
                       <label className="mb-1 block text-xs text-slate-500">
@@ -1428,6 +1775,68 @@ export default function App() {
                         <p className="text-xs text-slate-400">No notes yet.</p>
                       )}
                     </div>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 p-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Canned replies
+                    </p>
+                    <form className="space-y-2" onSubmit={createCannedReply}>
+                      <Input
+                        value={newCanned.title}
+                        onChange={(e) =>
+                          setNewCanned((prev) => ({
+                            ...prev,
+                            title: e.target.value,
+                          }))
+                        }
+                        placeholder="Title"
+                        className="h-8"
+                      />
+                      <div className="grid grid-cols-2 gap-2">
+                        <Input
+                          value={newCanned.shortcut}
+                          onChange={(e) =>
+                            setNewCanned((prev) => ({
+                              ...prev,
+                              shortcut: e.target.value,
+                            }))
+                          }
+                          placeholder="/shortcut"
+                          className="h-8"
+                        />
+                        <Input
+                          value={newCanned.category}
+                          onChange={(e) =>
+                            setNewCanned((prev) => ({
+                              ...prev,
+                              category: e.target.value,
+                            }))
+                          }
+                          placeholder="Category"
+                          className="h-8"
+                        />
+                      </div>
+                      <Textarea
+                        value={newCanned.body}
+                        onChange={(e) =>
+                          setNewCanned((prev) => ({
+                            ...prev,
+                            body: e.target.value,
+                          }))
+                        }
+                        placeholder="Template body. Use {{agent_name}}, {{visitor_id}}, {{channel}}."
+                        rows={3}
+                      />
+                      <Button
+                        type="submit"
+                        size="sm"
+                        className="w-full"
+                        disabled={cannedSaving || !newCanned.title || !newCanned.body}
+                      >
+                        {cannedSaving ? "Saving..." : "Save canned reply"}
+                      </Button>
+                    </form>
                   </div>
                 </div>
               </ScrollArea>
