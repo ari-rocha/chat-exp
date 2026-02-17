@@ -1513,7 +1513,7 @@ If the conversation is clearly complete and resolved, set closeChat=true.{}", to
         format!("{}{}", prompt.trim(), tools_block)
     };
 
-    let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+    let api_key = std::env::var("GROQ_API_KEY").unwrap_or_default();
     if api_key.trim().is_empty() {
         let fallback = if !transcript.is_empty() {
             format!(
@@ -1539,20 +1539,24 @@ If the conversation is clearly complete and resolved, set closeChat=true.{}", to
         "Return ONLY JSON: {\"reply\":\"string\",\"handover\":boolean,\"closeChat\":boolean,\"suggestions\":[],\"triggerFlow\":null} — set triggerFlow to {\"flowId\":\"<id>\",\"variables\":{}} when triggering a tool, otherwise null"
     };
 
+    let user_content = format!(
+        "{}\nConversation transcript (oldest to newest):\n{}\n\nLatest visitor message:\n{}\n\n{}",
+        contact_block,
+        transcript,
+        visitor_text.trim(),
+        json_format_hint
+    );
+
     let response = state
         .ai_client
-        .post("https://api.openai.com/v1/responses")
+        .post("https://api.groq.com/openai/v1/chat/completions")
         .bearer_auth(api_key)
         .json(&json!({
-            "model": "gpt-4o-mini",
-            "instructions": system_instruction,
-            "input": format!(
-                "{}\nConversation transcript (oldest to newest):\n{}\n\nLatest visitor message:\n{}\n\n{}",
-                contact_block,
-                transcript,
-                visitor_text.trim(),
-                json_format_hint
-            ),
+            "model": "openai/gpt-oss-120b",
+            "messages": [
+                { "role": "system", "content": system_instruction },
+                { "role": "user", "content": user_content }
+            ],
         }))
         .send()
         .await;
@@ -1570,23 +1574,14 @@ If the conversation is clearly complete and resolved, set closeChat=true.{}", to
 
     let payload = response.json::<Value>().await.unwrap_or_else(|_| json!({}));
     let raw_text = payload
-        .get("output_text")
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("message"))
+        .and_then(|msg| msg.get("content"))
         .and_then(Value::as_str)
         .map(|text| text.trim().to_string())
-        .filter(|text| !text.is_empty())
-        .or_else(|| {
-            payload
-                .get("output")
-                .and_then(Value::as_array)
-                .and_then(|items| items.first())
-                .and_then(|item| item.get("content"))
-                .and_then(Value::as_array)
-                .and_then(|content| content.first())
-                .and_then(|item| item.get("text"))
-                .and_then(Value::as_str)
-                .map(|text| text.trim().to_string())
-                .filter(|text| !text.is_empty())
-        });
+        .filter(|text| !text.is_empty());
 
     if let Some(raw_text) = raw_text {
         if let Some(parsed) = parse_ai_decision_from_text(&raw_text) {
@@ -1603,18 +1598,7 @@ If the conversation is clearly complete and resolved, set closeChat=true.{}", to
         };
     }
 
-    let reply = payload
-        .get("output")
-        .and_then(Value::as_array)
-        .and_then(|items| items.first())
-        .and_then(|item| item.get("content"))
-        .and_then(Value::as_array)
-        .and_then(|content| content.first())
-        .and_then(|item| item.get("text"))
-        .and_then(Value::as_str)
-        .map(|text| text.trim().to_string())
-        .filter(|text| !text.is_empty())
-        .unwrap_or_else(|| "I can help with that. Tell me a bit more.".to_string());
+    let reply = "I can help with that. Tell me a bit more.".to_string();
 
     AiDecision {
         reply,
@@ -1655,7 +1639,7 @@ async fn extract_vars_with_ai(
     visitor_text: &str,
     var_descriptions: &[(String, String)], // (key, label)
 ) -> HashMap<String, String> {
-    let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+    let api_key = std::env::var("GROQ_API_KEY").unwrap_or_default();
     if api_key.trim().is_empty() {
         eprintln!("[extract_vars] No API key");
         return HashMap::new();
@@ -1751,12 +1735,14 @@ async fn extract_vars_with_ai(
 
     let response = state
         .ai_client
-        .post("https://api.openai.com/v1/responses")
+        .post("https://api.groq.com/openai/v1/chat/completions")
         .bearer_auth(&api_key)
         .json(&json!({
-            "model": "gpt-4o-mini",
-            "instructions": "You are a precise data extraction tool. Output ONLY valid JSON. No markdown, no explanation.",
-            "input": prompt,
+            "model": "openai/gpt-oss-120b",
+            "messages": [
+                { "role": "system", "content": "You are a precise data extraction tool. Output ONLY valid JSON. No markdown, no explanation." },
+                { "role": "user", "content": prompt }
+            ],
         }))
         .send()
         .await;
@@ -1768,23 +1754,14 @@ async fn extract_vars_with_ai(
 
     let payload = response.json::<Value>().await.unwrap_or_else(|_| json!({}));
     let raw_text = payload
-        .get("output_text")
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("message"))
+        .and_then(|msg| msg.get("content"))
         .and_then(Value::as_str)
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty())
-        .or_else(|| {
-            payload
-                .get("output")
-                .and_then(Value::as_array)
-                .and_then(|items| items.first())
-                .and_then(|item| item.get("content"))
-                .and_then(Value::as_array)
-                .and_then(|content| content.first())
-                .and_then(|item| item.get("text"))
-                .and_then(Value::as_str)
-                .map(|t| t.trim().to_string())
-                .filter(|t| !t.is_empty())
-        })
         .unwrap_or_default();
 
     eprintln!("[extract_vars] Raw AI response: {}", raw_text);
