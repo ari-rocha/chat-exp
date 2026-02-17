@@ -46,6 +46,21 @@ CREATE TABLE
         PRIMARY KEY (session_id, tag_id)
     );
 
+-- ── Custom Attribute Definitions (registry) ─────────────────
+CREATE TABLE
+    IF NOT EXISTS custom_attribute_definitions (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL REFERENCES tenants (id) ON DELETE CASCADE,
+        display_name TEXT NOT NULL,
+        key TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        attribute_model TEXT NOT NULL DEFAULT 'contact',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_attr_def_tenant_key ON custom_attribute_definitions (tenant_id, key);
+
 -- ── Contact custom attributes (key/value per contact) ────────
 CREATE TABLE
     IF NOT EXISTS contact_custom_attributes (

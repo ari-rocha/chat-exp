@@ -421,6 +421,41 @@ fn default_tag_color() -> String {
     "#6366f1".to_string()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomAttributeDefinition {
+    pub id: String,
+    pub tenant_id: String,
+    pub display_name: String,
+    pub key: String,
+    pub description: String,
+    pub attribute_model: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateAttributeDefBody {
+    pub display_name: String,
+    pub key: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default = "default_attr_model")]
+    pub attribute_model: String,
+}
+
+fn default_attr_model() -> String {
+    "contact".to_string()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateAttributeDefBody {
+    pub display_name: Option<String>,
+    pub description: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionTagBody {

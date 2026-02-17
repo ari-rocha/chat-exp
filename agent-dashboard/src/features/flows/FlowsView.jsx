@@ -696,17 +696,75 @@ const FLOW_NODE_TYPES = {
   webhook: DifyNode,
 };
 
+/* ─── Variable Picker Dropdown ───────────────────────────── */
+
+function VariablePickerDropdown({ attributeDefs, onSelect }) {
+  const [open, setOpen] = useState(false);
+  const defs = attributeDefs || [];
+  if (defs.length === 0) return null;
+
+  return (
+    <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+        title="Insert variable"
+      >
+        <Code2 size={13} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-8 z-50 w-52 rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
+          <div className="px-2.5 py-1.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+              Insert Variable
+            </p>
+          </div>
+          <div className="max-h-48 overflow-y-auto">
+            {defs.map((d) => (
+              <button
+                key={d.key}
+                onClick={() => {
+                  onSelect(d.key);
+                  setOpen(false);
+                }}
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-slate-50"
+              >
+                <span className="rounded bg-violet-100 px-1.5 py-0.5 font-mono text-[10px] text-violet-600">
+                  {d.key}
+                </span>
+                <span className="truncate text-[11px] text-slate-600">
+                  {d.displayName}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── Right Sidebar — Settings Panel ─────────────────────── */
 
 function SettingsPanel({
   selectedNode,
   updateSelectedNodeData,
   removeSelectedNode,
+  attributeDefs,
+  setAttributeDefs,
+  apiFetch,
+  token,
 }) {
   const [activeTab, setActiveTab] = useState("settings");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [visionEnabled, setVisionEnabled] = useState(true);
   const [resolution, setResolution] = useState("High");
+  const [showNewAttrForm, setShowNewAttrForm] = useState(false);
+  const [newAttrDisplayName, setNewAttrDisplayName] = useState("");
+  const [newAttrKey, setNewAttrKey] = useState("");
+  const [newAttrDesc, setNewAttrDesc] = useState("");
+  const [newAttrModel, setNewAttrModel] = useState("contact");
 
   if (!selectedNode) {
     return (
@@ -1242,12 +1300,49 @@ function SettingsPanel({
                               </optgroup>
                               <optgroup label="Custom">
                                 <option value="contact_attribute">
-                                  Contact attribute
+                                  Contact attribute…
                                 </option>
                                 <option value="conversation_attribute">
-                                  Conversation attribute
+                                  Conversation attribute…
                                 </option>
                               </optgroup>
+                              {(attributeDefs || []).filter(
+                                (d) => d.attributeModel === "contact",
+                              ).length > 0 && (
+                                <optgroup label="Contact Custom Attributes">
+                                  {(attributeDefs || [])
+                                    .filter(
+                                      (d) => d.attributeModel === "contact",
+                                    )
+                                    .map((d) => (
+                                      <option
+                                        key={d.key}
+                                        value={`contact_attr.${d.key}`}
+                                      >
+                                        {d.displayName}
+                                      </option>
+                                    ))}
+                                </optgroup>
+                              )}
+                              {(attributeDefs || []).filter(
+                                (d) => d.attributeModel === "conversation",
+                              ).length > 0 && (
+                                <optgroup label="Conversation Custom Attributes">
+                                  {(attributeDefs || [])
+                                    .filter(
+                                      (d) =>
+                                        d.attributeModel === "conversation",
+                                    )
+                                    .map((d) => (
+                                      <option
+                                        key={d.key}
+                                        value={`conv_attr.${d.key}`}
+                                      >
+                                        {d.displayName}
+                                      </option>
+                                    ))}
+                                </optgroup>
+                              )}
                             </select>
                             {(rule.attribute === "contact_attribute" ||
                               rule.attribute === "conversation_attribute") && (
@@ -1564,21 +1659,43 @@ function SettingsPanel({
                   <>
                     <div>
                       <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                        Variable Name
+                        Save to Variable
                       </label>
-                      <Input
+                      <select
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px]"
                         value={data?.variableName || ""}
                         onChange={(e) =>
                           updateSelectedNodeData({
-                            variableName: e.target.value.replace(
-                              /[^a-zA-Z0-9_]/g,
-                              "",
-                            ),
+                            variableName: e.target.value,
                           })
                         }
-                        placeholder="e.g. user_email"
-                        className="text-[12px] font-mono"
-                      />
+                      >
+                        <option value="">— Select variable —</option>
+                        {(attributeDefs || []).map((d) => (
+                          <option key={d.key} value={d.key}>
+                            {d.displayName} ({d.key})
+                          </option>
+                        ))}
+                        <option value="__custom__">✎ Custom variable…</option>
+                      </select>
+                      {data?.variableName === "__custom__" && (
+                        <Input
+                          value={data?._customVarKey || ""}
+                          onChange={(e) => {
+                            const v = e.target.value.replace(
+                              /[^a-zA-Z0-9_]/g,
+                              "",
+                            );
+                            updateSelectedNodeData({
+                              _customVarKey: v,
+                              variableName: v || "__custom__",
+                            });
+                          }}
+                          placeholder="custom_var_name"
+                          className="mt-1.5 text-[12px] font-mono"
+                          autoFocus
+                        />
+                      )}
                       <p className="mt-1 text-[10px] text-slate-400">
                         Store the response in this flow variable. Use{" "}
                         {"{{variableName}}"} in later nodes.
@@ -2093,67 +2210,140 @@ function SettingsPanel({
           )}
 
           {/* ── Set Attribute Settings ── */}
-          {type === "set_attribute" && (
-            <div className="space-y-3">
-              <div>
-                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  Label
-                </label>
-                <Input
-                  value={data?.label || ""}
-                  onChange={(e) =>
-                    updateSelectedNodeData({ label: e.target.value })
-                  }
-                  placeholder="Set Attribute"
-                  className="text-[12px]"
-                />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  Target
-                </label>
-                <select
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px]"
-                  value={data?.target || "contact"}
-                  onChange={(e) =>
-                    updateSelectedNodeData({ target: e.target.value })
-                  }
-                >
-                  <option value="contact">Contact</option>
-                  <option value="conversation">Conversation</option>
-                </select>
-              </div>
-              <div>
-                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  Attribute Name
-                </label>
-                <Input
-                  value={data?.attributeName || ""}
-                  onChange={(e) =>
-                    updateSelectedNodeData({ attributeName: e.target.value })
-                  }
-                  placeholder="e.g. plan, company, priority"
-                  className="text-[12px]"
-                />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  Attribute Value
-                </label>
-                <Input
-                  value={data?.attributeValue || ""}
-                  onChange={(e) =>
-                    updateSelectedNodeData({ attributeValue: e.target.value })
-                  }
-                  placeholder="e.g. {{user_email}}"
-                  className="text-[12px]"
-                />
-                <p className="mt-1 text-[10px] text-slate-400">
-                  Use {"{{variableName}}"} to insert flow variable values.
-                </p>
-              </div>
-            </div>
-          )}
+          {type === "set_attribute" &&
+            (() => {
+              const targetModel = data?.target || "contact";
+              const filteredDefs = (attributeDefs || []).filter(
+                (d) => d.attributeModel === targetModel,
+              );
+              const builtInAttrs =
+                targetModel === "contact"
+                  ? [
+                      { key: "email", displayName: "Email" },
+                      { key: "name", displayName: "Name" },
+                      { key: "phone", displayName: "Phone" },
+                      { key: "company", displayName: "Company" },
+                      { key: "location", displayName: "Location" },
+                    ]
+                  : [];
+              return (
+                <div className="space-y-3">
+                  <div>
+                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                      Label
+                    </label>
+                    <Input
+                      value={data?.label || ""}
+                      onChange={(e) =>
+                        updateSelectedNodeData({ label: e.target.value })
+                      }
+                      placeholder="Set Attribute"
+                      className="text-[12px]"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                      Target
+                    </label>
+                    <select
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px]"
+                      value={targetModel}
+                      onChange={(e) =>
+                        updateSelectedNodeData({
+                          target: e.target.value,
+                          attributeName: "",
+                        })
+                      }
+                    >
+                      <option value="contact">Contact</option>
+                      <option value="conversation">Conversation</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                      Attribute
+                    </label>
+                    <select
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px]"
+                      value={data?.attributeName || ""}
+                      onChange={(e) =>
+                        updateSelectedNodeData({
+                          attributeName: e.target.value,
+                        })
+                      }
+                    >
+                      <option value="">— Select attribute —</option>
+                      {builtInAttrs.length > 0 && (
+                        <optgroup label="Built-in">
+                          {builtInAttrs.map((a) => (
+                            <option key={a.key} value={a.key}>
+                              {a.displayName}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {filteredDefs.length > 0 && (
+                        <optgroup label="Custom Attributes">
+                          {filteredDefs.map((d) => (
+                            <option key={d.key} value={d.key}>
+                              {d.displayName}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                      <option value="__custom__">✎ Custom key…</option>
+                    </select>
+                    {data?.attributeName === "__custom__" && (
+                      <Input
+                        value={data?._customAttrKey || ""}
+                        onChange={(e) => {
+                          const v = e.target.value.replace(
+                            /[^a-zA-Z0-9_]/g,
+                            "",
+                          );
+                          updateSelectedNodeData({
+                            _customAttrKey: v,
+                            attributeName: v || "__custom__",
+                          });
+                        }}
+                        placeholder="custom_key"
+                        className="mt-1.5 text-[12px] font-mono"
+                        autoFocus
+                      />
+                    )}
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                      Value
+                    </label>
+                    <div className="relative">
+                      <Input
+                        value={data?.attributeValue || ""}
+                        onChange={(e) =>
+                          updateSelectedNodeData({
+                            attributeValue: e.target.value,
+                          })
+                        }
+                        placeholder="e.g. {{user_email}}"
+                        className="pr-8 text-[12px]"
+                      />
+                      <VariablePickerDropdown
+                        attributeDefs={attributeDefs}
+                        onSelect={(varKey) => {
+                          const cur = data?.attributeValue || "";
+                          updateSelectedNodeData({
+                            attributeValue: cur + `{{${varKey}}}`,
+                          });
+                        }}
+                      />
+                    </div>
+                    <p className="mt-1 text-[10px] text-slate-400">
+                      Use {"{{variableName}}"} to insert flow variable values.
+                    </p>
+                  </div>
+                </div>
+              );
+            })()}
 
           {/* ── Note Settings ── */}
           {type === "note" && (
@@ -2304,6 +2494,182 @@ function SettingsPanel({
           >
             <Trash2 size={12} className="mr-1.5" /> Remove Node
           </Button>
+
+          {/* ── Custom Attribute Definitions ── */}
+          <Separator className="my-4" />
+          <div>
+            <button
+              onClick={() => setAdvancedOpen(!advancedOpen)}
+              className="flex w-full items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-500"
+            >
+              <span className="flex items-center gap-1.5">
+                <Hash size={12} />
+                Custom Attributes
+                <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium text-slate-500">
+                  {(attributeDefs || []).length}
+                </span>
+              </span>
+              {advancedOpen ? (
+                <ChevronDown size={12} />
+              ) : (
+                <ChevronRight size={12} />
+              )}
+            </button>
+            {advancedOpen && (
+              <div className="mt-3 space-y-2">
+                {(attributeDefs || []).map((def) => (
+                  <div
+                    key={def.id}
+                    className="group rounded-lg border border-slate-200 bg-slate-50 p-2.5"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[12px] font-medium text-slate-700">
+                          {def.displayName}
+                        </p>
+                        <p className="font-mono text-[10px] text-violet-500">
+                          {def.key}
+                        </p>
+                        {def.description && (
+                          <p className="mt-0.5 text-[10px] text-slate-400">
+                            {def.description}
+                          </p>
+                        )}
+                        <span
+                          className={`mt-1 inline-block rounded-full px-1.5 py-0.5 text-[9px] font-medium ${
+                            def.attributeModel === "contact"
+                              ? "bg-blue-50 text-blue-600"
+                              : "bg-amber-50 text-amber-600"
+                          }`}
+                        >
+                          {def.attributeModel}
+                        </span>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          try {
+                            await apiFetch(
+                              `/api/attribute-definitions/${def.id}`,
+                              token,
+                              { method: "DELETE" },
+                            );
+                            setAttributeDefs((prev) =>
+                              prev.filter((d) => d.id !== def.id),
+                            );
+                          } catch {}
+                        }}
+                        className="rounded p-1 text-slate-300 opacity-0 hover:bg-red-50 hover:text-red-500 group-hover:opacity-100"
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+                {showNewAttrForm ? (
+                  <div className="space-y-2 rounded-lg border border-blue-200 bg-blue-50/30 p-2.5">
+                    <Input
+                      value={newAttrDisplayName}
+                      onChange={(e) => {
+                        setNewAttrDisplayName(e.target.value);
+                        setNewAttrKey(
+                          e.target.value
+                            .trim()
+                            .toLowerCase()
+                            .replace(/[^a-z0-9]+/g, "_")
+                            .replace(/^_|_$/g, ""),
+                        );
+                      }}
+                      placeholder="Display name"
+                      className="text-[12px]"
+                      autoFocus
+                    />
+                    <Input
+                      value={newAttrKey}
+                      onChange={(e) =>
+                        setNewAttrKey(
+                          e.target.value.replace(/[^a-zA-Z0-9_]/g, ""),
+                        )
+                      }
+                      placeholder="variable_key"
+                      className="font-mono text-[12px]"
+                    />
+                    <Input
+                      value={newAttrDesc}
+                      onChange={(e) => setNewAttrDesc(e.target.value)}
+                      placeholder="Description (optional)"
+                      className="text-[12px]"
+                    />
+                    <select
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px]"
+                      value={newAttrModel}
+                      onChange={(e) => setNewAttrModel(e.target.value)}
+                    >
+                      <option value="contact">Contact</option>
+                      <option value="conversation">Conversation</option>
+                    </select>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        className="h-7 flex-1 bg-blue-500 text-[11px] text-white hover:bg-blue-600"
+                        disabled={
+                          !newAttrDisplayName.trim() || !newAttrKey.trim()
+                        }
+                        onClick={async () => {
+                          try {
+                            const res = await apiFetch(
+                              "/api/attribute-definitions",
+                              token,
+                              {
+                                method: "POST",
+                                body: JSON.stringify({
+                                  displayName: newAttrDisplayName.trim(),
+                                  key: newAttrKey.trim(),
+                                  description: newAttrDesc.trim(),
+                                  attributeModel: newAttrModel,
+                                }),
+                              },
+                            );
+                            setAttributeDefs((prev) => [
+                              ...prev,
+                              res.attributeDefinition,
+                            ]);
+                            setNewAttrDisplayName("");
+                            setNewAttrKey("");
+                            setNewAttrDesc("");
+                            setNewAttrModel("contact");
+                            setShowNewAttrForm(false);
+                          } catch {}
+                        }}
+                      >
+                        Create
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-[11px]"
+                        onClick={() => {
+                          setShowNewAttrForm(false);
+                          setNewAttrDisplayName("");
+                          setNewAttrKey("");
+                          setNewAttrDesc("");
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setShowNewAttrForm(true)}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-300 py-2 text-[11px] font-medium text-slate-500 transition-colors hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600"
+                  >
+                    <Plus size={12} /> New Attribute
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </ScrollArea>
     </div>
@@ -2466,6 +2832,10 @@ export default function FlowsView({
   updateSelectedNodeData,
   carouselItemsText,
   removeSelectedNode,
+  attributeDefs,
+  setAttributeDefs,
+  apiFetch,
+  token,
 }) {
   return (
     <div className="grid h-full min-h-0 grid-cols-[260px_1fr_340px] bg-[#f0f2f7] max-[1200px]:grid-cols-[1fr]">
@@ -2574,6 +2944,10 @@ export default function FlowsView({
           selectedNode={selectedNode}
           updateSelectedNodeData={updateSelectedNodeData}
           removeSelectedNode={removeSelectedNode}
+          attributeDefs={attributeDefs}
+          setAttributeDefs={setAttributeDefs}
+          apiFetch={apiFetch}
+          token={token}
         />
       </aside>
     </div>

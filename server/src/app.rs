@@ -2168,6 +2168,20 @@ async fn execute_flow_from(
                                         "SELECT attribute_value FROM conversation_custom_attributes WHERE session_id = $1 AND attribute_key = $2"
                                     ).bind(&session_id).bind(attr_key).fetch_optional(&state.db).await.ok().flatten().unwrap_or_default()
                                 }
+                                other if other.starts_with("contact_attr.") => {
+                                    let key = &other["contact_attr.".len()..];
+                                    if let Some(ref cid) = sess_contact {
+                                        sqlx::query_scalar::<_, String>(
+                                            "SELECT attribute_value FROM contact_custom_attributes WHERE contact_id = $1 AND attribute_key = $2"
+                                        ).bind(cid).bind(key).fetch_optional(&state.db).await.ok().flatten().unwrap_or_default()
+                                    } else { String::new() }
+                                }
+                                other if other.starts_with("conv_attr.") => {
+                                    let key = &other["conv_attr.".len()..];
+                                    sqlx::query_scalar::<_, String>(
+                                        "SELECT attribute_value FROM conversation_custom_attributes WHERE session_id = $1 AND attribute_key = $2"
+                                    ).bind(&session_id).bind(key).fetch_optional(&state.db).await.ok().flatten().unwrap_or_default()
+                                }
                                 _ => String::new(),
                             };
 
@@ -5136,6 +5150,137 @@ async fn delete_tag(
     (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
 }
 
+// ── Custom Attribute Definitions CRUD ───────────────────────────────
+async fn get_attribute_definitions(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let rows = sqlx::query(
+        "SELECT id, tenant_id, display_name, key, description, attribute_model, created_at, updated_at FROM custom_attribute_definitions WHERE tenant_id = $1 ORDER BY display_name ASC",
+    )
+    .bind(&tenant_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let defs: Vec<CustomAttributeDefinition> = rows
+        .into_iter()
+        .map(|r| CustomAttributeDefinition {
+            id: r.get("id"),
+            tenant_id: r.get("tenant_id"),
+            display_name: r.get("display_name"),
+            key: r.get("key"),
+            description: r.get("description"),
+            attribute_model: r.get("attribute_model"),
+            created_at: r.get("created_at"),
+            updated_at: r.get("updated_at"),
+        })
+        .collect();
+    (
+        StatusCode::OK,
+        Json(json!({ "attributeDefinitions": defs })),
+    )
+        .into_response()
+}
+
+async fn create_attribute_definition(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<CreateAttributeDefBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let now = now_iso();
+    let def = CustomAttributeDefinition {
+        id: Uuid::new_v4().to_string(),
+        tenant_id,
+        display_name: body.display_name.trim().to_string(),
+        key: body.key.trim().to_string(),
+        description: body.description.trim().to_string(),
+        attribute_model: body.attribute_model,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    let _ = sqlx::query(
+        "INSERT INTO custom_attribute_definitions (id, tenant_id, display_name, key, description, attribute_model, created_at, updated_at) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (tenant_id, key) DO NOTHING",
+    )
+    .bind(&def.id)
+    .bind(&def.tenant_id)
+    .bind(&def.display_name)
+    .bind(&def.key)
+    .bind(&def.description)
+    .bind(&def.attribute_model)
+    .bind(&def.created_at)
+    .bind(&def.updated_at)
+    .execute(&state.db)
+    .await;
+    (
+        StatusCode::CREATED,
+        Json(json!({ "attributeDefinition": def })),
+    )
+        .into_response()
+}
+
+async fn update_attribute_definition(
+    Path(def_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateAttributeDefBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let now = now_iso();
+    if let Some(display_name) = &body.display_name {
+        let _ = sqlx::query(
+            "UPDATE custom_attribute_definitions SET display_name = $1, updated_at = $2 WHERE id = $3",
+        )
+        .bind(display_name.trim())
+        .bind(&now)
+        .bind(&def_id)
+        .execute(&state.db)
+        .await;
+    }
+    if let Some(desc) = &body.description {
+        let _ = sqlx::query(
+            "UPDATE custom_attribute_definitions SET description = $1, updated_at = $2 WHERE id = $3",
+        )
+        .bind(desc.trim())
+        .bind(&now)
+        .bind(&def_id)
+        .execute(&state.db)
+        .await;
+    }
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
+async fn delete_attribute_definition(
+    Path(def_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let _ = sqlx::query("DELETE FROM custom_attribute_definitions WHERE id = $1")
+        .bind(&def_id)
+        .execute(&state.db)
+        .await;
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
 // ── Session tags ────────────────────────────────────────────────────
 async fn get_session_tags(
     Path(session_id): Path<String>,
@@ -5951,6 +6096,14 @@ pub async fn run() {
         )
         .route("/api/tags", get(get_tags).post(create_tag))
         .route("/api/tags/{tag_id}", axum::routing::delete(delete_tag))
+        .route(
+            "/api/attribute-definitions",
+            get(get_attribute_definitions).post(create_attribute_definition),
+        )
+        .route(
+            "/api/attribute-definitions/{def_id}",
+            patch(update_attribute_definition).delete(delete_attribute_definition),
+        )
         .route("/api/teams", get(get_teams).post(create_team))
         .route("/api/teams/{team_id}/members", post(add_member_to_team))
         .route("/api/inboxes", get(get_inboxes).post(create_inbox))

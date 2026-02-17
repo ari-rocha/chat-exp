@@ -301,6 +301,7 @@ export default function App() {
   });
 
   const [tags, setTags] = useState([]);
+  const [attributeDefs, setAttributeDefs] = useState([]);
   const [sessionTags, setSessionTags] = useState([]);
   const [sessionContact, setSessionContact] = useState(null);
   const [conversationAttrs, setConversationAttrs] = useState([]);
@@ -498,6 +499,7 @@ export default function App() {
       contactsRes,
       csatRes,
       tagsRes,
+      attrDefsRes,
     ] = await Promise.all([
       apiFetch("/api/auth/me", authToken),
       apiFetch("/api/sessions", authToken),
@@ -512,6 +514,7 @@ export default function App() {
       apiFetch("/api/contacts", authToken),
       apiFetch("/api/reports/csat", authToken),
       apiFetch("/api/tags", authToken),
+      apiFetch("/api/attribute-definitions", authToken),
     ]);
 
     setAgent(meRes.agent ?? null);
@@ -530,6 +533,7 @@ export default function App() {
       surveys: csatRes.surveys ?? [],
     });
     setTags(tagsRes.tags ?? []);
+    setAttributeDefs(attrDefsRes.attributeDefinitions ?? []);
 
     const nextFlows = flowsRes.flows ?? [];
     setFlows(nextFlows);
@@ -1368,6 +1372,10 @@ export default function App() {
           updateSelectedNodeData={updateSelectedNodeData}
           carouselItemsText={carouselItemsText}
           removeSelectedNode={removeSelectedNode}
+          attributeDefs={attributeDefs}
+          setAttributeDefs={setAttributeDefs}
+          apiFetch={apiFetch}
+          token={token}
         />
       </section>
     ) : view === "contacts" ? (
