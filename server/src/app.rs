@@ -1165,6 +1165,8 @@ fn flow_trigger_matches_event(
         "widget_open" => trigger_event == "widget_open",
         "first_message" => trigger_event == "visitor_message" && first_visitor_message,
         "any_message" => trigger_event == "visitor_message",
+        "conversation_closed" => trigger_event == "conversation_closed",
+        "conversation_reopened" => trigger_event == "conversation_reopened",
         _ => trigger_event == "visitor_message",
     };
 
@@ -2251,6 +2253,8 @@ async fn execute_flow_from(
                             None,
                         )
                         .await;
+                        // Fire lifecycle trigger (e.g. CSAT on close)
+                        Box::pin(run_lifecycle_trigger(state.clone(), session_id.clone(), "conversation_closed".into())).await;
                     }
                 }
                 clear_flow_cursor(&state, &session_id).await;
@@ -3089,6 +3093,8 @@ async fn execute_flow_from(
                             None,
                         )
                         .await;
+                        // Fire lifecycle trigger (e.g. CSAT on close)
+                        Box::pin(run_lifecycle_trigger(state.clone(), session_id.clone(), "conversation_closed".into())).await;
                     }
                 }
                 clear_flow_cursor(&state, &session_id).await;
@@ -3748,6 +3754,26 @@ async fn run_flow_for_visitor_message(
     }
 }
 
+/// Fire lifecycle flow triggers (conversation_closed, conversation_reopened, etc.)
+/// Unlike visitor-message triggers, these skip handover checks and cursor resume.
+async fn run_lifecycle_trigger(state: Arc<AppState>, session_id: String, trigger_event: String) {
+    // Find all enabled flows
+    let rows = sqlx::query("SELECT id FROM flows WHERE enabled = true")
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+
+    for row in rows {
+        let flow_id: String = row.get("id");
+        if let Some(flow) = get_flow_by_id_db(&state.db, &flow_id).await {
+            if flow_trigger_matches_event(&flow, "", &trigger_event, false) {
+                execute_flow(state.clone(), session_id.clone(), flow, String::new()).await;
+                return;
+            }
+        }
+    }
+}
+
 async fn post_session(
     State(state): State<Arc<AppState>>,
     body: Option<Json<Value>>,
@@ -3904,6 +3930,13 @@ async fn close_session_by_visitor(
             None,
         )
         .await;
+
+        // Fire lifecycle trigger
+        let st = state.clone();
+        let sid = session_id.clone();
+        tokio::spawn(async move {
+            run_lifecycle_trigger(st, sid, "conversation_closed".into()).await;
+        });
     }
 
     (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
@@ -4680,6 +4713,8 @@ async fn patch_session_meta(
             .into_response();
     };
 
+    emit_session_update(&state, summary.clone()).await;
+
     if changed_to_closed {
         let _ = add_message(
             state.clone(),
@@ -4690,6 +4725,13 @@ async fn patch_session_meta(
             None,
         )
         .await;
+
+        // Fire lifecycle trigger
+        let st = state.clone();
+        let sid = session_id.clone();
+        tokio::spawn(async move {
+            run_lifecycle_trigger(st, sid, "conversation_closed".into()).await;
+        });
     } else if changed_from_closed_to_open {
         let _ = add_message(
             state.clone(),
@@ -4700,6 +4742,13 @@ async fn patch_session_meta(
             None,
         )
         .await;
+
+        // Fire lifecycle trigger
+        let st = state.clone();
+        let sid = session_id.clone();
+        tokio::spawn(async move {
+            run_lifecycle_trigger(st, sid, "conversation_reopened".into()).await;
+        });
     }
 
     (StatusCode::OK, Json(json!({ "session": summary }))).into_response()
@@ -6256,6 +6305,30 @@ async fn submit_csat(
     .bind(&survey.submitted_at)
     .execute(&state.db)
     .await;
+
+    // Resume the paused flow if cursor is on a csat or close_conversation node
+    let sid = survey.session_id.clone();
+    let st = state.clone();
+    tokio::spawn(async move {
+        if let Some((cursor_flow_id, cursor_node_id, cursor_node_type, cursor_vars)) =
+            get_flow_cursor(&st, &sid).await
+        {
+            if cursor_node_type == "csat" || cursor_node_type == "close_conversation" {
+                if let Some(flow) = get_flow_by_id_db(&st.db, &cursor_flow_id).await {
+                    execute_flow_from(
+                        st,
+                        sid,
+                        flow,
+                        String::new(),
+                        Some(cursor_node_id),
+                        cursor_vars,
+                    )
+                    .await;
+                }
+            }
+        }
+    });
+
     (StatusCode::CREATED, Json(json!({ "csat": survey }))).into_response()
 }
 

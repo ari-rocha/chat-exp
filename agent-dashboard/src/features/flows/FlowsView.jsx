@@ -334,6 +334,20 @@ function DifyNode({ data, type, selected }) {
           {/* START / TRIGGER body */}
           {isStart && (
             <div className="space-y-1.5">
+              {data?.on && (
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[9px] font-semibold text-blue-600">
+                    {{
+                      widget_open: "Widget opens",
+                      page_open: "Page opens",
+                      first_message: "First message",
+                      any_message: "Any message",
+                      conversation_closed: "Conversation closed",
+                      conversation_reopened: "Conversation reopened",
+                    }[data.on] || data.on}
+                  </span>
+                </div>
+              )}
               {Array.isArray(data?.fields) && data.fields.length > 0 ? (
                 <>
                   {data.fields.map((field, i) => (
@@ -2097,8 +2111,15 @@ function SettingsPanel({
                         First visitor message
                       </option>
                       <option value="any_message">Any visitor message</option>
+                      <option value="conversation_closed">
+                        Conversation closed
+                      </option>
+                      <option value="conversation_reopened">
+                        Conversation reopened
+                      </option>
                     </select>
                   </div>
+                  {!["conversation_closed", "conversation_reopened"].includes(data?.on) && (
                   <div>
                     <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                       Keywords
@@ -2143,6 +2164,7 @@ function SettingsPanel({
                       </button>
                     </div>
                   </div>
+                  )}
                 </>
               )}
               {/* ── Flow Input Variables ── */}

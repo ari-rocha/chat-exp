@@ -870,7 +870,6 @@ export default function App() {
                                           body: JSON.stringify({ score: star }),
                                         },
                                       ).catch(() => {});
-                                      sendSuggestion(String(star));
                                     }}
                                   >
                                     ★
@@ -902,7 +901,6 @@ export default function App() {
                                             body: JSON.stringify({ score }),
                                           },
                                         ).catch(() => {});
-                                        sendSuggestion(String(score));
                                       }}
                                     >
                                       {emoji}
