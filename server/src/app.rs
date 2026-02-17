@@ -60,8 +60,8 @@ async fn persist_session(pool: &PgPool, session: &Session) {
         r#"
         INSERT INTO sessions (
             id, tenant_id, created_at, updated_at, channel, assignee_agent_id, inbox_id, team_id, flow_id,
-            handover_active, status, priority, contact_id
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+            handover_active, status, priority, contact_id, visitor_id
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
         ON CONFLICT (id) DO UPDATE SET
             tenant_id = EXCLUDED.tenant_id,
             updated_at = EXCLUDED.updated_at,
@@ -73,7 +73,8 @@ async fn persist_session(pool: &PgPool, session: &Session) {
             handover_active = EXCLUDED.handover_active,
             status = EXCLUDED.status,
             priority = EXCLUDED.priority,
-            contact_id = EXCLUDED.contact_id
+            contact_id = EXCLUDED.contact_id,
+            visitor_id = EXCLUDED.visitor_id
         "#,
     )
     .bind(&session.id)
@@ -89,6 +90,7 @@ async fn persist_session(pool: &PgPool, session: &Session) {
     .bind(&session.status)
     .bind(&session.priority)
     .bind(&session.contact_id)
+    .bind(&session.visitor_id)
     .execute(pool)
     .await;
 }
@@ -617,6 +619,72 @@ fn extract_identity_from_text(text: &str) -> (Option<String>, Option<String>, Op
     (email, phone, name)
 }
 
+/// Given a visitor_id, look up any previous session that already has a contact_id.
+/// If found, link that contact to the given session_id and store the visitor_id.
+/// This enables persistent identity across multiple conversations.
+async fn resolve_contact_from_visitor_id(
+    state: &Arc<AppState>,
+    session_id: &str,
+    visitor_id: &str,
+) {
+    if visitor_id.is_empty() {
+        return;
+    }
+
+    // Store the visitor_id on the session
+    let _ = sqlx::query("UPDATE sessions SET visitor_id = $1 WHERE id = $2")
+        .bind(visitor_id)
+        .bind(session_id)
+        .execute(&state.db)
+        .await;
+
+    // Skip if session already has a contact
+    let existing: Option<Option<String>> =
+        sqlx::query_scalar("SELECT contact_id FROM sessions WHERE id = $1")
+            .bind(session_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+    if let Some(Some(ref cid)) = existing {
+        if !cid.is_empty() {
+            return;
+        }
+    }
+
+    // Find the most recent other session with this visitor_id that has a contact
+    let prev_contact: Option<String> = sqlx::query_scalar(
+        "SELECT contact_id FROM sessions \
+         WHERE visitor_id = $1 AND id != $2 AND contact_id IS NOT NULL AND contact_id != '' \
+         ORDER BY updated_at DESC LIMIT 1",
+    )
+    .bind(visitor_id)
+    .bind(session_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    if let Some(cid) = prev_contact {
+        let _ = sqlx::query("UPDATE sessions SET contact_id = $1 WHERE id = $2")
+            .bind(&cid)
+            .bind(session_id)
+            .execute(&state.db)
+            .await;
+
+        // Update contact last_seen_at
+        let _ = sqlx::query("UPDATE contacts SET last_seen_at = $1 WHERE id = $2")
+            .bind(now_iso())
+            .bind(&cid)
+            .execute(&state.db)
+            .await;
+
+        if let Some(summary) = get_session_summary_db(&state.db, session_id).await {
+            emit_session_update(state, summary).await;
+        }
+    }
+}
+
 /// Try to find or create a contact from visitor-supplied data, then link to session.
 /// Returns true if a contact was linked.
 async fn auto_resolve_contact(state: &Arc<AppState>, session_id: &str, visitor_text: &str) -> bool {
@@ -728,7 +796,7 @@ async fn auto_resolve_contact(state: &Arc<AppState>, session_id: &str, visitor_t
 
 async fn ensure_session(state: Arc<AppState>, session_id: &str) -> Session {
     let existing = sqlx::query(
-        "SELECT id, tenant_id, created_at, updated_at, channel, assignee_agent_id, inbox_id, team_id, flow_id, handover_active, status, priority, contact_id FROM sessions WHERE id = $1",
+        "SELECT id, tenant_id, created_at, updated_at, channel, assignee_agent_id, inbox_id, team_id, flow_id, handover_active, status, priority, contact_id, visitor_id FROM sessions WHERE id = $1",
     )
     .bind(session_id)
     .fetch_optional(&state.db)
@@ -749,6 +817,7 @@ async fn ensure_session(state: Arc<AppState>, session_id: &str) -> Session {
             team_id: row.get("team_id"),
             flow_id: row.get("flow_id"),
             contact_id: row.get("contact_id"),
+            visitor_id: row.get("visitor_id"),
             handover_active: row.get("handover_active"),
             status: row.get("status"),
             priority: row.get("priority"),
@@ -769,6 +838,7 @@ async fn ensure_session(state: Arc<AppState>, session_id: &str) -> Session {
             team_id: None,
             flow_id: Some(state.default_flow_id.clone()),
             contact_id: None,
+            visitor_id: String::new(),
             handover_active: false,
             status: "open".to_string(),
             priority: "normal".to_string(),
@@ -2054,6 +2124,14 @@ async fn execute_flow_from(
                                             .bind(cid).fetch_optional(&state.db).await.ok().flatten().unwrap_or_default()
                                     } else { String::new() }
                                 }
+                                "contact.identified" => {
+                                    // Returns "true" if a contact with non-empty email is linked
+                                    if let Some(ref cid) = sess_contact {
+                                        let email: String = sqlx::query_scalar("SELECT email FROM contacts WHERE id = $1")
+                                            .bind(cid).fetch_optional(&state.db).await.ok().flatten().unwrap_or_default();
+                                        if email.is_empty() { "false".to_string() } else { "true".to_string() }
+                                    } else { "false".to_string() }
+                                }
                                 "contact_attribute" => {
                                     if let Some(ref cid) = sess_contact {
                                         sqlx::query_scalar::<_, String>(
@@ -2827,9 +2905,23 @@ async fn run_flow_for_visitor_message(
     }
 }
 
-async fn post_session(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn post_session(
+    State(state): State<Arc<AppState>>,
+    body: Option<Json<Value>>,
+) -> impl IntoResponse {
     let session_id = Uuid::new_v4().to_string();
-    let _ = ensure_session(state, &session_id).await;
+    let _ = ensure_session(state.clone(), &session_id).await;
+
+    // If visitor sent a visitorId, resolve their contact from previous sessions
+    let visitor_id = body
+        .as_ref()
+        .and_then(|b| b.get("visitorId"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if !visitor_id.is_empty() {
+        resolve_contact_from_visitor_id(&state, &session_id, visitor_id).await;
+    }
+
     (
         StatusCode::CREATED,
         Json(json!({ "sessionId": session_id })),
@@ -5282,6 +5374,13 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
             "widget:join" => {
                 if let Some(session_id) = envelope.data.get("sessionId").and_then(Value::as_str) {
                     let session = ensure_session(state.clone(), session_id).await;
+
+                    // Resolve contact from persistent visitor identity
+                    let visitor_id = envelope.data.get("visitorId").and_then(Value::as_str).unwrap_or("");
+                    if !visitor_id.is_empty() {
+                        resolve_contact_from_visitor_id(&state, session_id, visitor_id).await;
+                    }
+
                     let visible_history = visible_messages_for_widget(&session.messages);
 
                     {

@@ -15,8 +15,18 @@ const icon = (
   </svg>
 );
 
+function getOrCreateVisitorId() {
+  let vid = localStorage.getItem("chat_visitor_id");
+  if (!vid) {
+    vid = crypto.randomUUID();
+    localStorage.setItem("chat_visitor_id", vid);
+  }
+  return vid;
+}
+
 export default function App() {
   const [open, setOpen] = useState(false);
+  const visitorId = useRef(getOrCreateVisitorId());
   const [sessionId, setSessionId] = useState(
     localStorage.getItem("chat_session_id") || "",
   );
@@ -96,7 +106,11 @@ export default function App() {
   useEffect(() => {
     const boot = async () => {
       if (sessionId) return;
-      const res = await fetch(`${API_URL}/api/session`, { method: "POST" });
+      const res = await fetch(`${API_URL}/api/session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visitorId: visitorId.current }),
+      });
       const data = await res.json();
       setSessionId(data.sessionId);
       localStorage.setItem("chat_session_id", data.sessionId);
@@ -116,7 +130,7 @@ export default function App() {
       wsRef.current = ws;
 
       ws.addEventListener("open", () => {
-        sendWsEvent("widget:join", { sessionId });
+        sendWsEvent("widget:join", { sessionId, visitorId: visitorId.current });
         if (openRef.current) {
           sendWsEvent("widget:opened", { sessionId });
         }
@@ -291,7 +305,11 @@ export default function App() {
   }, [messages]);
 
   const startNewChat = async () => {
-    const res = await fetch(`${API_URL}/api/session`, { method: "POST" });
+    const res = await fetch(`${API_URL}/api/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ visitorId: visitorId.current }),
+    });
     const data = await res.json();
     if (!data?.sessionId) return;
     setSessionId(data.sessionId);

@@ -35,6 +35,7 @@ pub struct Session {
     pub team_id: Option<String>,
     pub flow_id: Option<String>,
     pub contact_id: Option<String>,
+    pub visitor_id: String,
     pub handover_active: bool,
     pub status: String,
     pub priority: String,

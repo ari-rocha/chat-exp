@@ -1229,6 +1229,7 @@ function SettingsPanel({
                                 <option value="inbox">Inbox</option>
                               </optgroup>
                               <optgroup label="Contact">
+                                <option value="contact.identified">Identified</option>
                                 <option value="contact.email">Email</option>
                                 <option value="contact.name">Name</option>
                                 <option value="contact.phone">Phone</option>

@@ -21,6 +21,10 @@ ADD COLUMN IF NOT EXISTS os TEXT NOT NULL DEFAULT '';
 ALTER TABLE sessions
 ADD COLUMN IF NOT EXISTS contact_id TEXT REFERENCES contacts (id) ON DELETE SET NULL;
 
+-- ── Persistent visitor identity across sessions ──────────────
+ALTER TABLE sessions
+ADD COLUMN IF NOT EXISTS visitor_id TEXT NOT NULL DEFAULT '';
+
 -- ── Tags ─────────────────────────────────────────────────────
 CREATE TABLE
     IF NOT EXISTS tags (
