@@ -129,6 +129,10 @@ pub struct ChatFlow {
     pub edges: Vec<FlowEdge>,
     #[serde(default)]
     pub input_variables: Vec<FlowInputVariable>,
+    #[serde(default)]
+    pub ai_tool: bool,
+    #[serde(default)]
+    pub ai_tool_description: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -535,6 +539,10 @@ pub struct CreateFlowBody {
     pub edges: Vec<FlowEdge>,
     #[serde(default)]
     pub input_variables: Vec<FlowInputVariable>,
+    #[serde(default)]
+    pub ai_tool: bool,
+    #[serde(default)]
+    pub ai_tool_description: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -546,6 +554,8 @@ pub struct UpdateFlowBody {
     pub nodes: Option<Vec<FlowNode>>,
     pub edges: Option<Vec<FlowEdge>>,
     pub input_variables: Option<Vec<FlowInputVariable>>,
+    pub ai_tool: Option<bool>,
+    pub ai_tool_description: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

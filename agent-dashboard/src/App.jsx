@@ -319,6 +319,8 @@ export default function App() {
   const [flowNodes, setFlowNodes, onFlowNodesChange] = useNodesState([]);
   const [flowEdges, setFlowEdges, onFlowEdgesChange] = useEdgesState([]);
   const [flowInputVariables, setFlowInputVariables] = useState([]);
+  const [flowAiTool, setFlowAiTool] = useState(false);
+  const [flowAiToolDescription, setFlowAiToolDescription] = useState("");
 
   const wsRef = useRef(null);
   const reconnectTimerRef = useRef(null);
@@ -441,6 +443,8 @@ export default function App() {
       setFlowInputVariables(
         Array.isArray(flow.inputVariables) ? flow.inputVariables : [],
       );
+      setFlowAiTool(Boolean(flow.aiTool));
+      setFlowAiToolDescription(flow.aiToolDescription ?? "");
       setSelectedNodeId("");
     },
     [setFlowEdges, setFlowNodes],
@@ -1009,6 +1013,8 @@ export default function App() {
           nodes: nodesPayload,
           edges: edgesPayload,
           inputVariables: flowInputVariables,
+          aiTool: flowAiTool,
+          aiToolDescription: flowAiToolDescription,
         }),
       });
 
@@ -1383,6 +1389,10 @@ export default function App() {
           token={token}
           flowInputVariables={flowInputVariables}
           setFlowInputVariables={setFlowInputVariables}
+          flowAiTool={flowAiTool}
+          setFlowAiTool={setFlowAiTool}
+          flowAiToolDescription={flowAiToolDescription}
+          setFlowAiToolDescription={setFlowAiToolDescription}
         />
       </section>
     ) : view === "contacts" ? (

@@ -2968,6 +2968,10 @@ function FlowTopBar({
   flowEnabled,
   setFlowEnabled,
   deleteCurrentFlow,
+  flowAiTool,
+  setFlowAiTool,
+  flowAiToolDescription,
+  setFlowAiToolDescription,
 }) {
   const [showMeta, setShowMeta] = useState(false);
   const timeStr = new Date().toLocaleTimeString([], {
@@ -3025,6 +3029,34 @@ function FlowTopBar({
                 />
               </button>
             </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-slate-600">AI agent tool</span>
+              <button
+                onClick={() => setFlowAiTool(!flowAiTool)}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${flowAiTool ? "bg-violet-500" : "bg-slate-300"}`}
+              >
+                <span
+                  className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${flowAiTool ? "translate-x-[18px]" : "translate-x-[3px]"}`}
+                />
+              </button>
+            </div>
+            {flowAiTool && (
+              <div>
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                  Tool description (for AI)
+                </label>
+                <Input
+                  value={flowAiToolDescription}
+                  onChange={(e) => setFlowAiToolDescription(e.target.value)}
+                  placeholder="e.g. Collect billing info and process refund"
+                  className="text-[12px]"
+                />
+                <p className="mt-1 text-[10px] text-slate-400">
+                  Describe what this flow does so the AI knows when to trigger
+                  it.
+                </p>
+              </div>
+            )}
             <div className="flex items-center justify-between border-t border-slate-100 pt-2">
               <button
                 onClick={() => {
@@ -3180,6 +3212,10 @@ export default function FlowsView({
   token,
   flowInputVariables,
   setFlowInputVariables,
+  flowAiTool,
+  setFlowAiTool,
+  flowAiToolDescription,
+  setFlowAiToolDescription,
 }) {
   return (
     <div className="grid h-full min-h-0 grid-cols-[260px_1fr_340px] bg-[#f0f2f7] max-[1200px]:grid-cols-[1fr]">
@@ -3219,6 +3255,7 @@ export default function FlowsView({
                       {flow.name}
                     </p>
                     <p className="truncate text-[10px] text-slate-400">
+                      {flow.aiTool ? "🔧 AI tool · " : ""}
                       {flow.description || "No description"}
                     </p>
                   </div>
@@ -3254,6 +3291,10 @@ export default function FlowsView({
           flowEnabled={flowEnabled}
           setFlowEnabled={setFlowEnabled}
           deleteCurrentFlow={deleteCurrentFlow}
+          flowAiTool={flowAiTool}
+          setFlowAiTool={setFlowAiTool}
+          flowAiToolDescription={flowAiToolDescription}
+          setFlowAiToolDescription={setFlowAiToolDescription}
         />
         <div
           className="relative min-h-0"

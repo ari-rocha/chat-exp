@@ -203,7 +203,7 @@ async fn get_session_messages_db(pool: &PgPool, session_id: &str) -> Vec<ChatMes
 
 async fn get_flow_by_id_db(pool: &PgPool, flow_id: &str) -> Option<ChatFlow> {
     let row = sqlx::query(
-        "SELECT id, tenant_id, name, description, enabled, created_at, updated_at, nodes, edges, input_variables FROM flows WHERE id = $1",
+        "SELECT id, tenant_id, name, description, enabled, created_at, updated_at, nodes, edges, input_variables, ai_tool, ai_tool_description FROM flows WHERE id = $1",
     )
     .bind(flow_id)
     .fetch_optional(pool)
@@ -224,6 +224,8 @@ async fn get_flow_by_id_db(pool: &PgPool, flow_id: &str) -> Option<ChatFlow> {
             .unwrap_or_default(),
         input_variables: serde_json::from_str(&row.get::<String, _>("input_variables"))
             .unwrap_or_default(),
+        ai_tool: row.get("ai_tool"),
+        ai_tool_description: row.get("ai_tool_description"),
     })
 }
 
@@ -1210,6 +1212,7 @@ struct AiDecision {
     handover: bool,
     close_chat: bool,
     suggestions: Vec<String>,
+    trigger_flow: Option<(String, HashMap<String, String>)>, // (flow_id, variables)
 }
 
 fn parse_ai_decision_from_text(raw: &str) -> Option<AiDecision> {
@@ -1278,11 +1281,33 @@ fn parse_ai_decision_from_text(raw: &str) -> Option<AiDecision> {
             })
             .unwrap_or_default();
 
+        let trigger_flow = parsed
+            .get("triggerFlow")
+            .or_else(|| parsed.get("trigger_flow"))
+            .and_then(Value::as_object)
+            .and_then(|obj| {
+                let flow_id = obj
+                    .get("flowId")
+                    .or_else(|| obj.get("flow_id"))
+                    .and_then(Value::as_str)
+                    .map(|s| s.to_string())?;
+                let mut vars = HashMap::new();
+                if let Some(v) = obj.get("variables").and_then(Value::as_object) {
+                    for (k, val) in v {
+                        if let Some(s) = val.as_str() {
+                            vars.insert(k.clone(), s.to_string());
+                        }
+                    }
+                }
+                Some((flow_id, vars))
+            });
+
         return Some(AiDecision {
             reply,
             handover,
             close_chat,
             suggestions,
+            trigger_flow,
         });
     }
 
@@ -1359,13 +1384,69 @@ async fn generate_ai_reply(
 ) -> AiDecision {
     let transcript = recent_session_context(&state, session_id, 14).await;
 
+    // Fetch tenant_id for this session
+    let tenant_id: String = sqlx::query_scalar("SELECT tenant_id FROM sessions WHERE id = $1")
+        .bind(session_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| state.default_tenant_id.clone());
+
+    // Fetch flows marked as AI tools
+    let tool_flows = sqlx::query(
+        "SELECT id, name, ai_tool_description, input_variables FROM flows WHERE tenant_id = $1 AND ai_tool = true AND enabled = true",
+    )
+    .bind(&tenant_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let mut tools_block = String::new();
+    if !tool_flows.is_empty() {
+        tools_block.push_str("\n\nYou have the following TOOLS (flows) you can trigger. When appropriate, trigger a flow instead of answering manually.\nAvailable tools:\n");
+        for row in &tool_flows {
+            let flow_id: String = row.get("id");
+            let flow_name: String = row.get("name");
+            let description: String = row.get("ai_tool_description");
+            let input_vars_raw: String = row.get("input_variables");
+            let input_vars: Vec<FlowInputVariable> =
+                serde_json::from_str(&input_vars_raw).unwrap_or_default();
+
+            tools_block.push_str(&format!(
+                "- Tool \"{}\" (flowId: \"{}\")",
+                flow_name, flow_id
+            ));
+            if !description.is_empty() {
+                tools_block.push_str(&format!(": {}", description));
+            }
+            if !input_vars.is_empty() {
+                let params: Vec<String> = input_vars
+                    .iter()
+                    .map(|v| {
+                        let req = if v.required { "required" } else { "optional" };
+                        let label = if v.label.is_empty() {
+                            v.key.clone()
+                        } else {
+                            v.label.clone()
+                        };
+                        format!("{}({}, {})", v.key, label, req)
+                    })
+                    .collect();
+                tools_block.push_str(&format!(" | parameters: [{}]", params.join(", ")));
+            }
+            tools_block.push('\n');
+        }
+        tools_block.push_str("\nTo trigger a tool, include \"triggerFlow\" in your JSON response: {\"reply\":\"I'll help you with that...\",\"triggerFlow\":{\"flowId\":\"<id>\",\"variables\":{\"key\":\"value\"}}}\n");
+        tools_block.push_str("If the tool needs required parameters the user hasn't provided yet, ask for them in your reply WITHOUT triggering the flow. Only trigger when you have all required data.\n");
+    }
+
     let system_instruction = if prompt.trim().is_empty() {
-        "You are a support agent in a chat flow. Use prior conversation context and respond briefly and helpfully. \
+        format!("You are a support agent in a chat flow. Use prior conversation context and respond briefly and helpfully. \
 If user asks for a human, transfer, escalation, or representative, set handover=true. \
-If the conversation is clearly complete and resolved, set closeChat=true."
-            .to_string()
+If the conversation is clearly complete and resolved, set closeChat=true.{}", tools_block)
     } else {
-        prompt.trim().to_string()
+        format!("{}{}", prompt.trim(), tools_block)
     };
 
     let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
@@ -1384,8 +1465,15 @@ If the conversation is clearly complete and resolved, set closeChat=true."
             handover: has_handover_intent(visitor_text),
             close_chat: false,
             suggestions: vec![],
+            trigger_flow: None,
         };
     }
+
+    let json_format_hint = if tool_flows.is_empty() {
+        "Return ONLY JSON: {\"reply\":\"string\",\"handover\":boolean,\"closeChat\":boolean,\"suggestions\":[\"short option\", \"another option\"]}"
+    } else {
+        "Return ONLY JSON: {\"reply\":\"string\",\"handover\":boolean,\"closeChat\":boolean,\"suggestions\":[],\"triggerFlow\":null} — set triggerFlow to {\"flowId\":\"<id>\",\"variables\":{}} when triggering a tool, otherwise null"
+    };
 
     let response = state
         .ai_client
@@ -1395,9 +1483,10 @@ If the conversation is clearly complete and resolved, set closeChat=true."
             "model": "gpt-4o-mini",
             "instructions": system_instruction,
             "input": format!(
-                "Conversation transcript (oldest to newest):\n{}\n\nLatest visitor message:\n{}\n\nReturn ONLY JSON: {{\"reply\":\"string\",\"handover\":boolean,\"closeChat\":boolean,\"suggestions\":[\"short option\", \"another option\"]}}",
+                "Conversation transcript (oldest to newest):\n{}\n\nLatest visitor message:\n{}\n\n{}",
                 transcript,
-                visitor_text.trim()
+                visitor_text.trim(),
+                json_format_hint
             ),
         }))
         .send()
@@ -1410,6 +1499,7 @@ If the conversation is clearly complete and resolved, set closeChat=true."
             handover: has_handover_intent(visitor_text),
             close_chat: false,
             suggestions: vec![],
+            trigger_flow: None,
         };
     };
 
@@ -1444,6 +1534,7 @@ If the conversation is clearly complete and resolved, set closeChat=true."
             handover: has_handover_intent(visitor_text),
             close_chat: false,
             suggestions: vec![],
+            trigger_flow: None,
         };
     }
 
@@ -1465,7 +1556,29 @@ If the conversation is clearly complete and resolved, set closeChat=true."
         handover: has_handover_intent(visitor_text),
         close_chat: false,
         suggestions: vec![],
+        trigger_flow: None,
     }
+}
+
+/// Returns the list of missing required input variable keys for a flow.
+fn find_missing_required_vars(flow: &ChatFlow, provided: &HashMap<String, String>) -> Vec<String> {
+    flow.input_variables
+        .iter()
+        .filter(|v| v.required)
+        .filter(|v| {
+            provided
+                .get(&v.key)
+                .map(|val| val.trim().is_empty())
+                .unwrap_or(true)
+        })
+        .map(|v| {
+            if v.label.is_empty() {
+                v.key.clone()
+            } else {
+                format!("{} ({})", v.label, v.key)
+            }
+        })
+        .collect()
 }
 
 async fn send_flow_agent_message(
@@ -2059,6 +2172,50 @@ async fn execute_flow_from(
                     }
                     clear_flow_cursor(&state, &session_id).await;
                     break;
+                }
+                // Handle AI-triggered flow
+                if let Some((trigger_flow_id, trigger_vars)) = decision.trigger_flow {
+                    if let Some(target_flow) = get_flow_by_id_db(&state.db, &trigger_flow_id).await
+                    {
+                        let missing = find_missing_required_vars(&target_flow, &trigger_vars);
+                        if missing.is_empty() {
+                            clear_flow_cursor(&state, &session_id).await;
+                            Box::pin(execute_flow_from(
+                                state.clone(),
+                                session_id.clone(),
+                                target_flow,
+                                visitor_text.clone(),
+                                None,
+                                trigger_vars,
+                            ))
+                            .await;
+                            return;
+                        } else {
+                            // Missing required fields — ask the AI to collect them
+                            let retry_prompt = format!(
+                                "You tried to trigger the tool \"{}\" but the following REQUIRED parameters are missing: [{}]. \
+                                 Ask the user to provide these values. Do NOT trigger the tool until you have all required data.",
+                                target_flow.name,
+                                missing.join(", ")
+                            );
+                            let retry = generate_ai_reply(
+                                state.clone(),
+                                &session_id,
+                                &retry_prompt,
+                                &visitor_text,
+                            )
+                            .await;
+                            send_flow_agent_message(
+                                state.clone(),
+                                &session_id,
+                                &retry.reply,
+                                600,
+                                None,
+                                None,
+                            )
+                            .await;
+                        }
+                    }
                 }
             }
             "condition" => {
@@ -3050,6 +3207,48 @@ async fn run_flow_for_visitor_message(
                             &session_id,
                             "system",
                             "Conversation closed by bot",
+                            None,
+                            None,
+                        )
+                        .await;
+                    }
+                }
+            }
+            // Handle AI-triggered flow
+            if let Some((trigger_flow_id, trigger_vars)) = decision.trigger_flow {
+                if let Some(target_flow) = get_flow_by_id_db(&state.db, &trigger_flow_id).await {
+                    let missing = find_missing_required_vars(&target_flow, &trigger_vars);
+                    if missing.is_empty() {
+                        execute_flow_from(
+                            state,
+                            session_id,
+                            target_flow,
+                            visitor_text,
+                            None,
+                            trigger_vars,
+                        )
+                        .await;
+                        return;
+                    } else {
+                        // Missing required fields — ask the AI to collect them
+                        let retry_prompt = format!(
+                            "You tried to trigger the tool \"{}\" but the following REQUIRED parameters are missing: [{}]. \
+                             Ask the user to provide these values. Do NOT trigger the tool until you have all required data.",
+                            target_flow.name,
+                            missing.join(", ")
+                        );
+                        let retry = generate_ai_reply(
+                            state.clone(),
+                            &session_id,
+                            &retry_prompt,
+                            &visitor_text,
+                        )
+                        .await;
+                        send_flow_agent_message(
+                            state.clone(),
+                            &session_id,
+                            &retry.reply,
+                            600,
                             None,
                             None,
                         )
@@ -4229,7 +4428,7 @@ async fn get_flows(State(state): State<Arc<AppState>>, headers: HeaderMap) -> im
     };
 
     let rows = sqlx::query(
-        "SELECT id, tenant_id, name, description, enabled, created_at, updated_at, nodes, edges, input_variables FROM flows WHERE tenant_id = $1 ORDER BY created_at ASC",
+        "SELECT id, tenant_id, name, description, enabled, created_at, updated_at, nodes, edges, input_variables, ai_tool, ai_tool_description FROM flows WHERE tenant_id = $1 ORDER BY created_at ASC",
     )
     .bind(&tenant_id)
     .fetch_all(&state.db)
@@ -4251,6 +4450,8 @@ async fn get_flows(State(state): State<Arc<AppState>>, headers: HeaderMap) -> im
                 .unwrap_or_default(),
             input_variables: serde_json::from_str(&row.get::<String, _>("input_variables"))
                 .unwrap_or_default(),
+            ai_tool: row.get("ai_tool"),
+            ai_tool_description: row.get("ai_tool_description"),
         })
         .collect::<Vec<_>>();
     flows.sort_by(|a, b| a.created_at.cmp(&b.created_at));
@@ -4318,10 +4519,12 @@ async fn create_flow(
         nodes: body.nodes,
         edges: body.edges,
         input_variables: body.input_variables,
+        ai_tool: body.ai_tool,
+        ai_tool_description: body.ai_tool_description,
     };
 
     let _ = sqlx::query(
-        "INSERT INTO flows (id, tenant_id, name, description, enabled, created_at, updated_at, nodes, edges, input_variables) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+        "INSERT INTO flows (id, tenant_id, name, description, enabled, created_at, updated_at, nodes, edges, input_variables, ai_tool, ai_tool_description) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
     )
     .bind(&flow.id)
     .bind(&flow.tenant_id)
@@ -4333,6 +4536,8 @@ async fn create_flow(
     .bind(serde_json::to_string(&flow.nodes).unwrap_or_else(|_| "[]".to_string()))
     .bind(serde_json::to_string(&flow.edges).unwrap_or_else(|_| "[]".to_string()))
     .bind(serde_json::to_string(&flow.input_variables).unwrap_or_else(|_| "[]".to_string()))
+    .bind(flow.ai_tool)
+    .bind(&flow.ai_tool_description)
     .execute(&state.db)
     .await;
 
@@ -4395,9 +4600,15 @@ async fn update_flow(
     if let Some(input_variables) = body.input_variables {
         flow.input_variables = input_variables;
     }
+    if let Some(ai_tool) = body.ai_tool {
+        flow.ai_tool = ai_tool;
+    }
+    if let Some(ai_tool_description) = body.ai_tool_description {
+        flow.ai_tool_description = ai_tool_description.trim().to_string();
+    }
     flow.updated_at = now_iso();
     let _ = sqlx::query(
-        "UPDATE flows SET name = $1, description = $2, enabled = $3, updated_at = $4, nodes = $5, edges = $6, input_variables = $7 WHERE id = $8",
+        "UPDATE flows SET name = $1, description = $2, enabled = $3, updated_at = $4, nodes = $5, edges = $6, input_variables = $7, ai_tool = $8, ai_tool_description = $9 WHERE id = $10",
     )
     .bind(&flow.name)
     .bind(&flow.description)
@@ -4406,6 +4617,8 @@ async fn update_flow(
     .bind(serde_json::to_string(&flow.nodes).unwrap_or_else(|_| "[]".to_string()))
     .bind(serde_json::to_string(&flow.edges).unwrap_or_else(|_| "[]".to_string()))
     .bind(serde_json::to_string(&flow.input_variables).unwrap_or_else(|_| "[]".to_string()))
+    .bind(flow.ai_tool)
+    .bind(&flow.ai_tool_description)
     .bind(&flow.id)
     .execute(&state.db)
     .await;
@@ -6086,11 +6299,12 @@ pub async fn run() {
             },
         ],
         input_variables: vec![],
+        ai_tool: false,
+        ai_tool_description: String::new(),
     };
 
     let _ = sqlx::query(
-        "INSERT INTO flows (id, tenant_id, name, description, enabled, created_at, updated_at, nodes, edges, input_variables) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (id) DO NOTHING",
-    )
+        "INSERT INTO flows (id, tenant_id, name, description, enabled, created_at, updated_at, nodes, edges, input_variables) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (id) DO NOTHING",    )
     .bind(&default_flow.id)
     .bind(&default_flow.tenant_id)
     .bind(&default_flow.name)
