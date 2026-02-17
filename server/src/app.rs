@@ -1855,7 +1855,11 @@ async fn execute_flow_from(
                 let widget = if buttons.is_empty() {
                     None
                 } else {
-                    let disable_composer = node.data.get("disableComposer").and_then(Value::as_bool).unwrap_or(false);
+                    let disable_composer = node
+                        .data
+                        .get("disableComposer")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
                     Some(json!({
                         "type": "buttons",
                         "buttons": buttons,
@@ -1926,7 +1930,11 @@ async fn execute_flow_from(
                 let widget = if fields.is_empty() {
                     None
                 } else {
-                    let disable_composer = node.data.get("disableComposer").and_then(Value::as_bool).unwrap_or(false);
+                    let disable_composer = node
+                        .data
+                        .get("disableComposer")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
                     Some(json!({
                         "type": "input_form",
                         "submitLabel": node.data.get("submitLabel").and_then(Value::as_str).unwrap_or("Submit"),

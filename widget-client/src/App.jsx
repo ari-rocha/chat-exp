@@ -312,7 +312,12 @@ export default function App() {
       const m = messages[i];
       if (m?.sender !== "agent" || !m?.widget) continue;
       const wType = m.widget?.type;
-      if (wType === "buttons" || wType === "quick_input" || wType === "input_form" || wType === "select") {
+      if (
+        wType === "buttons" ||
+        wType === "quick_input" ||
+        wType === "input_form" ||
+        wType === "select"
+      ) {
         if (submittedWidgets[m.id]) return false;
         return Boolean(m.widget?.disableComposer);
       }
@@ -322,7 +327,10 @@ export default function App() {
   }, [messages, submittedWidgets, chatClosed]);
 
   const markWidgetSubmitted = (messageId, displayValue) => {
-    setSubmittedWidgets((prev) => ({ ...prev, [messageId]: displayValue || true }));
+    setSubmittedWidgets((prev) => ({
+      ...prev,
+      [messageId]: displayValue || true,
+    }));
   };
 
   const startNewChat = async () => {
@@ -457,8 +465,12 @@ export default function App() {
                                       type="button"
                                       className="suggestion-chip"
                                       onClick={() => {
-                                        const val = button?.value || button?.label || "";
-                                        markWidgetSubmitted(m.id, button?.label || val);
+                                        const val =
+                                          button?.value || button?.label || "";
+                                        markWidgetSubmitted(
+                                          m.id,
+                                          button?.label || val,
+                                        );
                                         sendSuggestion(val);
                                       }}
                                     >
@@ -506,7 +518,9 @@ export default function App() {
                           Array.isArray(m.widget?.options) && (
                             <div className="message-widget inline-form-widget">
                               {submittedWidgets[m.id] ? (
-                                <span className="inline-submitted-value">{submittedWidgets[m.id]}</span>
+                                <span className="inline-submitted-value">
+                                  {submittedWidgets[m.id]}
+                                </span>
                               ) : (
                                 <>
                                   <select
@@ -526,7 +540,9 @@ export default function App() {
                                       const label =
                                         typeof opt === "string"
                                           ? opt
-                                          : opt?.label || opt?.value || "Option";
+                                          : opt?.label ||
+                                            opt?.value ||
+                                            "Option";
                                       const value =
                                         typeof opt === "string"
                                           ? opt
@@ -563,7 +579,9 @@ export default function App() {
                           Array.isArray(m.widget?.fields) && (
                             <div className="message-widget inline-form-widget">
                               {submittedWidgets[m.id] ? (
-                                <span className="inline-submitted-value">{submittedWidgets[m.id]}</span>
+                                <span className="inline-submitted-value">
+                                  {submittedWidgets[m.id]}
+                                </span>
                               ) : (
                                 <>
                                   {m.widget.fields.map((field, fIdx) => (
@@ -605,7 +623,9 @@ export default function App() {
                                           if (field?.required === false)
                                             return false;
                                           const key = field?.name || `f${fIdx}`;
-                                          return !String(values[key] || "").trim();
+                                          return !String(
+                                            values[key] || "",
+                                          ).trim();
                                         },
                                       );
                                       if (missing) return;
@@ -849,7 +869,9 @@ export default function App() {
           </div>
         ) : composerDisabled ? (
           <div className="composer composer-disabled">
-            <span className="composer-disabled-hint">Use the input above to respond</span>
+            <span className="composer-disabled-hint">
+              Use the input above to respond
+            </span>
           </div>
         ) : (
           <form className="composer" onSubmit={send}>

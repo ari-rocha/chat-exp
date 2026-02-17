@@ -31,7 +31,6 @@ import {
   MessageSquare,
   MoreHorizontal,
   Pencil,
-  Play,
   Plus,
   Puzzle,
   RefreshCw,
@@ -1204,14 +1203,24 @@ function SettingsPanel({
                     </div>
                     <div className="mt-3 flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
                       <div>
-                        <p className="text-[11px] font-medium text-slate-700">Disable text composer</p>
-                        <p className="text-[10px] text-slate-400">Force user to use buttons only</p>
+                        <p className="text-[11px] font-medium text-slate-700">
+                          Disable text composer
+                        </p>
+                        <p className="text-[10px] text-slate-400">
+                          Force user to use buttons only
+                        </p>
                       </div>
                       <button
-                        onClick={() => updateSelectedNodeData({ disableComposer: !data?.disableComposer })}
+                        onClick={() =>
+                          updateSelectedNodeData({
+                            disableComposer: !data?.disableComposer,
+                          })
+                        }
                         className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${data?.disableComposer ? "bg-blue-500" : "bg-slate-300"}`}
                       >
-                        <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${data?.disableComposer ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
+                        <span
+                          className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${data?.disableComposer ? "translate-x-[18px]" : "translate-x-[3px]"}`}
+                        />
                       </button>
                     </div>
                   </div>
@@ -1675,7 +1684,9 @@ function SettingsPanel({
                       <Input
                         value={data?.submitLabel || "Submit"}
                         onChange={(e) =>
-                          updateSelectedNodeData({ submitLabel: e.target.value })
+                          updateSelectedNodeData({
+                            submitLabel: e.target.value,
+                          })
                         }
                         placeholder="Submit"
                         className="text-[12px]"
@@ -1683,14 +1694,24 @@ function SettingsPanel({
                     </div>
                     <div className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
                       <div>
-                        <p className="text-[11px] font-medium text-slate-700">Disable text composer</p>
-                        <p className="text-[10px] text-slate-400">Force user to use this form only</p>
+                        <p className="text-[11px] font-medium text-slate-700">
+                          Disable text composer
+                        </p>
+                        <p className="text-[10px] text-slate-400">
+                          Force user to use this form only
+                        </p>
                       </div>
                       <button
-                        onClick={() => updateSelectedNodeData({ disableComposer: !data?.disableComposer })}
+                        onClick={() =>
+                          updateSelectedNodeData({
+                            disableComposer: !data?.disableComposer,
+                          })
+                        }
                         className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${data?.disableComposer ? "bg-blue-500" : "bg-slate-300"}`}
                       >
-                        <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${data?.disableComposer ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
+                        <span
+                          className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${data?.disableComposer ? "translate-x-[18px]" : "translate-x-[3px]"}`}
+                        />
                       </button>
                     </div>
                   </>
@@ -1814,14 +1835,24 @@ function SettingsPanel({
                     </div>
                     <div className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
                       <div>
-                        <p className="text-[11px] font-medium text-slate-700">Disable text composer</p>
-                        <p className="text-[10px] text-slate-400">Force user to use this input only</p>
+                        <p className="text-[11px] font-medium text-slate-700">
+                          Disable text composer
+                        </p>
+                        <p className="text-[10px] text-slate-400">
+                          Force user to use this input only
+                        </p>
                       </div>
                       <button
-                        onClick={() => updateSelectedNodeData({ disableComposer: !data?.disableComposer })}
+                        onClick={() =>
+                          updateSelectedNodeData({
+                            disableComposer: !data?.disableComposer,
+                          })
+                        }
                         className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${data?.disableComposer ? "bg-blue-500" : "bg-slate-300"}`}
                       >
-                        <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${data?.disableComposer ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
+                        <span
+                          className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${data?.disableComposer ? "translate-x-[18px]" : "translate-x-[3px]"}`}
+                        />
                       </button>
                     </div>
                   </>
@@ -2962,7 +2993,9 @@ function FlowTopBar({
         {showMeta && (
           <div className="absolute left-4 top-12 z-50 w-72 rounded-xl border border-slate-200 bg-white p-3 shadow-lg space-y-2.5">
             <div>
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Name</label>
+              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                Name
+              </label>
               <Input
                 value={flowName}
                 onChange={(e) => setFlowName(e.target.value)}
@@ -2971,7 +3004,9 @@ function FlowTopBar({
               />
             </div>
             <div>
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Description</label>
+              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                Description
+              </label>
               <Input
                 value={flowDescription}
                 onChange={(e) => setFlowDescription(e.target.value)}
@@ -2985,12 +3020,17 @@ function FlowTopBar({
                 onClick={() => setFlowEnabled(!flowEnabled)}
                 className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${flowEnabled ? "bg-emerald-500" : "bg-slate-300"}`}
               >
-                <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${flowEnabled ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
+                <span
+                  className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${flowEnabled ? "translate-x-[18px]" : "translate-x-[3px]"}`}
+                />
               </button>
             </div>
             <div className="flex items-center justify-between border-t border-slate-100 pt-2">
               <button
-                onClick={() => { deleteCurrentFlow(); setShowMeta(false); }}
+                onClick={() => {
+                  deleteCurrentFlow();
+                  setShowMeta(false);
+                }}
                 className="text-[11px] font-medium text-red-500 hover:text-red-600"
               >
                 Delete flow
