@@ -10,6 +10,8 @@ import {
   Handle,
   Position,
   ReactFlow,
+  ReactFlowProvider,
+  useReactFlow,
 } from "@xyflow/react";
 import {
   Bot,
@@ -1484,6 +1486,14 @@ function FlowTopBar({ flowSaveStatus, saveFlow, activeFlowId }) {
 
 function AddNodePalette({ addFlowNode }) {
   const [open, setOpen] = useState(false);
+  const { screenToFlowPosition } = useReactFlow();
+
+  const addAtCenter = (type) => {
+    const centerX = window.innerWidth / 2;
+    const centerY = window.innerHeight / 2;
+    const pos = screenToFlowPosition({ x: centerX, y: centerY });
+    addFlowNode(type, pos.x - 110, pos.y - 30);
+  };
 
   const types = [
     { type: "start", label: "Start", icon: Zap },
@@ -1500,7 +1510,7 @@ function AddNodePalette({ addFlowNode }) {
   ];
 
   return (
-    <div className="absolute left-3 top-3 z-10">
+    <div className="absolute right-3 bottom-3 z-10">
       {!open ? (
         <button
           onClick={() => setOpen(true)}
@@ -1528,7 +1538,7 @@ function AddNodePalette({ addFlowNode }) {
                 <button
                   key={type}
                   onClick={() => {
-                    addFlowNode(type);
+                    addAtCenter(type);
                     setOpen(false);
                   }}
                   className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] text-slate-700 transition-colors hover:bg-slate-50"
@@ -1652,6 +1662,7 @@ export default function FlowsView({
             background: "linear-gradient(135deg, #f5f7fb 0%, #eef1f8 100%)",
           }}
         >
+          <ReactFlowProvider>
           <AddNodePalette addFlowNode={addFlowNode} />
           <ReactFlow
             nodes={flowNodes}
@@ -1675,6 +1686,7 @@ export default function FlowsView({
             <Controls className="!rounded-xl !border-slate-200 !shadow-sm" />
             <Background gap={20} size={1} color="#dce0ea" variant="dots" />
           </ReactFlow>
+          </ReactFlowProvider>
         </div>
       </section>
 

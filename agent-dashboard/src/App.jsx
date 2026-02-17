@@ -882,10 +882,10 @@ export default function App() {
     [setFlowEdges],
   );
 
-  const addFlowNode = (type) => {
-    const x = 120 + Math.floor(Math.random() * 280);
-    const y = 120 + Math.floor(Math.random() * 280);
-    const node = createNode(type, x, y);
+  const addFlowNode = (type, x, y) => {
+    const px = x ?? 120 + Math.floor(Math.random() * 280);
+    const py = y ?? 120 + Math.floor(Math.random() * 280);
+    const node = createNode(type, px, py);
     setFlowNodes((prev) => [...prev, node]);
     setSelectedNodeId(node.id);
   };
