@@ -960,6 +960,92 @@ function SettingsPanel({
                     />
                   </div>
                 )}
+                {type === "quick_input" && (
+                  <>
+                    <div>
+                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        Input Type
+                      </label>
+                      <select
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px]"
+                        value={data?.inputType || "text"}
+                        onChange={(e) =>
+                          updateSelectedNodeData({ inputType: e.target.value })
+                        }
+                      >
+                        <option value="text">Text</option>
+                        <option value="email">Email</option>
+                        <option value="tel">Phone</option>
+                        <option value="number">Number</option>
+                        <option value="url">URL</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        Placeholder
+                      </label>
+                      <Input
+                        value={data?.placeholder || ""}
+                        onChange={(e) =>
+                          updateSelectedNodeData({
+                            placeholder: e.target.value,
+                          })
+                        }
+                        placeholder="e.g. martha.collins@gmail.com"
+                        className="text-[12px]"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        Button Label
+                      </label>
+                      <Input
+                        value={data?.buttonLabel || ""}
+                        onChange={(e) =>
+                          updateSelectedNodeData({
+                            buttonLabel: e.target.value,
+                          })
+                        }
+                        placeholder="Send"
+                        className="text-[12px]"
+                      />
+                    </div>
+                  </>
+                )}
+                {type === "select" && (
+                  <>
+                    <div>
+                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        Placeholder
+                      </label>
+                      <Input
+                        value={data?.placeholder || ""}
+                        onChange={(e) =>
+                          updateSelectedNodeData({
+                            placeholder: e.target.value,
+                          })
+                        }
+                        placeholder="Select one"
+                        className="text-[12px]"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        Button Label
+                      </label>
+                      <Input
+                        value={data?.buttonLabel || ""}
+                        onChange={(e) =>
+                          updateSelectedNodeData({
+                            buttonLabel: e.target.value,
+                          })
+                        }
+                        placeholder="Send"
+                        className="text-[12px]"
+                      />
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
