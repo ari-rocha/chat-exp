@@ -1,23 +1,13 @@
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  addEdge,
-  Background,
-  ConnectionLineType,
-  Controls,
-  MiniMap,
-  ReactFlow,
-  useEdgesState,
-  useNodesState,
-} from "@xyflow/react";
+import TopBar from "@/app/TopBar";
+import AuthView from "@/features/auth/AuthView";
+import ContactsView from "@/features/contacts/ContactsView";
+import ConversationsView from "@/features/conversations/ConversationsView";
+import CsatView from "@/features/csat/CsatView";
+import CustomizationView from "@/features/customization/CustomizationView";
+import FlowsView from "@/features/flows/FlowsView";
+import { addEdge, useEdgesState, useNodesState } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:4000/ws";
@@ -181,6 +171,9 @@ function normalizeEdge(edge, index = 0) {
 
 export default function App() {
   const [view, setView] = useState("conversations");
+  const [theme, setTheme] = useState(
+    localStorage.getItem("agent_dashboard_theme") || "dark",
+  );
 
   const [token, setToken] = useState(localStorage.getItem(TOKEN_KEY) || "");
   const [authMode, setAuthMode] = useState("login");
@@ -264,6 +257,10 @@ export default function App() {
     [flowNodes, selectedNodeId],
   );
 
+  useEffect(() => {
+    localStorage.setItem("agent_dashboard_theme", theme);
+  }, [theme]);
+
   const sessionPreview = (session) => {
     const draft = visitorDraftBySession[session.id];
     if (draft) return `Typing: ${draft}`;
@@ -290,7 +287,8 @@ export default function App() {
   }, [sessions, conversationSearch, conversationFilter, visitorDraftBySession]);
 
   const openCount = useMemo(
-    () => sessions.filter((session) => (session.status || "open") === "open").length,
+    () =>
+      sessions.filter((session) => (session.status || "open") === "open").length,
     [sessions],
   );
   const waitingCount = useMemo(
@@ -327,13 +325,7 @@ export default function App() {
       const normalizedShortcut = shortcut.startsWith("/")
         ? shortcut.slice(1)
         : shortcut;
-      const haystack = [
-        reply.title,
-        reply.body,
-        reply.category,
-      ]
-        .join(" ")
-        .toLowerCase();
+      const haystack = [reply.title, reply.body, reply.category].join(" ").toLowerCase();
       return (
         normalizedShortcut.includes(query) ||
         shortcut.includes(`/${query}`) ||
@@ -759,6 +751,7 @@ export default function App() {
   };
 
   const createFlow = async () => {
+    if (!token) return;
     const graph = defaultFlowGraph();
     const payload = await apiFetch("/api/flows", token, {
       method: "POST",
@@ -905,7 +898,9 @@ export default function App() {
           target="_blank"
           rel="noreferrer noopener"
         >
-          {widget.image ? <img src={widget.image} alt={widget.title || "Preview"} loading="lazy" /> : null}
+          {widget.image ? (
+            <img src={widget.image} alt={widget.title || "Preview"} loading="lazy" />
+          ) : null}
           <div className="agent-link-body">
             <p className="agent-link-site">{widget.siteName || "Link"}</p>
             <h4>{widget.title || widget.url || "Open link"}</h4>
@@ -984,7 +979,9 @@ export default function App() {
         <div className="agent-widget agent-carousel">
           {widget.items.slice(0, 8).map((item, idx) => (
             <article key={`${message.id}-c-${idx}`} className="agent-carousel-card">
-              {item?.imageUrl ? <img src={item.imageUrl} alt={item?.title || "Item"} loading="lazy" /> : null}
+              {item?.imageUrl ? (
+                <img src={item.imageUrl} alt={item?.title || "Item"} loading="lazy" />
+              ) : null}
               <h4>{item?.title || "Item"}</h4>
               {item?.description ? <p>{item.description}</p> : null}
               {item?.price ? <strong>{item.price}</strong> : null}
@@ -1014,1660 +1011,135 @@ export default function App() {
 
   if (!token) {
     return (
-      <div className="grid min-h-screen place-items-center bg-slate-100 p-6">
-        <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h1 className="text-xl font-semibold text-slate-900">
-            {authMode === "register" ? "Create Agent Account" : "Agent Sign In"}
-          </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Access your inboxes, teams and flow automations.
-          </p>
-
-          <form className="mt-4 space-y-3" onSubmit={submitAuth}>
-            {authMode === "register" && (
-              <Input
-                placeholder="Full name"
-                value={authForm.name}
-                onChange={(e) =>
-                  setAuthForm((p) => ({ ...p, name: e.target.value }))
-                }
-                required
-              />
-            )}
-            <Input
-              type="email"
-              placeholder="Email"
-              value={authForm.email}
-              onChange={(e) =>
-                setAuthForm((p) => ({ ...p, email: e.target.value }))
-              }
-              required
-            />
-            <Input
-              type="password"
-              placeholder="Password"
-              value={authForm.password}
-              onChange={(e) =>
-                setAuthForm((p) => ({ ...p, password: e.target.value }))
-              }
-              required
-            />
-            {authError && <p className="text-sm text-red-600">{authError}</p>}
-            <Button
-              className="w-full bg-blue-600 text-white hover:bg-blue-700"
-              type="submit"
-            >
-              {authMode === "register" ? "Register" : "Login"}
-            </Button>
-          </form>
-
-          <button
-            className="mt-4 text-sm text-blue-700"
-            onClick={() =>
-              setAuthMode((m) => (m === "register" ? "login" : "register"))
-            }
-          >
-            {authMode === "register"
-              ? "Already have an account? Login"
-              : "Need an account? Register"}
-          </button>
-        </div>
-      </div>
+      <AuthView
+        authMode={authMode}
+        authForm={authForm}
+        setAuthForm={setAuthForm}
+        authError={authError}
+        submitAuth={submitAuth}
+        setAuthMode={setAuthMode}
+      />
     );
   }
 
   return (
-    <div className="h-screen w-screen bg-slate-100 text-slate-900">
+    <div
+      className={`agent-dashboard-shell ${theme === "dark" ? "theme-dark" : "theme-light"}`}
+    >
       <div className="grid h-full w-full grid-rows-[56px_1fr]">
-        <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4">
-          <div className="flex items-center gap-2">
-            <Button
-              variant={view === "conversations" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setView("conversations")}
-            >
-              Conversations
-            </Button>
-            <Button
-              variant={view === "flows" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setView("flows")}
-            >
-              Flow Builder
-            </Button>
-            <Button
-              variant={view === "contacts" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setView("contacts")}
-            >
-              Contacts
-            </Button>
-            <Button
-              variant={view === "customization" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setView("customization")}
-            >
-              Customization
-            </Button>
-            <Button
-              variant={view === "csat" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setView("csat")}
-            >
-              CSAT
-            </Button>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Badge variant="secondary">{agent?.status || "offline"}</Badge>
-            <Button size="sm" variant="outline" onClick={logout}>
-              Logout
-            </Button>
-          </div>
-        </header>
+        <TopBar
+          view={view}
+          setView={setView}
+          agent={agent}
+          theme={theme}
+          setTheme={setTheme}
+          logout={logout}
+        />
 
         {view === "conversations" ? (
-          <div className="grid min-h-0 grid-cols-[280px_1fr_330px] bg-[#f5f7fb] max-[1220px]:grid-cols-[260px_1fr] max-[980px]:grid-cols-[1fr]">
-            <aside className="flex min-h-0 flex-col border-r border-slate-200 bg-white max-[980px]:hidden">
-              <div className="border-b border-slate-200 p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <div>
-                    <h2 className="text-base font-semibold text-slate-900">
-                      Inbox
-                    </h2>
-                    <p className="text-xs text-slate-500">
-                      {sessions.length} conversations
-                    </p>
-                  </div>
-                  <Button size="sm" variant="outline" onClick={createFlow}>
-                    + Flow
-                  </Button>
-                </div>
-                <Input
-                  value={conversationSearch}
-                  onChange={(e) => setConversationSearch(e.target.value)}
-                  placeholder="Search conversation"
-                  className="h-9"
-                />
-              </div>
-
-              <div className="space-y-4 border-b border-slate-200 px-4 py-3">
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-center">
-                    <p className="text-[11px] text-slate-500">Open</p>
-                    <p className="text-sm font-semibold text-slate-900">
-                      {openCount}
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-center">
-                    <p className="text-[11px] text-slate-500">Awaiting</p>
-                    <p className="text-sm font-semibold text-slate-900">
-                      {waitingCount}
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-center">
-                    <p className="text-[11px] text-slate-500">Closed</p>
-                    <p className="text-sm font-semibold text-slate-900">
-                      {closedCount}
-                    </p>
-                  </div>
-                </div>
-                <div className="grid grid-cols-4 gap-1">
-                  {["all", "open", "awaiting", "closed"].map((status) => (
-                    <button
-                      key={status}
-                      type="button"
-                      onClick={() => setConversationFilter(status)}
-                      className={`rounded-md border px-1.5 py-1 text-[11px] uppercase tracking-wide ${
-                        conversationFilter === status
-                          ? "border-blue-200 bg-blue-50 text-blue-700"
-                          : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
-                      }`}
-                    >
-                      {status}
-                    </button>
-                  ))}
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-500">
-                    Status
-                  </label>
-                  <select
-                    className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
-                    value={agent?.status || "online"}
-                    onChange={(e) => updateAgentStatus(e.target.value)}
-                  >
-                    <option value="online">online</option>
-                    <option value="away">away</option>
-                    <option value="paused">paused</option>
-                  </select>
-                </div>
-
-                <div>
-                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                    Channels
-                  </p>
-                  <div className="space-y-1">
-                    {channelCounts.map(([channel, count]) => (
-                      <div
-                        key={channel}
-                        className="flex items-center justify-between rounded-md px-1.5 py-1 text-xs text-slate-600"
-                      >
-                        <span className="capitalize">{channel}</span>
-                        <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">
-                          {count}
-                        </span>
-                      </div>
-                    ))}
-                    {channelCounts.length === 0 && (
-                      <p className="text-xs text-slate-400">
-                        No channels available.
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <ScrollArea className="h-full p-3">
-                <div className="space-y-2">
-                  {filteredSessions.map((session) => {
-                    const isActive = session.id === activeId;
-                    return (
-                      <button
-                        key={session.id}
-                        onClick={() => setActiveId(session.id)}
-                        className={`w-full rounded-xl border px-3 py-2.5 text-left transition ${
-                          isActive
-                            ? "border-blue-200 bg-blue-50 shadow-sm"
-                            : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
-                        }`}
-                      >
-                        <div className="mb-1 flex items-center justify-between">
-                          <p className="text-sm font-semibold text-slate-900">
-                            {session.id.slice(0, 8)}
-                          </p>
-                          <span className="text-[11px] text-slate-400">
-                            {formatTime(session.updatedAt)}
-                          </span>
-                        </div>
-                        <p className="truncate text-xs text-slate-500">
-                          {sessionPreview(session)}
-                        </p>
-                        <p className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">
-                          {session.channel} • {(session.status || "open").toUpperCase()}
-                        </p>
-                      </button>
-                    );
-                  })}
-                  {filteredSessions.length === 0 && (
-                    <p className="px-1 text-xs text-slate-400">
-                      No conversations found.
-                    </p>
-                  )}
-                </div>
-              </ScrollArea>
-            </aside>
-
-            <section className="grid min-h-0 grid-rows-[62px_1fr_118px] border-r border-slate-200 bg-white max-[1220px]:border-r-0">
-              <header className="flex items-center justify-between border-b border-slate-200 px-4">
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900">
-                    {activeSession
-                      ? `Session: ${activeSession.id}`
-                      : "Choose a conversation"}
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    {activeSession
-                      ? `${activeSession.channel} channel`
-                      : "Select a session on the left"}
-                  </p>
-                </div>
-                {activeSession && (
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="uppercase">
-                      {activeSession.status || "open"}
-                    </Badge>
-                    <Badge variant="outline" className="uppercase">
-                      {activeSession.priority || "normal"}
-                    </Badge>
-                    <Badge variant="secondary" className="capitalize">
-                      {activeSession.channel}
-                    </Badge>
-                    <Badge
-                      variant={
-                        activeSession.handoverActive ? "default" : "secondary"
-                      }
-                    >
-                      {activeSession.handoverActive ? "Human" : "Bot"}
-                    </Badge>
-                  </div>
-                )}
-              </header>
-
-              <ScrollArea className="h-full bg-[#f8fafc] p-4">
-                <div className="space-y-3">
-                  {messages.map((message) =>
-                    message.sender === "system" ? (
-                      <div key={message.id} className="flex justify-center py-1">
-                        <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500">
-                          {String(message.text ?? "")}
-                        </span>
-                      </div>
-                    ) : (
-                      <article
-                        key={message.id}
-                        className={`w-fit max-w-[78%] rounded-2xl border px-3 py-2.5 text-sm shadow-sm ${
-                          message.sender === "agent"
-                            ? "ml-auto border-blue-500 bg-blue-600 text-white"
-                            : message.sender === "team"
-                              ? "ml-auto border-amber-300 bg-amber-100 text-amber-950"
-                              : "border-slate-200 bg-white text-slate-900"
-                        }`}
-                      >
-                        {message.sender === "team" ? (
-                          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-amber-700">
-                            Internal note
-                          </p>
-                        ) : null}
-                        <div
-                          className={`dashboard-md ${message.sender === "agent" ? "dashboard-md-agent" : ""}`}
-                        >
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {String(message.text ?? "")}
-                          </ReactMarkdown>
-                        </div>
-                        {renderMessageWidget(message)}
-                        <time
-                          className={`mt-1 block text-right text-[11px] ${
-                            message.sender === "agent"
-                              ? "text-blue-100"
-                              : message.sender === "team"
-                                ? "text-amber-700"
-                              : "text-slate-400"
-                          }`}
-                        >
-                          {formatTime(message.createdAt)}
-                        </time>
-                      </article>
-                    ),
-                  )}
-
-                  {activeId && visitorDraftBySession[activeId] && (
-                    <article className="max-w-[78%] rounded-2xl border border-dashed border-slate-300 bg-white px-3 py-2 text-sm text-slate-700">
-                      <p className="whitespace-pre-wrap break-words">
-                        {visitorDraftBySession[activeId]}
-                      </p>
-                      <time className="mt-1 block text-right text-[11px] text-slate-400">
-                        typing...
-                      </time>
-                    </article>
-                  )}
-                  <div ref={bottomRef} />
-                </div>
-              </ScrollArea>
-
-              <form
-                onSubmit={sendMessage}
-                className="relative grid grid-rows-[auto_1fr] gap-2 border-t border-slate-200 bg-white p-3"
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="inline-flex rounded-md border border-slate-300 bg-slate-50 p-0.5">
-                    <button
-                      type="button"
-                      className={`rounded px-2 py-1 text-xs font-medium transition ${
-                        messageAudience === "user"
-                          ? "bg-white text-slate-900 shadow-sm"
-                          : "text-slate-600 hover:text-slate-900"
-                      }`}
-                      onClick={() => setMessageAudience("user")}
-                    >
-                      User message
-                    </button>
-                    <button
-                      type="button"
-                      className={`rounded px-2 py-1 text-xs font-medium transition ${
-                        messageAudience === "team"
-                          ? "bg-amber-100 text-amber-900 shadow-sm"
-                          : "text-slate-600 hover:text-slate-900"
-                      }`}
-                      onClick={() => setMessageAudience("team")}
-                    >
-                      Team note
-                    </button>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCannedPanelOpen((v) => !v)}
-                    disabled={!activeId}
-                  >
-                    Canned replies
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => patchSessionMeta({ status: "closed" })}
-                    disabled={!activeId}
-                  >
-                    Close chat
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => patchSessionMeta({ status: "open" })}
-                    disabled={!activeId || !isActiveSessionClosed}
-                  >
-                    Reopen
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => patchSessionMeta({ priority: "high" })}
-                    disabled={!activeId}
-                  >
-                    Set high priority
-                  </Button>
-                  <span className="text-[11px] text-slate-400">
-                    Shortcuts: `Ctrl/Cmd+Enter` send, `/shortcut` expand.
-                  </span>
-                </div>
-
-                {(cannedPanelOpen || slashQuery.length > 0) && (
-                  <div className="absolute bottom-[108px] left-3 right-3 z-20 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
-                    {slashQuery ? (
-                      <p className="mb-2 text-[11px] text-slate-500">
-                        Filtering canned replies by: <strong>/{slashQuery}</strong>
-                      </p>
-                    ) : null}
-                    <div className="max-h-36 space-y-1 overflow-y-auto">
-                      {filteredCannedReplies.map((reply) => (
-                        <div
-                          key={reply.id}
-                          className="flex items-center gap-2 rounded-md border border-slate-200 bg-white p-1.5"
-                        >
-                          <button
-                            type="button"
-                            className="flex-1 text-left"
-                            onClick={() => insertCannedReply(reply)}
-                          >
-                            <p className="text-xs font-semibold text-slate-800">
-                              {reply.title}
-                            </p>
-                            <p className="truncate text-[11px] text-slate-500">
-                              {reply.shortcut ? `${reply.shortcut} • ` : ""}
-                              {reply.body}
-                            </p>
-                          </button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            className="h-7 px-2 text-xs text-red-600 hover:text-red-700"
-                            onClick={() => deleteCannedReply(reply.id)}
-                          >
-                            Delete
-                          </Button>
-                        </div>
-                      ))}
-                      {filteredCannedReplies.length === 0 && (
-                        <p className="text-xs text-slate-400">
-                          No canned replies found.
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-[1fr_auto] gap-2">
-                  <Textarea
-                    placeholder={
-                      activeId
-                        ? isActiveSessionClosed && messageAudience === "user"
-                          ? "This conversation is closed. Reopen to send a user message."
-                          : "Type your reply..."
-                        : "Select a conversation to reply"
-                    }
-                    value={text}
-                    onChange={(e) => {
-                      setText(e.target.value);
-                      bumpTyping();
-                    }}
-                    onBlur={() => sendTypingState(false)}
-                    onKeyDown={(e) => {
-                      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                        e.preventDefault();
-                        if (activeId && text.trim()) {
-                          sendTypingState(false);
-                          sendWsEvent("agent:message", {
-                            sessionId: activeId,
-                            text: text.trim(),
-                            internal: messageAudience === "team",
-                          });
-                          setText("");
-                          setMessageAudience("user");
-                          setCannedPanelOpen(false);
-                        }
-                        return;
-                      }
-
-                      if (e.key === "Escape") {
-                        setCannedPanelOpen(false);
-                      }
-
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        const candidate = text.trim().toLowerCase();
-                        if (candidate.startsWith("/")) {
-                          const matched = cannedReplies.find(
-                            (reply) =>
-                              (reply.shortcut || "").trim().toLowerCase() ===
-                              candidate,
-                          );
-                          const firstFiltered = filteredCannedReplies[0];
-                          if (matched) {
-                            e.preventDefault();
-                            setText(resolveTemplate(matched.body));
-                            setCannedPanelOpen(false);
-                            return;
-                          }
-                          if (firstFiltered) {
-                            e.preventDefault();
-                            setText(resolveTemplate(firstFiltered.body));
-                            setCannedPanelOpen(false);
-                            return;
-                          }
-                          e.preventDefault();
-                          return;
-                        }
-                      }
-
-                      if (e.key === "Tab" && slashQuery.length > 0) {
-                        const firstFiltered = filteredCannedReplies[0];
-                        if (firstFiltered) {
-                          e.preventDefault();
-                          setText(resolveTemplate(firstFiltered.body));
-                          setCannedPanelOpen(false);
-                        }
-                      }
-                    }}
-                    disabled={
-                      !activeId ||
-                      (isActiveSessionClosed && messageAudience === "user")
-                    }
-                    rows={2}
-                    className="min-h-10 resize-none bg-slate-50"
-                  />
-                  <Button
-                    type="submit"
-                    disabled={
-                      !activeId ||
-                      !text.trim() ||
-                      (isActiveSessionClosed && messageAudience === "user")
-                    }
-                    className="h-10 self-end bg-blue-600 text-white hover:bg-blue-700"
-                  >
-                    Send
-                  </Button>
-                </div>
-              </form>
-            </section>
-
-            <aside className="flex min-h-0 flex-col bg-white max-[1220px]:hidden">
-              <div className="border-b border-slate-200 p-4">
-                <h3 className="text-sm font-semibold text-slate-900">
-                  Profile details
-                </h3>
-                <p className="mt-1 text-xs text-slate-500">
-                  User information, routing and conversation notes.
-                </p>
-              </div>
-
-              <ScrollArea className="h-full p-4">
-                <div className="space-y-4 text-sm">
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <div className="mb-3 flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100 text-sm font-semibold text-blue-700">
-                        {activeSession?.id?.slice(0, 2).toUpperCase() || "--"}
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-slate-900">
-                          {activeSession
-                            ? `Visitor ${activeSession.id.slice(0, 6)}`
-                            : "No visitor selected"}
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          {activeSession
-                            ? `Joined ${new Date(activeSession.createdAt).toLocaleDateString()}`
-                            : "Select a conversation"}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="space-y-1.5 text-xs">
-                      <div className="flex items-center justify-between text-slate-600">
-                        <span>Assignee</span>
-                        <span className="font-medium text-slate-900">
-                          {agents.find(
-                            (item) => item.id === activeSession?.assigneeAgentId,
-                          )?.name || "Unassigned"}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between text-slate-600">
-                        <span>Channel</span>
-                        <span className="font-medium capitalize text-slate-900">
-                          {activeSession?.channel || "web"}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between text-slate-600">
-                        <span>Inbox</span>
-                        <span className="font-medium text-slate-900">
-                          {inboxes.find((item) => item.id === activeSession?.inboxId)
-                            ?.name || "None"}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between text-slate-600">
-                        <span>Team</span>
-                        <span className="font-medium text-slate-900">
-                          {teams.find((item) => item.id === activeSession?.teamId)
-                            ?.name || "None"}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between text-slate-600">
-                        <span>Messages</span>
-                        <span className="font-medium text-slate-900">
-                          {activeSession?.messageCount || 0}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between text-slate-600">
-                        <span>Status</span>
-                        <span className="font-medium uppercase text-slate-900">
-                          {activeSession?.status || "open"}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between text-slate-600">
-                        <span>Priority</span>
-                        <span className="font-medium uppercase text-slate-900">
-                          {activeSession?.priority || "normal"}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl border border-slate-200 p-3">
-                    <div className="mb-2 flex items-center justify-between">
-                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Agent Handover
-                      </span>
-                      <Badge
-                        variant={
-                          activeSession?.handoverActive ? "default" : "secondary"
-                        }
-                      >
-                        {activeSession?.handoverActive ? "Human" : "Bot"}
-                      </Badge>
-                    </div>
-                    <Button
-                      size="sm"
-                      className="w-full"
-                      variant={
-                        activeSession?.handoverActive ? "outline" : "default"
-                      }
-                      disabled={!activeId}
-                      onClick={() =>
-                        setHandover(!Boolean(activeSession?.handoverActive))
-                      }
-                    >
-                      {activeSession?.handoverActive
-                        ? "Return To Bot"
-                        : "Take Over As Agent"}
-                    </Button>
-                  </div>
-
-                  <div className="space-y-3 rounded-xl border border-slate-200 p-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Routing
-                    </p>
-
-                    <div>
-                      <label className="mb-1 block text-xs text-slate-500">
-                        Status
-                      </label>
-                      <select
-                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
-                        value={activeSession?.status || "open"}
-                        onChange={(e) =>
-                          patchSessionMeta({
-                            status: e.target.value,
-                          })
-                        }
-                        disabled={!activeId}
-                      >
-                        <option value="open">open</option>
-                        <option value="awaiting">awaiting</option>
-                        <option value="snoozed">snoozed</option>
-                        <option value="resolved">resolved</option>
-                        <option value="closed">closed</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-xs text-slate-500">
-                        Priority
-                      </label>
-                      <select
-                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
-                        value={activeSession?.priority || "normal"}
-                        onChange={(e) =>
-                          patchSessionMeta({
-                            priority: e.target.value,
-                          })
-                        }
-                        disabled={!activeId}
-                      >
-                        <option value="low">low</option>
-                        <option value="normal">normal</option>
-                        <option value="high">high</option>
-                        <option value="urgent">urgent</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-xs text-slate-500">
-                        Assignee
-                      </label>
-                      <select
-                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
-                        value={activeSession?.assigneeAgentId || ""}
-                        onChange={(e) =>
-                          patchActiveSession("assignee", {
-                            agentId: e.target.value || null,
-                          })
-                        }
-                        disabled={!activeId}
-                      >
-                        <option value="">Unassigned</option>
-                        {agents.map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-xs text-slate-500">
-                        Channel
-                      </label>
-                      <select
-                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
-                        value={activeSession?.channel || "web"}
-                        onChange={(e) =>
-                          patchActiveSession("channel", {
-                            channel: e.target.value,
-                          })
-                        }
-                        disabled={!activeId}
-                      >
-                        {channels.map((channel) => (
-                          <option key={channel} value={channel}>
-                            {channel}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-xs text-slate-500">
-                        Inbox
-                      </label>
-                      <select
-                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
-                        value={activeSession?.inboxId || ""}
-                        onChange={(e) =>
-                          patchActiveSession("inbox", {
-                            inboxId: e.target.value || null,
-                          })
-                        }
-                        disabled={!activeId}
-                      >
-                        <option value="">None</option>
-                        {inboxes.map((inbox) => (
-                          <option key={inbox.id} value={inbox.id}>
-                            {inbox.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-xs text-slate-500">
-                        Team
-                      </label>
-                      <select
-                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
-                        value={activeSession?.teamId || ""}
-                        onChange={(e) =>
-                          patchActiveSession("team", {
-                            teamId: e.target.value || null,
-                          })
-                        }
-                        disabled={!activeId}
-                      >
-                        <option value="">None</option>
-                        {teams.map((team) => (
-                          <option key={team.id} value={team.id}>
-                            {team.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-xs text-slate-500">
-                        Flow
-                      </label>
-                      <select
-                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
-                        value={activeSession?.flowId || ""}
-                        onChange={(e) =>
-                          patchActiveSession("flow", {
-                            flowId: e.target.value || null,
-                          })
-                        }
-                        disabled={!activeId}
-                      >
-                        <option value="">No flow</option>
-                        {flows.map((flow) => (
-                          <option key={flow.id} value={flow.id}>
-                            {flow.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl border border-slate-200 p-3">
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Notes
-                    </p>
-                    <Textarea
-                      value={noteText}
-                      onChange={(e) => setNoteText(e.target.value)}
-                      placeholder="Add a note for this conversation"
-                      rows={3}
-                      disabled={!activeId}
-                    />
-                    <Button
-                      className="mt-2 w-full"
-                      variant="secondary"
-                      onClick={saveNote}
-                      disabled={!activeId || !noteText.trim()}
-                    >
-                      Save Note
-                    </Button>
-
-                    <div className="mt-3 space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
-                      {notes.map((note) => (
-                        <div
-                          key={note.id}
-                          className="rounded-md border border-slate-200 bg-white p-2 text-sm text-slate-700"
-                        >
-                          <p>{note.text}</p>
-                          <p className="mt-1 text-[11px] text-slate-400">
-                            {formatTime(note.createdAt)}
-                          </p>
-                        </div>
-                      ))}
-                      {notes.length === 0 && (
-                        <p className="text-xs text-slate-400">No notes yet.</p>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl border border-slate-200 p-3">
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Canned replies
-                    </p>
-                    <form className="space-y-2" onSubmit={createCannedReply}>
-                      <Input
-                        value={newCanned.title}
-                        onChange={(e) =>
-                          setNewCanned((prev) => ({
-                            ...prev,
-                            title: e.target.value,
-                          }))
-                        }
-                        placeholder="Title"
-                        className="h-8"
-                      />
-                      <div className="grid grid-cols-2 gap-2">
-                        <Input
-                          value={newCanned.shortcut}
-                          onChange={(e) =>
-                            setNewCanned((prev) => ({
-                              ...prev,
-                              shortcut: e.target.value,
-                            }))
-                          }
-                          placeholder="/shortcut"
-                          className="h-8"
-                        />
-                        <Input
-                          value={newCanned.category}
-                          onChange={(e) =>
-                            setNewCanned((prev) => ({
-                              ...prev,
-                              category: e.target.value,
-                            }))
-                          }
-                          placeholder="Category"
-                          className="h-8"
-                        />
-                      </div>
-                      <Textarea
-                        value={newCanned.body}
-                        onChange={(e) =>
-                          setNewCanned((prev) => ({
-                            ...prev,
-                            body: e.target.value,
-                          }))
-                        }
-                        placeholder="Template body. Use {{agent_name}}, {{visitor_id}}, {{channel}}."
-                        rows={3}
-                      />
-                      <Button
-                        type="submit"
-                        size="sm"
-                        className="w-full"
-                        disabled={cannedSaving || !newCanned.title || !newCanned.body}
-                      >
-                        {cannedSaving ? "Saving..." : "Save canned reply"}
-                      </Button>
-                    </form>
-                  </div>
-                </div>
-              </ScrollArea>
-            </aside>
-          </div>
+          <ConversationsView
+            view={view}
+            setView={setView}
+            sessions={sessions}
+            createFlow={createFlow}
+            conversationSearch={conversationSearch}
+            setConversationSearch={setConversationSearch}
+            openCount={openCount}
+            waitingCount={waitingCount}
+            closedCount={closedCount}
+            conversationFilter={conversationFilter}
+            setConversationFilter={setConversationFilter}
+            agent={agent}
+            updateAgentStatus={updateAgentStatus}
+            channelCounts={channelCounts}
+            filteredSessions={filteredSessions}
+            activeId={activeId}
+            setActiveId={setActiveId}
+            formatTime={formatTime}
+            sessionPreview={sessionPreview}
+            activeSession={activeSession}
+            messages={messages}
+            visitorDraftBySession={visitorDraftBySession}
+            bottomRef={bottomRef}
+            sendMessage={sendMessage}
+            messageAudience={messageAudience}
+            setMessageAudience={setMessageAudience}
+            cannedPanelOpen={cannedPanelOpen}
+            setCannedPanelOpen={setCannedPanelOpen}
+            patchSessionMeta={patchSessionMeta}
+            isActiveSessionClosed={isActiveSessionClosed}
+            slashQuery={slashQuery}
+            filteredCannedReplies={filteredCannedReplies}
+            insertCannedReply={insertCannedReply}
+            deleteCannedReply={deleteCannedReply}
+            text={text}
+            setText={setText}
+            bumpTyping={bumpTyping}
+            sendTypingState={sendTypingState}
+            sendWsEvent={sendWsEvent}
+            cannedReplies={cannedReplies}
+            resolveTemplate={resolveTemplate}
+            agents={agents}
+            teams={teams}
+            inboxes={inboxes}
+            channels={channels}
+            flows={flows}
+            patchActiveSession={patchActiveSession}
+            setHandover={setHandover}
+            noteText={noteText}
+            setNoteText={setNoteText}
+            saveNote={saveNote}
+            notes={notes}
+            createCannedReply={createCannedReply}
+            newCanned={newCanned}
+            setNewCanned={setNewCanned}
+            cannedSaving={cannedSaving}
+            renderMessageWidget={renderMessageWidget}
+          />
         ) : view === "flows" ? (
-          <div className="grid min-h-0 grid-cols-[280px_1fr_320px] bg-slate-50 max-[1200px]:grid-cols-[1fr]">
-            <aside className="border-r border-slate-200 bg-white p-3 max-[1200px]:hidden">
-              <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-sm font-semibold">Flows</h3>
-                <Button size="sm" onClick={createFlow}>
-                  New
-                </Button>
-              </div>
-
-              <ScrollArea className="h-[calc(100vh-120px)] pr-2">
-                <div className="space-y-2">
-                  {flows.map((flow) => (
-                    <button
-                      key={flow.id}
-                      onClick={() => {
-                        setActiveFlowId(flow.id);
-                        loadFlowIntoEditor(flow);
-                      }}
-                      className={`w-full rounded-md border px-3 py-2 text-left ${
-                        flow.id === activeFlowId
-                          ? "border-blue-200 bg-blue-50"
-                          : "border-slate-200 bg-white"
-                      }`}
-                    >
-                      <p className="text-sm font-medium text-slate-900">
-                        {flow.name}
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {flow.description || "No description"}
-                      </p>
-                      <p className="mt-1 text-[11px] uppercase text-slate-400">
-                        {flow.enabled ? "enabled" : "disabled"}
-                      </p>
-                    </button>
-                  ))}
-                  {flows.length === 0 && (
-                    <p className="text-xs text-slate-400">No flows yet.</p>
-                  )}
-                </div>
-              </ScrollArea>
-            </aside>
-
-            <section className="grid min-h-0 grid-rows-[56px_1fr]">
-              <div className="flex items-center gap-2 border-b border-slate-200 bg-white px-3">
-                <Input
-                  value={flowName}
-                  onChange={(e) => setFlowName(e.target.value)}
-                  placeholder="Flow name"
-                  className="max-w-sm"
-                />
-                <Badge variant={flowEnabled ? "default" : "secondary"}>
-                  {flowEnabled ? "enabled" : "disabled"}
-                </Badge>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setFlowEnabled((v) => !v)}
-                >
-                  Toggle
-                </Button>
-                <Button size="sm" onClick={saveFlow} disabled={!activeFlowId}>
-                  Save Flow
-                </Button>
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  onClick={deleteCurrentFlow}
-                  disabled={!activeFlowId}
-                >
-                  Delete
-                </Button>
-                {flowSaveStatus && (
-                  <span className="text-xs text-slate-500">
-                    {flowSaveStatus}
-                  </span>
-                )}
-              </div>
-
-              <div className="relative min-h-0 bg-slate-100">
-                <ReactFlow
-                  nodes={flowNodes}
-                  edges={flowEdges}
-                  onNodesChange={onFlowNodesChange}
-                  onEdgesChange={onFlowEdgesChange}
-                  onConnect={onFlowConnect}
-                  onSelectionChange={({ nodes }) =>
-                    setSelectedNodeId(nodes?.[0]?.id || "")
-                  }
-                  fitView
-                  connectionLineType={ConnectionLineType.SmoothStep}
-                >
-                  <MiniMap pannable zoomable />
-                  <Controls />
-                  <Background gap={24} size={1.5} color="#d7dce5" />
-                </ReactFlow>
-              </div>
-            </section>
-
-            <aside className="border-l border-slate-200 bg-white p-3 max-[1200px]:hidden">
-              <h3 className="text-sm font-semibold">Flow Inspector</h3>
-              <p className="mb-3 text-xs text-slate-500">
-                Add nodes, edit node data, and configure AI behavior.
-              </p>
-
-              <div className="grid grid-cols-2 gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => addFlowNode("trigger")}
-                >
-                  + Trigger
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => addFlowNode("condition")}
-                >
-                  + Condition
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => addFlowNode("message")}
-                >
-                  + Message
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => addFlowNode("buttons")}
-                >
-                  + Buttons
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => addFlowNode("carousel")}
-                >
-                  + Carousel
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => addFlowNode("select")}
-                >
-                  + Select
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => addFlowNode("input_form")}
-                >
-                  + Input Form
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => addFlowNode("quick_input")}
-                >
-                  + Quick Input
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => addFlowNode("ai")}
-                >
-                  + AI
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => addFlowNode("end")}
-                >
-                  + End
-                </Button>
-              </div>
-
-              <Separator className="my-4" />
-
-              <label className="mb-1 block text-xs text-slate-500">
-                Description
-              </label>
-              <Textarea
-                rows={3}
-                value={flowDescription}
-                onChange={(e) => setFlowDescription(e.target.value)}
-                placeholder="What this flow does"
-              />
-
-              <Separator className="my-4" />
-
-              {selectedNode ? (
-                <div className="space-y-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Selected Node
-                  </p>
-                  <Input
-                    value={selectedNode.data?.label || ""}
-                    onChange={(e) =>
-                      updateSelectedNodeData({ label: e.target.value })
-                    }
-                    placeholder="Label"
-                  />
-                  <p className="text-[11px] text-slate-500">
-                    Type: {selectedNode.type}
-                  </p>
-
-                  {(selectedNode.type === "message" ||
-                    selectedNode.type === "condition" ||
-                    selectedNode.type === "buttons" ||
-                    selectedNode.type === "carousel" ||
-                    selectedNode.type === "select" ||
-                    selectedNode.type === "input_form" ||
-                    selectedNode.type === "quick_input") && (
-                    <Input
-                      value={selectedNode.data?.text || ""}
-                      onChange={(e) =>
-                        updateSelectedNodeData({ text: e.target.value })
-                      }
-                      placeholder="Message text"
-                    />
-                  )}
-
-                  {selectedNode.type === "buttons" && (
-                    <Input
-                      value={
-                        Array.isArray(selectedNode.data?.buttons)
-                          ? selectedNode.data.buttons.join(", ")
-                          : ""
-                      }
-                      onChange={(e) =>
-                        updateSelectedNodeData({
-                          buttons: e.target.value
-                            .split(",")
-                            .map((item) => item.trim())
-                            .filter(Boolean),
-                        })
-                      }
-                      placeholder="Button labels, comma separated"
-                    />
-                  )}
-
-                  {selectedNode.type === "select" && (
-                    <div className="space-y-2">
-                      <Input
-                        value={selectedNode.data?.placeholder || ""}
-                        onChange={(e) =>
-                          updateSelectedNodeData({
-                            placeholder: e.target.value,
-                          })
-                        }
-                        placeholder="Select placeholder"
-                      />
-                      <Input
-                        value={selectedNode.data?.buttonLabel || ""}
-                        onChange={(e) =>
-                          updateSelectedNodeData({
-                            buttonLabel: e.target.value,
-                          })
-                        }
-                        placeholder="Submit button label"
-                      />
-                      <Input
-                        value={
-                          Array.isArray(selectedNode.data?.options)
-                            ? selectedNode.data.options.join(", ")
-                            : ""
-                        }
-                        onChange={(e) =>
-                          updateSelectedNodeData({
-                            options: e.target.value
-                              .split(",")
-                              .map((item) => item.trim())
-                              .filter(Boolean),
-                          })
-                        }
-                        placeholder="Options, comma separated"
-                      />
-                    </div>
-                  )}
-
-                  {selectedNode.type === "carousel" && (
-                    <Textarea
-                      rows={6}
-                      value={carouselItemsText}
-                      onChange={(e) => {
-                        const items = e.target.value
-                          .split("\n")
-                          .map((line) => line.trim())
-                          .filter(Boolean)
-                          .map((line) => {
-                            const [title, description, price, imageUrl] = line
-                              .split("|")
-                              .map((part) => part.trim());
-                            return {
-                              title: title || "Item",
-                              description: description || "",
-                              price: price || "",
-                              imageUrl: imageUrl || "",
-                              buttons: [
-                                { label: "View", value: title || "View item" },
-                              ],
-                            };
-                          });
-                        updateSelectedNodeData({ items });
-                      }}
-                      placeholder="One item per line: title | description | price | imageUrl"
-                    />
-                  )}
-
-                  {selectedNode.type === "input_form" && (
-                    <div className="space-y-2">
-                      <Input
-                        value={selectedNode.data?.submitLabel || ""}
-                        onChange={(e) =>
-                          updateSelectedNodeData({
-                            submitLabel: e.target.value,
-                          })
-                        }
-                        placeholder="Submit label"
-                      />
-                      <Textarea
-                        rows={6}
-                        value={
-                          Array.isArray(selectedNode.data?.fields)
-                            ? selectedNode.data.fields
-                                .map((field) =>
-                                  [
-                                    field?.name || "",
-                                    field?.label || "",
-                                    field?.placeholder || "",
-                                    field?.type || "text",
-                                    String(field?.required ?? true),
-                                  ].join(" | "),
-                                )
-                                .join("\n")
-                            : ""
-                        }
-                        onChange={(e) => {
-                          const fields = e.target.value
-                            .split("\n")
-                            .map((line) => line.trim())
-                            .filter(Boolean)
-                            .map((line) => {
-                              const [name, label, placeholder, type, required] =
-                                line.split("|").map((part) => part.trim());
-                              return {
-                                name: name || "field",
-                                label: label || name || "Field",
-                                placeholder: placeholder || "",
-                                type: type || "text",
-                                required: required
-                                  ? required.toLowerCase() !== "false"
-                                  : true,
-                              };
-                            });
-                          updateSelectedNodeData({ fields });
-                        }}
-                        placeholder="One field per line: name | label | placeholder | type | required"
-                      />
-                    </div>
-                  )}
-
-                  {selectedNode.type === "quick_input" && (
-                    <div className="space-y-2">
-                      <Input
-                        value={selectedNode.data?.placeholder || ""}
-                        onChange={(e) =>
-                          updateSelectedNodeData({
-                            placeholder: e.target.value,
-                          })
-                        }
-                        placeholder="Input placeholder"
-                      />
-                      <Input
-                        value={selectedNode.data?.buttonLabel || ""}
-                        onChange={(e) =>
-                          updateSelectedNodeData({
-                            buttonLabel: e.target.value,
-                          })
-                        }
-                        placeholder="Button label"
-                      />
-                      <select
-                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
-                        value={selectedNode.data?.inputType || "text"}
-                        onChange={(e) =>
-                          updateSelectedNodeData({ inputType: e.target.value })
-                        }
-                      >
-                        <option value="text">text</option>
-                        <option value="email">email</option>
-                        <option value="tel">tel</option>
-                      </select>
-                    </div>
-                  )}
-
-                  {selectedNode.type === "trigger" && (
-                    <div className="space-y-2">
-                      <label className="block text-[11px] text-slate-500">
-                        Run When
-                      </label>
-                      <select
-                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm"
-                        value={selectedNode.data?.on || "widget_open"}
-                        onChange={(e) =>
-                          updateSelectedNodeData({ on: e.target.value })
-                        }
-                      >
-                        <option value="widget_open">Widget opens</option>
-                        <option value="page_open">Page opens</option>
-                        <option value="first_message">
-                          First visitor message
-                        </option>
-                        <option value="any_message">Any visitor message</option>
-                      </select>
-                      <Input
-                        value={
-                          Array.isArray(selectedNode.data?.keywords)
-                            ? selectedNode.data.keywords.join(", ")
-                            : ""
-                        }
-                        onChange={(e) =>
-                          updateSelectedNodeData({
-                            keywords: e.target.value
-                              .split(",")
-                              .map((item) => item.trim())
-                              .filter(Boolean),
-                          })
-                        }
-                        placeholder="keywords, comma separated (for message triggers)"
-                      />
-                    </div>
-                  )}
-
-                  {selectedNode.type === "condition" && (
-                    <Input
-                      value={selectedNode.data?.contains || ""}
-                      onChange={(e) =>
-                        updateSelectedNodeData({ contains: e.target.value })
-                      }
-                      placeholder="Contains text"
-                    />
-                  )}
-
-                  {selectedNode.type === "ai" && (
-                    <Textarea
-                      rows={4}
-                      value={selectedNode.data?.prompt || ""}
-                      onChange={(e) =>
-                        updateSelectedNodeData({ prompt: e.target.value })
-                      }
-                      placeholder="AI instruction prompt"
-                    />
-                  )}
-
-                  {(selectedNode.type === "message" ||
-                    selectedNode.type === "ai" ||
-                    selectedNode.type === "buttons" ||
-                    selectedNode.type === "carousel" ||
-                    selectedNode.type === "select" ||
-                    selectedNode.type === "input_form" ||
-                    selectedNode.type === "quick_input") && (
-                    <Input
-                      type="number"
-                      min={100}
-                      max={6000}
-                      value={selectedNode.data?.delayMs ?? 420}
-                      onChange={(e) =>
-                        updateSelectedNodeData({
-                          delayMs: Number(e.target.value || 420),
-                        })
-                      }
-                      placeholder="Delay ms"
-                    />
-                  )}
-
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={removeSelectedNode}
-                  >
-                    Remove Node
-                  </Button>
-                </div>
-              ) : (
-                <p className="text-xs text-slate-400">
-                  Select a node to edit its fields.
-                </p>
-              )}
-            </aside>
-          </div>
+          <FlowsView
+            flows={flows}
+            createFlow={createFlow}
+            activeFlowId={activeFlowId}
+            setActiveFlowId={setActiveFlowId}
+            loadFlowIntoEditor={loadFlowIntoEditor}
+            flowName={flowName}
+            setFlowName={setFlowName}
+            flowEnabled={flowEnabled}
+            setFlowEnabled={setFlowEnabled}
+            saveFlow={saveFlow}
+            deleteCurrentFlow={deleteCurrentFlow}
+            flowSaveStatus={flowSaveStatus}
+            flowNodes={flowNodes}
+            flowEdges={flowEdges}
+            onFlowNodesChange={onFlowNodesChange}
+            onFlowEdgesChange={onFlowEdgesChange}
+            onFlowConnect={onFlowConnect}
+            setSelectedNodeId={setSelectedNodeId}
+            addFlowNode={addFlowNode}
+            flowDescription={flowDescription}
+            setFlowDescription={setFlowDescription}
+            selectedNode={selectedNode}
+            updateSelectedNodeData={updateSelectedNodeData}
+            carouselItemsText={carouselItemsText}
+            removeSelectedNode={removeSelectedNode}
+          />
         ) : view === "contacts" ? (
-          <div className="grid min-h-0 grid-cols-[340px_1fr] gap-4 bg-slate-50 p-4 max-[1000px]:grid-cols-[1fr]">
-            <aside className="rounded-xl border border-slate-200 bg-white p-4">
-              <h3 className="text-sm font-semibold text-slate-900">
-                Create contact
-              </h3>
-              <p className="mb-3 text-xs text-slate-500">
-                Contacts are scoped to the current tenant/workspace.
-              </p>
-              <form className="space-y-2" onSubmit={createContact}>
-                <Input
-                  value={newContact.displayName}
-                  onChange={(e) =>
-                    setNewContact((prev) => ({
-                      ...prev,
-                      displayName: e.target.value,
-                    }))
-                  }
-                  placeholder="Display name"
-                />
-                <Input
-                  value={newContact.email}
-                  onChange={(e) =>
-                    setNewContact((prev) => ({ ...prev, email: e.target.value }))
-                  }
-                  placeholder="Email"
-                />
-                <Input
-                  value={newContact.phone}
-                  onChange={(e) =>
-                    setNewContact((prev) => ({ ...prev, phone: e.target.value }))
-                  }
-                  placeholder="Phone"
-                />
-                <Button
-                  type="submit"
-                  className="w-full bg-blue-600 text-white hover:bg-blue-700"
-                >
-                  Save contact
-                </Button>
-              </form>
-            </aside>
-
-            <section className="rounded-xl border border-slate-200 bg-white p-4">
-              <h3 className="mb-3 text-sm font-semibold text-slate-900">
-                Contacts ({contacts.length})
-              </h3>
-              <ScrollArea className="h-[calc(100vh-170px)]">
-                <div className="space-y-2 pr-2">
-                  {contacts.map((contact) => (
-                    <article
-                      key={contact.id}
-                      className="rounded-lg border border-slate-200 bg-slate-50 p-3"
-                    >
-                      <p className="text-sm font-medium text-slate-900">
-                        {contact.displayName || "Unnamed contact"}
-                      </p>
-                      <p className="text-xs text-slate-600">
-                        {contact.email || "No email"}
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {contact.phone || "No phone"}
-                      </p>
-                    </article>
-                  ))}
-                  {contacts.length === 0 && (
-                    <p className="text-xs text-slate-400">No contacts yet.</p>
-                  )}
-                </div>
-              </ScrollArea>
-            </section>
-          </div>
+          <ContactsView
+            contacts={contacts}
+            newContact={newContact}
+            setNewContact={setNewContact}
+            createContact={createContact}
+          />
         ) : view === "customization" ? (
-          <div className="grid min-h-0 grid-cols-[1fr_320px] gap-4 bg-slate-50 p-4 max-[1080px]:grid-cols-[1fr]">
-            <section className="rounded-xl border border-slate-200 bg-white p-4">
-              <h3 className="text-sm font-semibold text-slate-900">
-                Workspace customization
-              </h3>
-              <p className="mb-3 text-xs text-slate-500">
-                Configure branding and widget behavior for this tenant.
-              </p>
-              <div className="grid gap-2">
-                <Input
-                  value={tenantSettings?.brandName || ""}
-                  onChange={(e) =>
-                    setTenantSettings((prev) => ({
-                      ...(prev || {}),
-                      brandName: e.target.value,
-                    }))
-                  }
-                  placeholder="Brand name"
-                />
-                <div className="grid grid-cols-2 gap-2">
-                  <Input
-                    value={tenantSettings?.primaryColor || ""}
-                    onChange={(e) =>
-                      setTenantSettings((prev) => ({
-                        ...(prev || {}),
-                        primaryColor: e.target.value,
-                      }))
-                    }
-                    placeholder="Primary color (#hex)"
-                  />
-                  <Input
-                    value={tenantSettings?.accentColor || ""}
-                    onChange={(e) =>
-                      setTenantSettings((prev) => ({
-                        ...(prev || {}),
-                        accentColor: e.target.value,
-                      }))
-                    }
-                    placeholder="Accent color (#hex)"
-                  />
-                </div>
-                <Input
-                  value={tenantSettings?.logoUrl || ""}
-                  onChange={(e) =>
-                    setTenantSettings((prev) => ({
-                      ...(prev || {}),
-                      logoUrl: e.target.value,
-                    }))
-                  }
-                  placeholder="Logo URL"
-                />
-                <Input
-                  value={tenantSettings?.privacyUrl || ""}
-                  onChange={(e) =>
-                    setTenantSettings((prev) => ({
-                      ...(prev || {}),
-                      privacyUrl: e.target.value,
-                    }))
-                  }
-                  placeholder="Privacy URL"
-                />
-                <Textarea
-                  rows={3}
-                  value={tenantSettings?.welcomeText || ""}
-                  onChange={(e) =>
-                    setTenantSettings((prev) => ({
-                      ...(prev || {}),
-                      welcomeText: e.target.value,
-                    }))
-                  }
-                  placeholder="Welcome text"
-                />
-                <Button
-                  className="w-full bg-blue-600 text-white hover:bg-blue-700"
-                  onClick={saveTenantSettings}
-                >
-                  Save customization
-                </Button>
-              </div>
-            </section>
-            <aside className="rounded-xl border border-slate-200 bg-white p-4">
-              <h4 className="text-sm font-semibold text-slate-900">Tenant</h4>
-              <div className="mt-3 space-y-2">
-                {tenants.map((tenant) => (
-                  <div
-                    key={tenant.id}
-                    className="rounded-md border border-slate-200 bg-slate-50 p-2"
-                  >
-                    <p className="text-sm font-medium text-slate-900">
-                      {tenant.name}
-                    </p>
-                    <p className="text-xs text-slate-500">{tenant.slug}</p>
-                  </div>
-                ))}
-              </div>
-            </aside>
-          </div>
+          <CustomizationView
+            tenantSettings={tenantSettings}
+            setTenantSettings={setTenantSettings}
+            saveTenantSettings={saveTenantSettings}
+            tenants={tenants}
+          />
         ) : view === "csat" ? (
-          <div className="grid min-h-0 grid-cols-[320px_1fr] gap-4 bg-slate-50 p-4 max-[1080px]:grid-cols-[1fr]">
-            <aside className="rounded-xl border border-slate-200 bg-white p-4">
-              <h3 className="text-sm font-semibold text-slate-900">
-                CSAT Overview
-              </h3>
-              <div className="mt-3 space-y-2">
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <p className="text-xs text-slate-500">Responses</p>
-                  <p className="text-2xl font-semibold text-slate-900">
-                    {csatReport.count || 0}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <p className="text-xs text-slate-500">Average score</p>
-                  <p className="text-2xl font-semibold text-slate-900">
-                    {Number(csatReport.average || 0).toFixed(2)}
-                  </p>
-                </div>
-              </div>
-            </aside>
-            <section className="rounded-xl border border-slate-200 bg-white p-4">
-              <h3 className="mb-3 text-sm font-semibold text-slate-900">
-                CSAT submissions
-              </h3>
-              <ScrollArea className="h-[calc(100vh-170px)]">
-                <div className="space-y-2 pr-2">
-                  {(csatReport.surveys || []).map((survey) => (
-                    <article
-                      key={survey.id}
-                      className="rounded-lg border border-slate-200 bg-slate-50 p-3"
-                    >
-                      <p className="text-sm font-semibold text-slate-900">
-                        Score: {survey.score}/5
-                      </p>
-                      <p className="text-xs text-slate-600">
-                        {survey.comment || "No comment"}
-                      </p>
-                      <p className="text-[11px] text-slate-400">
-                        {formatTime(survey.submittedAt)}
-                      </p>
-                    </article>
-                  ))}
-                  {(csatReport.surveys || []).length === 0 && (
-                    <p className="text-xs text-slate-400">
-                      No CSAT submissions yet.
-                    </p>
-                  )}
-                </div>
-              </ScrollArea>
-            </section>
-          </div>
+          <CsatView csatReport={csatReport} />
         ) : null}
       </div>
     </div>
