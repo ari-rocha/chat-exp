@@ -1802,15 +1802,139 @@ async fn execute_flow_from(
                 }
             }
             "condition" => {
-                let contains = flow_node_data_text(&node, "contains")
-                    .unwrap_or_default()
-                    .to_ascii_lowercase();
-                let matches = !contains.is_empty()
-                    && visitor_text.to_ascii_lowercase().contains(contains.trim());
-                let desired = if matches { "true" } else { "false" };
+                // ── Rules-based evaluation (Intercom-style) ──
+                let rules = node.data.get("rules").and_then(Value::as_array);
+                let logic_op = node.data.get("logicOperator")
+                    .and_then(Value::as_str)
+                    .unwrap_or("and");
+
+                let matches = if let Some(rules) = rules {
+                    if rules.is_empty() {
+                        false
+                    } else {
+                        // Lazy-load session fields for attribute lookups
+                        let sess_channel: String = sqlx::query_scalar("SELECT channel FROM sessions WHERE id = $1")
+                            .bind(&session_id).fetch_optional(&state.db).await.ok().flatten().unwrap_or_default();
+                        let sess_status: String = sqlx::query_scalar("SELECT status FROM sessions WHERE id = $1")
+                            .bind(&session_id).fetch_optional(&state.db).await.ok().flatten().unwrap_or_default();
+                        let sess_priority: String = sqlx::query_scalar("SELECT priority FROM sessions WHERE id = $1")
+                            .bind(&session_id).fetch_optional(&state.db).await.ok().flatten().unwrap_or_default();
+                        let sess_assignee: Option<String> = sqlx::query_scalar("SELECT assignee_agent_id FROM sessions WHERE id = $1")
+                            .bind(&session_id).fetch_optional(&state.db).await.ok().flatten();
+                        let sess_team: Option<String> = sqlx::query_scalar("SELECT team_id FROM sessions WHERE id = $1")
+                            .bind(&session_id).fetch_optional(&state.db).await.ok().flatten();
+                        let sess_inbox: Option<String> = sqlx::query_scalar("SELECT inbox_id FROM sessions WHERE id = $1")
+                            .bind(&session_id).fetch_optional(&state.db).await.ok().flatten();
+                        let sess_contact: Option<String> = sqlx::query_scalar("SELECT contact_id FROM sessions WHERE id = $1")
+                            .bind(&session_id).fetch_optional(&state.db).await.ok().flatten();
+
+                        let mut results: Vec<bool> = Vec::new();
+                        for rule in rules {
+                            let attr = rule.get("attribute").and_then(Value::as_str).unwrap_or("message");
+                            let operator = rule.get("operator").and_then(Value::as_str).unwrap_or("equals");
+                            let value = rule.get("value").and_then(Value::as_str).unwrap_or("");
+                            let attr_key = rule.get("attributeKey").and_then(Value::as_str).unwrap_or("");
+
+                            let actual: String = match attr {
+                                "message" => visitor_text.clone(),
+                                "channel" => sess_channel.clone(),
+                                "status" => sess_status.clone(),
+                                "priority" => sess_priority.clone(),
+                                "assignee" => {
+                                    if let Some(ref aid) = sess_assignee {
+                                        sqlx::query_scalar::<_, String>("SELECT email FROM agents WHERE id = $1")
+                                            .bind(aid).fetch_optional(&state.db).await.ok().flatten().unwrap_or_default()
+                                    } else { String::new() }
+                                }
+                                "team" => {
+                                    if let Some(ref tid) = sess_team {
+                                        sqlx::query_scalar::<_, String>("SELECT name FROM teams WHERE id = $1")
+                                            .bind(tid).fetch_optional(&state.db).await.ok().flatten().unwrap_or_default()
+                                    } else { String::new() }
+                                }
+                                "inbox" => {
+                                    if let Some(ref iid) = sess_inbox {
+                                        sqlx::query_scalar::<_, String>("SELECT name FROM inboxes WHERE id = $1")
+                                            .bind(iid).fetch_optional(&state.db).await.ok().flatten().unwrap_or_default()
+                                    } else { String::new() }
+                                }
+                                "contact.email" | "contact.name" | "contact.phone" | "contact.company" | "contact.location" => {
+                                    if let Some(ref cid) = sess_contact {
+                                        let col = match attr {
+                                            "contact.email" => "email",
+                                            "contact.name" => "display_name",
+                                            "contact.phone" => "phone",
+                                            "contact.company" => "company",
+                                            "contact.location" => "location",
+                                            _ => "email",
+                                        };
+                                        let sql = format!("SELECT {} FROM contacts WHERE id = $1", col);
+                                        sqlx::query_scalar::<_, String>(&sql)
+                                            .bind(cid).fetch_optional(&state.db).await.ok().flatten().unwrap_or_default()
+                                    } else { String::new() }
+                                }
+                                "contact_attribute" => {
+                                    if let Some(ref cid) = sess_contact {
+                                        sqlx::query_scalar::<_, String>(
+                                            "SELECT attribute_value FROM contact_custom_attributes WHERE contact_id = $1 AND attribute_key = $2"
+                                        ).bind(cid).bind(attr_key).fetch_optional(&state.db).await.ok().flatten().unwrap_or_default()
+                                    } else { String::new() }
+                                }
+                                "conversation_attribute" => {
+                                    sqlx::query_scalar::<_, String>(
+                                        "SELECT attribute_value FROM conversation_custom_attributes WHERE session_id = $1 AND attribute_key = $2"
+                                    ).bind(&session_id).bind(attr_key).fetch_optional(&state.db).await.ok().flatten().unwrap_or_default()
+                                }
+                                _ => String::new(),
+                            };
+
+                            let actual_lower = actual.to_ascii_lowercase();
+                            let value_lower = value.to_ascii_lowercase();
+
+                            let result = match operator {
+                                "equals" => actual_lower == value_lower,
+                                "not_equals" => actual_lower != value_lower,
+                                "contains" => actual_lower.contains(&value_lower),
+                                "not_contains" => !actual_lower.contains(&value_lower),
+                                "starts_with" => actual_lower.starts_with(&value_lower),
+                                "ends_with" => actual_lower.ends_with(&value_lower),
+                                "is_empty" => actual.trim().is_empty(),
+                                "is_not_empty" => !actual.trim().is_empty(),
+                                "greater_than" => {
+                                    actual.parse::<f64>().unwrap_or(0.0) > value.parse::<f64>().unwrap_or(0.0)
+                                }
+                                "less_than" => {
+                                    actual.parse::<f64>().unwrap_or(0.0) < value.parse::<f64>().unwrap_or(0.0)
+                                }
+                                _ => actual_lower == value_lower,
+                            };
+                            results.push(result);
+                        }
+
+                        if logic_op == "or" {
+                            results.iter().any(|r| *r)
+                        } else {
+                            results.iter().all(|r| *r)
+                        }
+                    }
+                } else {
+                    // Legacy fallback: old "contains" field
+                    let contains = flow_node_data_text(&node, "contains")
+                        .unwrap_or_default()
+                        .to_ascii_lowercase();
+                    !contains.is_empty() && visitor_text.to_ascii_lowercase().contains(contains.trim())
+                };
+
+                let desired = if matches { "true" } else { "else" };
                 let next = edges
                     .iter()
                     .find(|edge| flow_edge_condition(edge) == desired)
+                    .or_else(|| {
+                        // Also check for legacy "false" handle
+                        if !matches {
+                            edges.iter().find(|edge| flow_edge_condition(edge) == "false")
+                        } else { None }
+                    })
                     .or_else(|| {
                         edges
                             .iter()

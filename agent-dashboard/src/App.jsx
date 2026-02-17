@@ -92,7 +92,14 @@ const FLOW_NODE_PRESETS = {
     classes: ["Sales questions", "Product support", "Other questions"],
     delayMs: 450,
   },
-  condition: { label: "Condition", contains: "refund", outputs: [] },
+  condition: {
+    label: "Condition",
+    rules: [
+      { attribute: "message", operator: "contains", value: "" },
+    ],
+    logicOperator: "and",
+    outputs: [],
+  },
   end: {
     label: "End",
     behavior: "close",
