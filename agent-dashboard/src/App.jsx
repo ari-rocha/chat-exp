@@ -86,9 +86,11 @@ const FLOW_NODE_PRESETS = {
     inputType: "email",
   },
   ai: {
-    label: "AI Reply",
-    prompt: "Help the visitor solve their issue clearly.",
-    delayMs: 700,
+    label: "Question Classifier",
+    prompt:
+      "Classify the user's question and route it to the most relevant branch.",
+    classes: ["Sales questions", "Product support", "Other questions"],
+    delayMs: 450,
   },
   condition: { label: "Condition", contains: "refund" },
   end: { label: "End" },
@@ -145,15 +147,31 @@ function defaultFlowGraph() {
 function normalizeNode(node, index = 0) {
   const x = Number(node?.position?.x);
   const y = Number(node?.position?.y);
+  const data =
+    typeof node?.data === "object" && node?.data !== null ? { ...node.data } : {};
+  const type = node?.type || "message";
+
+  if (type === "ai") {
+    if (!data.label || data.label === "AI Reply") {
+      data.label = "Question Classifier";
+    }
+    if (!Array.isArray(data.classes) || data.classes.length === 0) {
+      data.classes = ["Sales questions", "Product support", "Other questions"];
+    }
+    if (!data.prompt || data.prompt === "Help the visitor solve their issue clearly.") {
+      data.prompt =
+        "Classify the user's question and route it to the most relevant branch.";
+    }
+  }
+
   return {
     id: String(node?.id ?? `node-${crypto.randomUUID().slice(0, 8)}`),
-    type: node?.type || "message",
+    type,
     position: {
       x: Number.isFinite(x) ? x : 120 + index * 40,
       y: Number.isFinite(y) ? y : 140 + index * 30,
     },
-    data:
-      typeof node?.data === "object" && node?.data !== null ? node.data : {},
+    data,
   };
 }
 
