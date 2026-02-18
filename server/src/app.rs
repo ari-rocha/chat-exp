@@ -828,7 +828,9 @@ async fn resolve_visitor_target_session(
     }
 
     // Inherit tenant from the closed session
-    let old_tenant = tenant_for_session(&state, requested_session_id).await.unwrap_or_default();
+    let old_tenant = tenant_for_session(&state, requested_session_id)
+        .await
+        .unwrap_or_default();
     let new_session_id = Uuid::new_v4().to_string();
     let _ = ensure_session(state, &new_session_id, &old_tenant).await;
     (new_session_id, true)
@@ -1457,7 +1459,9 @@ async fn generate_ai_reply(
     let transcript = recent_session_context(&state, session_id, 14).await;
 
     // Fetch tenant_id for this session
-    let tenant_id: String = tenant_for_session(&state, session_id).await.unwrap_or_default();
+    let tenant_id: String = tenant_for_session(&state, session_id)
+        .await
+        .unwrap_or_default();
 
     // Fetch contact info linked to this session
     let mut contact_block = String::new();
@@ -1872,7 +1876,9 @@ async fn send_flow_agent_message(
     tokio::time::sleep(Duration::from_millis(delay_ms.clamp(120, 6000))).await;
 
     // Look up bot profile from tenant settings so flow/AI messages carry bot identity
-    let sess_tenant = tenant_for_session(&state, session_id).await.unwrap_or_default();
+    let sess_tenant = tenant_for_session(&state, session_id)
+        .await
+        .unwrap_or_default();
     let bot_profile = sqlx::query_as::<_, (String, String)>(
         "SELECT bot_name, bot_avatar_url FROM tenant_settings WHERE tenant_id = $1",
     )
@@ -1930,7 +1936,9 @@ async fn save_flow_cursor(
     variables: &HashMap<String, String>,
 ) {
     let vars_json = serde_json::to_string(variables).unwrap_or_else(|_| "{}".to_string());
-    let sess_tenant = tenant_for_session(state, session_id).await.unwrap_or_default();
+    let sess_tenant = tenant_for_session(state, session_id)
+        .await
+        .unwrap_or_default();
     let _ = sqlx::query(
         "INSERT INTO flow_cursors (tenant_id, session_id, flow_id, node_id, node_type, variables, created_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $7) \
@@ -1949,7 +1957,9 @@ async fn save_flow_cursor(
 
 /// Remove the flow cursor when the flow completes or we no longer need to wait.
 async fn clear_flow_cursor(state: &Arc<AppState>, session_id: &str) {
-    let sess_tenant = tenant_for_session(state, session_id).await.unwrap_or_default();
+    let sess_tenant = tenant_for_session(state, session_id)
+        .await
+        .unwrap_or_default();
     let _ = sqlx::query("DELETE FROM flow_cursors WHERE tenant_id = $1 AND session_id = $2")
         .bind(&sess_tenant)
         .bind(session_id)
@@ -1962,7 +1972,9 @@ async fn get_flow_cursor(
     state: &Arc<AppState>,
     session_id: &str,
 ) -> Option<(String, String, String, HashMap<String, String>)> {
-    let sess_tenant = tenant_for_session(state, session_id).await.unwrap_or_default();
+    let sess_tenant = tenant_for_session(state, session_id)
+        .await
+        .unwrap_or_default();
     let row = sqlx::query(
         "SELECT flow_id, node_id, node_type, variables FROM flow_cursors WHERE tenant_id = $1 AND session_id = $2",
     )
@@ -3235,7 +3247,9 @@ async fn execute_flow_from(
                     .unwrap_or_default();
                 if !tags.is_empty() {
                     // Get tenant_id for this session
-                    let sess_tenant = tenant_for_session(&state, &session_id).await.unwrap_or_default();
+                    let sess_tenant = tenant_for_session(&state, &session_id)
+                        .await
+                        .unwrap_or_default();
 
                     for tag_name in &tags {
                         if action == "remove" {
@@ -3425,7 +3439,9 @@ async fn execute_flow_from(
                 if !text.is_empty() {
                     // Persist as a real conversation note
                     let note_id = Uuid::new_v4().to_string();
-                    let sess_tenant = tenant_for_session(&state, &session_id).await.unwrap_or_default();
+                    let sess_tenant = tenant_for_session(&state, &session_id)
+                        .await
+                        .unwrap_or_default();
                     let _ = sqlx::query(
                         "INSERT INTO conversation_notes (id, tenant_id, session_id, agent_id, text, created_at) VALUES ($1,$2,$3,'bot',$4,$5)",
                     )
@@ -3734,7 +3750,9 @@ async fn run_flow_for_visitor_message(
         get_flow_by_id_db(&state.db, &flow_id).await
     } else {
         // Scope flow lookup to the session's tenant
-        let sess_tenant = tenant_for_session(&state, &session_id).await.unwrap_or_default();
+        let sess_tenant = tenant_for_session(&state, &session_id)
+            .await
+            .unwrap_or_default();
         let row = sqlx::query(
             "SELECT id FROM flows WHERE tenant_id = $1 AND enabled = true ORDER BY created_at ASC LIMIT 1",
         )
@@ -6864,7 +6882,9 @@ async fn submit_csat(
         )
             .into_response();
     }
-    let tenant_id = tenant_for_session(&state, &session_id).await.unwrap_or_default();
+    let tenant_id = tenant_for_session(&state, &session_id)
+        .await
+        .unwrap_or_default();
     let survey = CsatSurvey {
         id: Uuid::new_v4().to_string(),
         tenant_id: tenant_id.clone(),

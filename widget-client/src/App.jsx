@@ -113,7 +113,9 @@ export default function App() {
     const boot = async () => {
       // Fetch widget bootstrap (settings + online agents)
       try {
-        const bRes = await fetch(`${API_URL}/api/widget/bootstrap?tenant_id=${encodeURIComponent(TENANT_ID)}`);
+        const bRes = await fetch(
+          `${API_URL}/api/widget/bootstrap?tenant_id=${encodeURIComponent(TENANT_ID)}`,
+        );
         const bData = await bRes.json();
         if (bData?.settings) {
           setBrandSettings(bData.settings);
@@ -132,7 +134,10 @@ export default function App() {
       const res = await fetch(`${API_URL}/api/session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ visitorId: visitorId.current, tenantId: TENANT_ID }),
+        body: JSON.stringify({
+          visitorId: visitorId.current,
+          tenantId: TENANT_ID,
+        }),
       });
       const data = await res.json();
       setSessionId(data.sessionId);
@@ -153,7 +158,11 @@ export default function App() {
       wsRef.current = ws;
 
       ws.addEventListener("open", () => {
-        sendWsEvent("widget:join", { sessionId, visitorId: visitorId.current, tenantId: TENANT_ID });
+        sendWsEvent("widget:join", {
+          sessionId,
+          visitorId: visitorId.current,
+          tenantId: TENANT_ID,
+        });
         if (openRef.current) {
           sendWsEvent("widget:opened", { sessionId });
         }
@@ -404,7 +413,10 @@ export default function App() {
     const res = await fetch(`${API_URL}/api/session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ visitorId: visitorId.current, tenantId: TENANT_ID }),
+      body: JSON.stringify({
+        visitorId: visitorId.current,
+        tenantId: TENANT_ID,
+      }),
     });
     const data = await res.json();
     if (!data?.sessionId) return;
