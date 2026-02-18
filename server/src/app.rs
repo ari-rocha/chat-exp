@@ -1998,8 +1998,8 @@ fn resolve_interactive_next(
                 // If the matched button has no outgoing edge, stop the flow (don't fall through)
                 return edge.map(|e| e.target.clone());
             }
-            // No button matched the visitor text — fallback to first edge
-            edges.first().map(|e| e.target.clone())
+            // No button matched the visitor text — don't proceed along any edge
+            None
         }
         "select" => {
             let options = flow_node_data_options(node, "options");
@@ -2025,8 +2025,8 @@ fn resolve_interactive_next(
                 // If the matched option has no outgoing edge, stop the flow (don't fall through)
                 return edge.map(|e| e.target.clone());
             }
-            // No option matched — fallback to first edge
-            edges.first().map(|e| e.target.clone())
+            // No option matched — don't proceed along any edge
+            None
         }
         // quick_input, input_form, csat, close_conversation — just continue to the first outgoing edge
         _ => edges.first().map(|e| e.target.clone()),
@@ -2255,7 +2255,11 @@ async fn execute_flow_from(
     };
 
     let Some(mut current_id) = start_id else {
-        clear_flow_cursor(&state, &session_id).await;
+        // If resuming and no match (e.g. visitor typed text instead of clicking button),
+        // keep cursor alive so the interactive node stays active
+        if resume_from_node.is_none() {
+            clear_flow_cursor(&state, &session_id).await;
+        }
         return;
     };
 
@@ -3564,16 +3568,25 @@ async fn run_flow_for_visitor_message(
         {
             // We have a paused flow — resume it from the paused node
             if let Some(flow) = get_flow_by_id_db(&state.db, &cursor_flow_id).await {
+                let cursor_node_type = _cursor_node_type.clone();
                 execute_flow_from(
-                    state,
-                    session_id,
+                    state.clone(),
+                    session_id.clone(),
                     flow,
-                    visitor_text,
+                    visitor_text.clone(),
                     Some(cursor_node_id),
                     cursor_vars,
                 )
                 .await;
-                return;
+                // If cursor still exists after resume, the visitor's text didn't match
+                // any button/option — fall through to normal AI handling
+                if (cursor_node_type == "buttons" || cursor_node_type == "select")
+                    && get_flow_cursor(&state, &session_id).await.is_some()
+                {
+                    // Don't consume the message — let AI handle it below
+                } else {
+                    return;
+                }
             } else {
                 // Flow was deleted — clear stale cursor and continue normally
                 clear_flow_cursor(&state, &session_id).await;
