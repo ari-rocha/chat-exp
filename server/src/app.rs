@@ -1851,6 +1851,33 @@ async fn send_flow_agent_message(
     }
     start_agent_typing(state.clone(), session_id).await;
     tokio::time::sleep(Duration::from_millis(delay_ms.clamp(120, 6000))).await;
+
+    // Look up bot profile from tenant settings so flow/AI messages carry bot identity
+    let bot_profile = sqlx::query_as::<_, (String, String)>(
+        "SELECT bot_name, bot_avatar_url FROM tenant_settings WHERE tenant_id = $1",
+    )
+    .bind(&state.default_tenant_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|(name, avatar)| {
+        if name.is_empty() && avatar.is_empty() {
+            None
+        } else {
+            Some(AgentProfile {
+                id: "__bot__".to_string(),
+                name,
+                email: String::new(),
+                status: String::new(),
+                role: String::new(),
+                avatar_url: avatar,
+                team_ids: vec![],
+                inbox_ids: vec![],
+            })
+        }
+    });
+
     let _ = add_message(
         state.clone(),
         session_id,
@@ -1858,7 +1885,7 @@ async fn send_flow_agent_message(
         text,
         suggestions,
         widget,
-        None,
+        bot_profile.as_ref(),
     )
     .await;
     stop_agent_typing(state, session_id).await;
@@ -4114,7 +4141,7 @@ async fn register_agent(
         .execute(&state.db)
         .await;
         let _ = sqlx::query(
-            "INSERT INTO tenant_settings (tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+            "INSERT INTO tenant_settings (tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
         )
         .bind(&new_tenant_id)
         .bind(&ws_name)
@@ -4124,6 +4151,8 @@ async fn register_agent(
         .bind("#")
         .bind("bottom-right")
         .bind("Hello! How can we help?")
+        .bind("")
+        .bind("")
         .bind(&now)
         .bind(&now)
         .execute(&state.db)
@@ -5571,11 +5600,13 @@ async fn create_tenant(
         privacy_url: "#".to_string(),
         launcher_position: "bottom-right".to_string(),
         welcome_text: "Hello! How can we help?".to_string(),
+        bot_name: "".to_string(),
+        bot_avatar_url: "".to_string(),
         created_at: now.clone(),
         updated_at: now.clone(),
     };
     let _ = sqlx::query(
-        "INSERT INTO tenant_settings (tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+        "INSERT INTO tenant_settings (tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
     )
     .bind(&settings.tenant_id)
     .bind(&settings.brand_name)
@@ -5585,6 +5616,8 @@ async fn create_tenant(
     .bind(&settings.privacy_url)
     .bind(&settings.launcher_position)
     .bind(&settings.welcome_text)
+    .bind(&settings.bot_name)
+    .bind(&settings.bot_avatar_url)
     .bind(&settings.created_at)
     .bind(&settings.updated_at)
     .execute(&state.db)
@@ -5995,7 +6028,7 @@ async fn get_tenant_settings(
         Err(err) => return err.into_response(),
     };
     let settings = sqlx::query(
-        "SELECT tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
+        "SELECT tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
     )
     .bind(&tenant_id)
     .fetch_optional(&state.db)
@@ -6011,6 +6044,8 @@ async fn get_tenant_settings(
         privacy_url: row.get("privacy_url"),
         launcher_position: row.get("launcher_position"),
         welcome_text: row.get("welcome_text"),
+        bot_name: row.get("bot_name"),
+        bot_avatar_url: row.get("bot_avatar_url"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     });
@@ -6030,7 +6065,7 @@ async fn patch_tenant_settings(
         Err(err) => return err.into_response(),
     };
     let mut settings = sqlx::query(
-        "SELECT tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
+        "SELECT tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
     )
     .bind(&tenant_id)
     .fetch_optional(&state.db)
@@ -6046,6 +6081,8 @@ async fn patch_tenant_settings(
         privacy_url: row.get("privacy_url"),
         launcher_position: row.get("launcher_position"),
         welcome_text: row.get("welcome_text"),
+        bot_name: row.get("bot_name"),
+        bot_avatar_url: row.get("bot_avatar_url"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     });
@@ -6077,9 +6114,15 @@ async fn patch_tenant_settings(
     if let Some(v) = body.welcome_text {
         settings.welcome_text = v;
     }
+    if let Some(v) = body.bot_name {
+        settings.bot_name = v;
+    }
+    if let Some(v) = body.bot_avatar_url {
+        settings.bot_avatar_url = v;
+    }
     settings.updated_at = now_iso();
     let _ = sqlx::query(
-        "UPDATE tenant_settings SET brand_name = $1, primary_color = $2, accent_color = $3, logo_url = $4, privacy_url = $5, launcher_position = $6, welcome_text = $7, updated_at = $8 WHERE tenant_id = $9",
+        "UPDATE tenant_settings SET brand_name = $1, primary_color = $2, accent_color = $3, logo_url = $4, privacy_url = $5, launcher_position = $6, welcome_text = $7, bot_name = $8, bot_avatar_url = $9, updated_at = $10 WHERE tenant_id = $11",
     )
     .bind(&settings.brand_name)
     .bind(&settings.primary_color)
@@ -6088,6 +6131,8 @@ async fn patch_tenant_settings(
     .bind(&settings.privacy_url)
     .bind(&settings.launcher_position)
     .bind(&settings.welcome_text)
+    .bind(&settings.bot_name)
+    .bind(&settings.bot_avatar_url)
     .bind(&settings.updated_at)
     .bind(&tenant_id)
     .execute(&state.db)
@@ -6911,7 +6956,7 @@ async fn get_csat_report(
 
 async fn widget_bootstrap(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let settings = sqlx::query(
-        "SELECT tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
+        "SELECT tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
     )
     .bind(&state.default_tenant_id)
     .fetch_optional(&state.db)
@@ -6927,6 +6972,8 @@ async fn widget_bootstrap(State(state): State<Arc<AppState>>) -> impl IntoRespon
         privacy_url: row.get("privacy_url"),
         launcher_position: row.get("launcher_position"),
         welcome_text: row.get("welcome_text"),
+        bot_name: row.get("bot_name"),
+        bot_avatar_url: row.get("bot_avatar_url"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     });
@@ -7357,7 +7404,7 @@ pub async fn run() {
     .execute(&db)
     .await;
     let _ = sqlx::query(
-        "INSERT INTO tenant_settings (tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (tenant_id) DO NOTHING",
+        "INSERT INTO tenant_settings (tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (tenant_id) DO NOTHING",
     )
     .bind(&default_tenant_id)
     .bind("Support")
@@ -7367,6 +7414,8 @@ pub async fn run() {
     .bind("#")
     .bind("bottom-right")
     .bind("Hello! How can we help?")
+    .bind("")
+    .bind("")
     .bind(now_iso())
     .bind(now_iso())
     .execute(&db)

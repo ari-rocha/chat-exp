@@ -263,6 +263,65 @@ export default function CustomizationView({
                   placeholder="Welcome text"
                 />
               </div>
+
+              {/* Bot Profile */}
+              <div className="border-t border-slate-200 pt-3 mt-1">
+                <h4 className="text-sm font-semibold text-slate-900 mb-1">
+                  Bot profile
+                </h4>
+                <p className="mb-3 text-xs text-slate-500">
+                  How the bot appears to visitors on automated and AI messages.
+                </p>
+                <div className="flex items-center gap-4 mb-3">
+                  {tenantSettings?.botAvatarUrl ? (
+                    <img
+                      src={tenantSettings.botAvatarUrl}
+                      alt="Bot"
+                      className="h-12 w-12 rounded-full object-cover border-2 border-slate-200"
+                    />
+                  ) : (
+                    <div className="h-12 w-12 rounded-full bg-gradient-to-br from-emerald-500 to-teal-500 text-white flex items-center justify-center text-lg font-bold">
+                      {(tenantSettings?.botName || "B")[0].toUpperCase()}
+                    </div>
+                  )}
+                  <div className="text-sm text-slate-700 font-medium">
+                    {tenantSettings?.botName || "Bot"}
+                  </div>
+                </div>
+                <div className="grid gap-3">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-slate-600">
+                      Bot display name
+                    </label>
+                    <Input
+                      value={tenantSettings?.botName || ""}
+                      onChange={(e) =>
+                        setTenantSettings((prev) => ({
+                          ...(prev || {}),
+                          botName: e.target.value,
+                        }))
+                      }
+                      placeholder="e.g. Agent, Support Bot"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-slate-600">
+                      Bot avatar URL
+                    </label>
+                    <Input
+                      value={tenantSettings?.botAvatarUrl || ""}
+                      onChange={(e) =>
+                        setTenantSettings((prev) => ({
+                          ...(prev || {}),
+                          botAvatarUrl: e.target.value,
+                        }))
+                      }
+                      placeholder="https://..."
+                    />
+                  </div>
+                </div>
+              </div>
+
               <Button
                 className="w-full max-w-[200px] bg-blue-600 text-white hover:bg-blue-700"
                 onClick={saveTenantSettings}

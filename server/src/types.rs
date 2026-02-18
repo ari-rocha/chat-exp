@@ -238,6 +238,8 @@ pub struct TenantSettings {
     pub privacy_url: String,
     pub launcher_position: String,
     pub welcome_text: String,
+    pub bot_name: String,
+    pub bot_avatar_url: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -461,6 +463,8 @@ pub struct PatchTenantSettingsBody {
     pub privacy_url: Option<String>,
     pub launcher_position: Option<String>,
     pub welcome_text: Option<String>,
+    pub bot_name: Option<String>,
+    pub bot_avatar_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -374,8 +374,8 @@ export default function App() {
   };
 
   const renderAgentAvatar = (msg, size = 28) => {
-    const avatarUrl = msg?.agentAvatarUrl;
-    const name = msg?.agentName || "";
+    const avatarUrl = msg?.agentAvatarUrl || (!msg?.agentName ? brandSettings?.botAvatarUrl : "") || "";
+    const name = msg?.agentName || brandSettings?.botName || "";
     if (avatarUrl) {
       return (
         <img
@@ -478,7 +478,7 @@ export default function App() {
                 isAgent && (!next || next.sender !== "agent");
               const showAgentName =
                 isAgent &&
-                m.agentName &&
+                (m.agentName || brandSettings?.botName) &&
                 (!prev ||
                   prev.sender !== "agent" ||
                   prev.agentId !== m.agentId);
@@ -503,7 +503,7 @@ export default function App() {
                       <div className="message-stack">
                         {showAgentName && (
                           <span className="agent-name-label">
-                            {m.agentName}
+                            {m.agentName || brandSettings?.botName}
                           </span>
                         )}
                         <div className={`bubble bubble-${m.sender}`}>
@@ -984,14 +984,23 @@ export default function App() {
               <div className="row row-agent row-typing row-open-animate">
                 {typingAgent ? (
                   renderAgentAvatar(typingAgent, 28)
+                ) : brandSettings?.botAvatarUrl ? (
+                  <img
+                    className="agent-avatar"
+                    src={brandSettings.botAvatarUrl}
+                    alt={brandSettings.botName || "Bot"}
+                    style={{ width: 28, height: 28 }}
+                  />
                 ) : (
                   <span
                     className="agent-avatar agent-avatar-initial"
                     style={{ width: 28, height: 28, fontSize: 13 }}
                   >
-                    {bootstrapAgents.length > 0
-                      ? agentInitial(bootstrapAgents[0].name)
-                      : "A"}
+                    {brandSettings?.botName
+                      ? agentInitial(brandSettings.botName)
+                      : bootstrapAgents.length > 0
+                        ? agentInitial(bootstrapAgents[0].name)
+                        : "A"}
                   </span>
                 )}
                 <div
