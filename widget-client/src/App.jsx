@@ -34,6 +34,7 @@ export default function App() {
   const [text, setText] = useState("");
   const [ready, setReady] = useState(false);
   const [agentTyping, setAgentTyping] = useState(false);
+  const [typingAgent, setTypingAgent] = useState(null);
   const [dismissedSuggestionsFor, setDismissedSuggestionsFor] = useState("");
   const [carouselSelections, setCarouselSelections] = useState({});
   const [selectSelections, setSelectSelections] = useState({});
@@ -41,6 +42,8 @@ export default function App() {
   const [quickInputs, setQuickInputs] = useState({});
   const [submittedWidgets, setSubmittedWidgets] = useState({});
   const [csatHover, setCsatHover] = useState({});
+  const [bootstrapAgents, setBootstrapAgents] = useState([]);
+  const [brandSettings, setBrandSettings] = useState(null);
 
   const wsRef = useRef(null);
   const reconnectTimerRef = useRef(null);
@@ -107,6 +110,14 @@ export default function App() {
 
   useEffect(() => {
     const boot = async () => {
+      // Fetch widget bootstrap (settings + online agents)
+      try {
+        const bRes = await fetch(`${API_URL}/api/widget/bootstrap`);
+        const bData = await bRes.json();
+        if (bData?.settings) setBrandSettings(bData.settings);
+        if (Array.isArray(bData?.agents)) setBootstrapAgents(bData.agents);
+      } catch {}
+
       if (sessionId) return;
       const res = await fetch(`${API_URL}/api/session`, {
         method: "POST",
@@ -183,6 +194,12 @@ export default function App() {
           if (payload.sessionId !== sessionId) return;
           if (payload.sender !== "agent") return;
           setAgentTyping(Boolean(payload.active));
+          if (payload.active) {
+            setTypingAgent({
+              agentName: payload.agentName || "",
+              agentAvatarUrl: payload.agentAvatarUrl || "",
+            });
+          }
         }
       });
 
@@ -335,6 +352,36 @@ export default function App() {
     }));
   };
 
+  const agentInitial = (name) => {
+    if (!name) return "A";
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return name[0].toUpperCase();
+  };
+
+  const renderAgentAvatar = (msg, size = 28) => {
+    const avatarUrl = msg?.agentAvatarUrl;
+    const name = msg?.agentName || "";
+    if (avatarUrl) {
+      return (
+        <img
+          className="agent-avatar"
+          src={avatarUrl}
+          alt={name || "Agent"}
+          style={{ width: size, height: size }}
+        />
+      );
+    }
+    return (
+      <span
+        className="agent-avatar agent-avatar-initial"
+        style={{ width: size, height: size, fontSize: size * 0.48 }}
+      >
+        {agentInitial(name)}
+      </span>
+    );
+  };
+
   const startNewChat = async () => {
     const res = await fetch(`${API_URL}/api/session`, {
       method: "POST",
@@ -371,19 +418,9 @@ export default function App() {
 
       <section className={`panel ${open ? "panel-open" : "panel-closed"}`}>
         <header className="panel-header">
-          <div className="left-actions">
-            <button
-              type="button"
-              className="header-btn icon-settings"
-              aria-label="Settings"
-              title="Settings"
-            >
-              ⋮
-            </button>
-            {/* <button type="button" className="header-btn icon-brand" aria-label="Brand">
-              a
-            </button> */}
-          </div>
+          <span className="header-brand">
+            {brandSettings?.brandName || "Support"}
+          </span>
           <div className="right-actions">
             <button
               type="button"
@@ -420,10 +457,17 @@ export default function App() {
           <div className="messages-stack">
             {ready && <p className="today today-open-animate">Today</p>}
             {messages.map((m, index) => {
+              const prev = messages[index - 1];
               const next = messages[index + 1];
               const isAgent = m.sender === "agent";
               const showAgentIcon =
                 isAgent && (!next || next.sender !== "agent");
+              const showAgentName =
+                isAgent &&
+                m.agentName &&
+                (!prev ||
+                  prev.sender !== "agent" ||
+                  prev.agentId !== m.agentId);
               return (
                 <div
                   key={m.id}
@@ -435,7 +479,7 @@ export default function App() {
                     <>
                       {isAgent &&
                         (showAgentIcon ? (
-                          <span className="mini-icon">a</span>
+                          renderAgentAvatar(m, 28)
                         ) : (
                           <span
                             className="mini-icon-spacer"
@@ -443,6 +487,11 @@ export default function App() {
                           />
                         ))}
                       <div className="message-stack">
+                        {showAgentName && (
+                          <span className="agent-name-label">
+                            {m.agentName}
+                          </span>
+                        )}
                         <div className={`bubble bubble-${m.sender}`}>
                           <div className="md-content">
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -919,7 +968,18 @@ export default function App() {
             })}
             {agentTyping && (
               <div className="row row-agent row-typing row-open-animate">
-                <span className="mini-icon">a</span>
+                {typingAgent ? (
+                  renderAgentAvatar(typingAgent, 28)
+                ) : (
+                  <span
+                    className="agent-avatar agent-avatar-initial"
+                    style={{ width: 28, height: 28, fontSize: 13 }}
+                  >
+                    {bootstrapAgents.length > 0
+                      ? agentInitial(bootstrapAgents[0].name)
+                      : "A"}
+                  </span>
+                )}
                 <div
                   className="bubble bubble-agent typing-bubble"
                   aria-label="Agent is typing"

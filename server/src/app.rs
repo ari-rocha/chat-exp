@@ -101,8 +101,8 @@ async fn persist_message(pool: &PgPool, message: &ChatMessage) {
         serde_json::to_string(&message.suggestions).unwrap_or_else(|_| "[]".to_string());
     let _ = sqlx::query(
         r#"
-        INSERT INTO chat_messages (id, session_id, sender, text, suggestions, widget, created_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7)
+        INSERT INTO chat_messages (id, session_id, sender, text, suggestions, widget, created_at, agent_id, agent_name, agent_avatar_url)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
         ON CONFLICT (id) DO NOTHING
         "#,
     )
@@ -113,6 +113,9 @@ async fn persist_message(pool: &PgPool, message: &ChatMessage) {
     .bind(suggestions)
     .bind(widget)
     .bind(&message.created_at)
+    .bind(&message.agent_id)
+    .bind(&message.agent_name)
+    .bind(&message.agent_avatar_url)
     .execute(pool)
     .await;
 }
@@ -135,7 +138,7 @@ async fn get_session_summary_db(pool: &PgPool, session_id: &str) -> Option<Sessi
             .unwrap_or(0) as usize;
 
     let last_message_row = sqlx::query(
-        "SELECT id, session_id, sender, text, suggestions, widget, created_at FROM chat_messages WHERE session_id = $1 ORDER BY created_at DESC LIMIT 1",
+        "SELECT id, session_id, sender, text, suggestions, widget, created_at, agent_id, agent_name, agent_avatar_url FROM chat_messages WHERE session_id = $1 ORDER BY created_at DESC LIMIT 1",
     )
     .bind(session_id)
     .fetch_optional(pool)
@@ -155,6 +158,13 @@ async fn get_session_summary_db(pool: &PgPool, session_id: &str) -> Option<Sessi
             .map(|v| parse_json_text(&v))
             .filter(|v| !v.is_null()),
         created_at: row.get("created_at"),
+        agent_id: row.get("agent_id"),
+        agent_name: row
+            .get::<Option<String>, _>("agent_name")
+            .unwrap_or_default(),
+        agent_avatar_url: row
+            .get::<Option<String>, _>("agent_avatar_url")
+            .unwrap_or_default(),
     });
 
     Some(SessionSummary {
@@ -178,7 +188,7 @@ async fn get_session_summary_db(pool: &PgPool, session_id: &str) -> Option<Sessi
 
 async fn get_session_messages_db(pool: &PgPool, session_id: &str) -> Vec<ChatMessage> {
     let rows = sqlx::query(
-        "SELECT id, session_id, sender, text, suggestions, widget, created_at FROM chat_messages WHERE session_id = $1 ORDER BY created_at ASC",
+        "SELECT id, session_id, sender, text, suggestions, widget, created_at, agent_id, agent_name, agent_avatar_url FROM chat_messages WHERE session_id = $1 ORDER BY created_at ASC",
     )
     .bind(session_id)
     .fetch_all(pool)
@@ -197,6 +207,13 @@ async fn get_session_messages_db(pool: &PgPool, session_id: &str) -> Vec<ChatMes
                 .map(|v| parse_json_text(&v))
                 .filter(|v| !v.is_null()),
             created_at: row.get("created_at"),
+            agent_id: row.get("agent_id"),
+            agent_name: row
+                .get::<Option<String>, _>("agent_name")
+                .unwrap_or_default(),
+            agent_avatar_url: row
+                .get::<Option<String>, _>("agent_avatar_url")
+                .unwrap_or_default(),
         })
         .collect()
 }
@@ -321,7 +338,7 @@ async fn auth_agent_from_headers(
     ))?;
 
     let row = sqlx::query(
-        "SELECT a.id, a.name, a.email, a.status, a.team_ids, a.inbox_ids FROM auth_tokens t JOIN agents a ON a.id = t.agent_id WHERE t.token = $1",
+        "SELECT a.id, a.name, a.email, a.status, a.role, a.avatar_url, a.team_ids, a.inbox_ids FROM auth_tokens t JOIN agents a ON a.id = t.agent_id WHERE t.token = $1",
     )
     .bind(&token)
     .fetch_optional(&state.db)
@@ -337,6 +354,8 @@ async fn auth_agent_from_headers(
         name: row.get("name"),
         email: row.get("email"),
         status: row.get("status"),
+        role: row.get("role"),
+        avatar_url: row.get("avatar_url"),
         team_ids: serde_json::from_str::<Vec<String>>(&row.get::<String, _>("team_ids"))
             .unwrap_or_default(),
         inbox_ids: serde_json::from_str::<Vec<String>>(&row.get::<String, _>("inbox_ids"))
@@ -470,6 +489,24 @@ fn session_agent_typing_active(rt: &RealtimeState, session_id: &str) -> bool {
 async fn emit_typing_state(state: &Arc<AppState>, session_id: &str, active: bool) {
     let recipients = session_realtime_recipients(state, session_id).await;
 
+    // Try to find who is typing (for human agent typing, show their name)
+    let (agent_name, agent_avatar) = {
+        let rt = state.realtime.lock().await;
+        if let Some(typers) = rt.agent_human_typers.get(session_id) {
+            if let Some(&cid) = typers.iter().next() {
+                if let Some(profile) = rt.agent_profiles.get(&cid) {
+                    (profile.name.clone(), profile.avatar_url.clone())
+                } else {
+                    (String::new(), String::new())
+                }
+            } else {
+                (String::new(), String::new())
+            }
+        } else {
+            (String::new(), String::new())
+        }
+    };
+
     emit_to_clients(
         state,
         &recipients,
@@ -477,7 +514,9 @@ async fn emit_typing_state(state: &Arc<AppState>, session_id: &str, active: bool
         json!({
             "sessionId": session_id,
             "sender": "agent",
-            "active": active
+            "active": active,
+            "agentName": agent_name,
+            "agentAvatarUrl": agent_avatar
         }),
     )
     .await;
@@ -777,6 +816,7 @@ async fn add_message(
     text: &str,
     suggestions: Option<Vec<String>>,
     widget: Option<Value>,
+    agent_profile: Option<&AgentProfile>,
 ) -> Option<ChatMessage> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -796,6 +836,11 @@ async fn add_message(
         suggestions: suggestions.unwrap_or_default(),
         widget: final_widget,
         created_at: now_iso(),
+        agent_id: agent_profile.map(|p| p.id.clone()),
+        agent_name: agent_profile.map(|p| p.name.clone()).unwrap_or_default(),
+        agent_avatar_url: agent_profile
+            .map(|p| p.avatar_url.clone())
+            .unwrap_or_default(),
     };
     let _ = sqlx::query("UPDATE sessions SET updated_at = $1 WHERE id = $2")
         .bind(&message.created_at)
@@ -1813,6 +1858,7 @@ async fn send_flow_agent_message(
         text,
         suggestions,
         widget,
+        None,
     )
     .await;
     stop_agent_typing(state, session_id).await;
@@ -2228,6 +2274,7 @@ async fn execute_flow_from(
                             "Conversation closed by bot",
                             None,
                             None,
+                            None,
                         )
                         .await;
                         // Fire lifecycle trigger (e.g. CSAT on close)
@@ -2533,6 +2580,7 @@ async fn execute_flow_from(
                                 "Conversation transferred to a human agent",
                                 None,
                                 None,
+                                None,
                             )
                             .await;
                         }
@@ -2551,6 +2599,7 @@ async fn execute_flow_from(
                                 &session_id,
                                 "system",
                                 "Conversation closed by bot",
+                                None,
                                 None,
                                 None,
                             )
@@ -2868,6 +2917,7 @@ async fn execute_flow_from(
                                     "Conversation closed by bot",
                                     None,
                                     None,
+                                    None,
                                 )
                                 .await;
                             }
@@ -2901,6 +2951,7 @@ async fn execute_flow_from(
                                     &session_id,
                                     "system",
                                     "Conversation transferred to a human agent",
+                                    None,
                                     None,
                                     None,
                                 )
@@ -3010,6 +3061,7 @@ async fn execute_flow_from(
                     &assignment_note,
                     None,
                     None,
+                    None,
                 )
                 .await;
                 if !msg.is_empty() {
@@ -3075,6 +3127,7 @@ async fn execute_flow_from(
                             &session_id,
                             "system",
                             "Conversation closed by bot",
+                            None,
                             None,
                             None,
                         )
@@ -3195,8 +3248,16 @@ async fn execute_flow_from(
                         },
                         tags.join(", ")
                     );
-                    let _ =
-                        add_message(state.clone(), &session_id, "system", &note, None, None).await;
+                    let _ = add_message(
+                        state.clone(),
+                        &session_id,
+                        "system",
+                        &note,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await;
                 }
             }
             "set_attribute" => {
@@ -3305,8 +3366,16 @@ async fn execute_flow_from(
                         }
                     }
                     let note = format!("Set {} attribute: {} = {}", target, attr_name, attr_value);
-                    let _ =
-                        add_message(state.clone(), &session_id, "system", &note, None, None).await;
+                    let _ = add_message(
+                        state.clone(),
+                        &session_id,
+                        "system",
+                        &note,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await;
                 }
             }
             "note" => {
@@ -3335,7 +3404,8 @@ async fn execute_flow_from(
                     .await;
                     // Also send as internal note message
                     let _ =
-                        add_message(state.clone(), &session_id, "note", &text, None, None).await;
+                        add_message(state.clone(), &session_id, "note", &text, None, None, None)
+                            .await;
                 }
             }
             "webhook" => {
@@ -3533,6 +3603,7 @@ async fn run_flow_for_visitor_message(
                     "Conversation transferred to a human agent",
                     None,
                     None,
+                    None,
                 )
                 .await;
             }
@@ -3680,6 +3751,7 @@ async fn run_flow_for_visitor_message(
                             "Conversation transferred to a human agent",
                             None,
                             None,
+                            None,
                         )
                         .await;
                     }
@@ -3696,6 +3768,7 @@ async fn run_flow_for_visitor_message(
                             &session_id,
                             "system",
                             "Conversation closed by bot",
+                            None,
                             None,
                             None,
                         )
@@ -3877,6 +3950,7 @@ async fn post_message(
         &body.text,
         None,
         None,
+        None,
     )
     .await
     else {
@@ -3928,6 +4002,7 @@ async fn close_session_by_visitor(
             "User has ended the chat",
             None,
             None,
+            None,
         )
         .await;
 
@@ -3956,20 +4031,6 @@ async fn register_agent(
             .into_response();
     }
 
-    let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM agents WHERE email = $1")
-        .bind(&email)
-        .fetch_one(&state.db)
-        .await
-        .unwrap_or(0)
-        > 0;
-    if exists {
-        return (
-            StatusCode::CONFLICT,
-            Json(json!({ "error": "email already registered" })),
-        )
-            .into_response();
-    }
-
     let password_hash = match hash(body.password, DEFAULT_COST) {
         Ok(v) => v,
         Err(_) => {
@@ -3981,21 +4042,120 @@ async fn register_agent(
         }
     };
 
+    // Determine tenant: invitation or new workspace
+    let (tenant_id, assigned_role) = if let Some(inv_token) = &body.invitation_token {
+        let inv_row =
+            sqlx::query("SELECT tenant_id, role, status FROM tenant_invitations WHERE token = $1")
+                .bind(inv_token)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten();
+        match inv_row {
+            Some(row) => {
+                let inv_status: String = row.get("status");
+                if inv_status != "pending" {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({ "error": "invitation already used" })),
+                    )
+                        .into_response();
+                }
+                let tid: String = row.get("tenant_id");
+                let inv_role: String = row.get("role");
+                let _ = sqlx::query(
+                    "UPDATE tenant_invitations SET status = 'accepted' WHERE token = $1",
+                )
+                .bind(inv_token)
+                .execute(&state.db)
+                .await;
+                (tid, inv_role)
+            }
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "invalid invitation token" })),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        let ws_name = body
+            .workspace_name
+            .as_deref()
+            .unwrap_or("My Workspace")
+            .trim()
+            .to_string();
+        let ws_name = if ws_name.is_empty() {
+            "My Workspace".to_string()
+        } else {
+            ws_name
+        };
+        let now = now_iso();
+        let new_tenant_id = Uuid::new_v4().to_string();
+        let slug = slugify(&ws_name);
+        let _ = sqlx::query(
+            "INSERT INTO tenants (id, name, slug, created_at, updated_at) VALUES ($1,$2,$3,$4,$5)",
+        )
+        .bind(&new_tenant_id)
+        .bind(&ws_name)
+        .bind(&slug)
+        .bind(&now)
+        .bind(&now)
+        .execute(&state.db)
+        .await;
+        let _ = sqlx::query(
+            "INSERT INTO tenant_settings (tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+        )
+        .bind(&new_tenant_id)
+        .bind(&ws_name)
+        .bind("#e4b84f")
+        .bind("#1f2230")
+        .bind("")
+        .bind("#")
+        .bind("bottom-right")
+        .bind("Hello! How can we help?")
+        .bind(&now)
+        .bind(&now)
+        .execute(&state.db)
+        .await;
+        (new_tenant_id, "owner".to_string())
+    };
+
+    // Check email uniqueness within the tenant
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(1) FROM agents WHERE tenant_id = $1 AND email = $2",
+    )
+    .bind(&tenant_id)
+    .bind(&email)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0)
+        > 0;
+    if exists {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "email already registered in this workspace" })),
+        )
+            .into_response();
+    }
+
     let profile = AgentProfile {
         id: Uuid::new_v4().to_string(),
         name,
         email,
         status: "online".to_string(),
+        role: assigned_role.clone(),
+        avatar_url: "".to_string(),
         team_ids: vec![],
         inbox_ids: vec![],
     };
 
     let token = Uuid::new_v4().to_string();
-    let tenant_id = state.default_tenant_id.clone();
     let team_ids = serde_json::to_string(&profile.team_ids).unwrap_or_else(|_| "[]".to_string());
     let inbox_ids = serde_json::to_string(&profile.inbox_ids).unwrap_or_else(|_| "[]".to_string());
     if sqlx::query(
-        "INSERT INTO agents (id, tenant_id, name, email, status, password_hash, team_ids, inbox_ids) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        "INSERT INTO agents (id, tenant_id, name, email, status, password_hash, role, avatar_url, team_ids, inbox_ids) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
     )
     .bind(&profile.id)
     .bind(&tenant_id)
@@ -4003,6 +4163,8 @@ async fn register_agent(
     .bind(&profile.email)
     .bind(&profile.status)
     .bind(&password_hash)
+    .bind(&assigned_role)
+    .bind("")
     .bind(team_ids)
     .bind(inbox_ids)
     .execute(&state.db)
@@ -4031,7 +4193,7 @@ async fn register_agent(
         Json(json!({
             "token": token,
             "agent": profile,
-            "tenantId": state.default_tenant_id
+            "tenantId": tenant_id
         })),
     )
         .into_response()
@@ -4043,7 +4205,7 @@ async fn login_agent(
 ) -> impl IntoResponse {
     let email = body.email.trim().to_lowercase();
     let row = sqlx::query(
-        "SELECT id, tenant_id, name, email, status, password_hash, team_ids, inbox_ids FROM agents WHERE email = $1",
+        "SELECT id, tenant_id, name, email, status, role, avatar_url, password_hash, team_ids, inbox_ids FROM agents WHERE email = $1",
     )
     .bind(&email)
     .fetch_optional(&state.db)
@@ -4063,6 +4225,8 @@ async fn login_agent(
         name: row.get("name"),
         email: row.get("email"),
         status: row.get("status"),
+        role: row.get("role"),
+        avatar_url: row.get("avatar_url"),
         team_ids: serde_json::from_str::<Vec<String>>(&row.get::<String, _>("team_ids"))
             .unwrap_or_default(),
         inbox_ids: serde_json::from_str::<Vec<String>>(&row.get::<String, _>("inbox_ids"))
@@ -4134,6 +4298,32 @@ async fn patch_agent_status(
         .await;
     let mut updated = agent;
     updated.status = status;
+    (StatusCode::OK, Json(json!({ "agent": updated }))).into_response()
+}
+
+async fn patch_agent_profile(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<PatchAgentProfileBody>,
+) -> impl IntoResponse {
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(agent) => agent,
+        Err(err) => return err.into_response(),
+    };
+
+    let name = body.name.unwrap_or(agent.name.clone());
+    let avatar_url = body.avatar_url.unwrap_or(agent.avatar_url.clone());
+
+    let _ = sqlx::query("UPDATE agents SET name = $1, avatar_url = $2 WHERE id = $3")
+        .bind(&name)
+        .bind(&avatar_url)
+        .bind(&agent.id)
+        .execute(&state.db)
+        .await;
+
+    let mut updated = agent;
+    updated.name = name;
+    updated.avatar_url = avatar_url;
     (StatusCode::OK, Json(json!({ "agent": updated }))).into_response()
 }
 
@@ -4290,7 +4480,12 @@ async fn get_agents(State(state): State<Arc<AppState>>, headers: HeaderMap) -> i
     if let Err(err) = auth_agent_from_headers(&state, &headers).await {
         return err.into_response();
     }
-    let rows = sqlx::query("SELECT id, name, email, status, team_ids, inbox_ids FROM agents")
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let rows = sqlx::query("SELECT id, name, email, status, role, avatar_url, team_ids, inbox_ids FROM agents WHERE tenant_id = $1")
+        .bind(&tenant_id)
         .fetch_all(&state.db)
         .await
         .unwrap_or_default();
@@ -4301,6 +4496,8 @@ async fn get_agents(State(state): State<Arc<AppState>>, headers: HeaderMap) -> i
             name: row.get("name"),
             email: row.get("email"),
             status: row.get("status"),
+            role: row.get("role"),
+            avatar_url: row.get("avatar_url"),
             team_ids: serde_json::from_str::<Vec<String>>(&row.get::<String, _>("team_ids"))
                 .unwrap_or_default(),
             inbox_ids: serde_json::from_str::<Vec<String>>(&row.get::<String, _>("inbox_ids"))
@@ -4633,6 +4830,7 @@ async fn patch_session_handover(
             "Conversation transferred to a human agent",
             None,
             None,
+            None,
         )
         .await;
     }
@@ -4723,6 +4921,7 @@ async fn patch_session_meta(
             "Conversation closed by agent",
             None,
             None,
+            None,
         )
         .await;
 
@@ -4738,6 +4937,7 @@ async fn patch_session_meta(
             &session_id,
             "system",
             "Conversation reopened",
+            None,
             None,
             None,
         )
@@ -5446,6 +5646,332 @@ async fn switch_tenant(
         Json(json!({ "tenantId": tenant_id, "token": token })),
     )
         .into_response()
+}
+
+// ── Tenant Members & Invitations ──
+
+async fn get_tenant_members(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let rows = sqlx::query(
+        "SELECT id, name, email, role, status, avatar_url FROM agents WHERE tenant_id = $1",
+    )
+    .bind(&tenant_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let members: Vec<TenantMember> = rows
+        .into_iter()
+        .map(|row| TenantMember {
+            id: row.get("id"),
+            name: row.get("name"),
+            email: row.get("email"),
+            role: row.get("role"),
+            status: row.get("status"),
+            avatar_url: row.get("avatar_url"),
+        })
+        .collect();
+    (StatusCode::OK, Json(json!({ "members": members }))).into_response()
+}
+
+async fn invite_member(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<InviteMemberBody>,
+) -> impl IntoResponse {
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
+    // Only owner/admin can invite
+    if agent.role != "owner" && agent.role != "admin" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "only owners and admins can invite members" })),
+        )
+            .into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let email = body.email.trim().to_lowercase();
+    let role = body.role.trim().to_lowercase();
+    if email.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "email required" })),
+        )
+            .into_response();
+    }
+    if role != "agent" && role != "admin" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "role must be agent or admin" })),
+        )
+            .into_response();
+    }
+    // Check if already a member
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(1) FROM agents WHERE tenant_id = $1 AND email = $2",
+    )
+    .bind(&tenant_id)
+    .bind(&email)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0)
+        > 0;
+    if exists {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "user is already a member of this workspace" })),
+        )
+            .into_response();
+    }
+    // Check if already invited
+    let pending = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(1) FROM tenant_invitations WHERE tenant_id = $1 AND email = $2 AND status = 'pending'",
+    )
+    .bind(&tenant_id)
+    .bind(&email)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0)
+        > 0;
+    if pending {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "invitation already pending for this email" })),
+        )
+            .into_response();
+    }
+
+    let now = now_iso();
+    let inv_token = Uuid::new_v4().to_string();
+    let invitation = TenantInvitation {
+        id: Uuid::new_v4().to_string(),
+        tenant_id: tenant_id.clone(),
+        email: email.clone(),
+        role: role.clone(),
+        token: inv_token.clone(),
+        status: "pending".to_string(),
+        invited_by: agent.id.clone(),
+        created_at: now.clone(),
+        expires_at: "".to_string(), // no expiry for now
+    };
+
+    let _ = sqlx::query(
+        "INSERT INTO tenant_invitations (id, tenant_id, email, role, token, status, invited_by, created_at, expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+    )
+    .bind(&invitation.id)
+    .bind(&invitation.tenant_id)
+    .bind(&invitation.email)
+    .bind(&invitation.role)
+    .bind(&invitation.token)
+    .bind(&invitation.status)
+    .bind(&invitation.invited_by)
+    .bind(&invitation.created_at)
+    .bind(&invitation.expires_at)
+    .execute(&state.db)
+    .await;
+
+    (
+        StatusCode::CREATED,
+        Json(json!({ "invitation": invitation })),
+    )
+        .into_response()
+}
+
+async fn get_tenant_invitations(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let rows = sqlx::query(
+        "SELECT id, tenant_id, email, role, token, status, invited_by, created_at, expires_at FROM tenant_invitations WHERE tenant_id = $1 ORDER BY created_at DESC",
+    )
+    .bind(&tenant_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let invitations: Vec<TenantInvitation> = rows
+        .into_iter()
+        .map(|row| TenantInvitation {
+            id: row.get("id"),
+            tenant_id: row.get("tenant_id"),
+            email: row.get("email"),
+            role: row.get("role"),
+            token: row.get("token"),
+            status: row.get("status"),
+            invited_by: row.get("invited_by"),
+            created_at: row.get("created_at"),
+            expires_at: row.get("expires_at"),
+        })
+        .collect();
+    (StatusCode::OK, Json(json!({ "invitations": invitations }))).into_response()
+}
+
+async fn revoke_invitation(
+    Path(invitation_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
+    if agent.role != "owner" && agent.role != "admin" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "only owners and admins can revoke invitations" })),
+        )
+            .into_response();
+    }
+    let _ = sqlx::query("DELETE FROM tenant_invitations WHERE id = $1")
+        .bind(&invitation_id)
+        .execute(&state.db)
+        .await;
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
+async fn update_member_role(
+    Path(member_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateMemberRoleBody>,
+) -> impl IntoResponse {
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
+    if agent.role != "owner" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "only owners can change member roles" })),
+        )
+            .into_response();
+    }
+    if member_id == agent.id {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "cannot change your own role" })),
+        )
+            .into_response();
+    }
+    let role = body.role.trim().to_lowercase();
+    if role != "agent" && role != "admin" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "role must be agent or admin" })),
+        )
+            .into_response();
+    }
+    let _ = sqlx::query("UPDATE agents SET role = $1 WHERE id = $2")
+        .bind(&role)
+        .bind(&member_id)
+        .execute(&state.db)
+        .await;
+    (StatusCode::OK, Json(json!({ "ok": true, "role": role }))).into_response()
+}
+
+async fn remove_member(
+    Path(member_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
+    if agent.role != "owner" && agent.role != "admin" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "only owners and admins can remove members" })),
+        )
+            .into_response();
+    }
+    if member_id == agent.id {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "cannot remove yourself" })),
+        )
+            .into_response();
+    }
+    // Cannot remove the owner
+    let target_role = sqlx::query_scalar::<_, String>("SELECT role FROM agents WHERE id = $1")
+        .bind(&member_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if target_role == "owner" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "cannot remove the workspace owner" })),
+        )
+            .into_response();
+    }
+    // Delete auth tokens, then agent
+    let _ = sqlx::query("DELETE FROM auth_tokens WHERE agent_id = $1")
+        .bind(&member_id)
+        .execute(&state.db)
+        .await;
+    let _ = sqlx::query("DELETE FROM agents WHERE id = $1")
+        .bind(&member_id)
+        .execute(&state.db)
+        .await;
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
+// Public endpoint — no auth needed, checks token in body
+async fn get_invitation_info(
+    Path(inv_token): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let row = sqlx::query(
+        "SELECT i.id, i.tenant_id, i.email, i.role, i.status, t.name as tenant_name FROM tenant_invitations i JOIN tenants t ON t.id = i.tenant_id WHERE i.token = $1",
+    )
+    .bind(&inv_token)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    match row {
+        Some(row) => {
+            let status: String = row.get("status");
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "email": row.get::<String, _>("email"),
+                    "role": row.get::<String, _>("role"),
+                    "status": status,
+                    "tenantName": row.get::<String, _>("tenant_name"),
+                })),
+            )
+                .into_response()
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "invitation not found" })),
+        )
+            .into_response(),
+    }
 }
 
 async fn get_tenant_settings(
@@ -6395,7 +6921,32 @@ async fn widget_bootstrap(State(state): State<Arc<AppState>>) -> impl IntoRespon
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     });
-    (StatusCode::OK, Json(json!({ "settings": settings }))).into_response()
+
+    // Fetch available agents for the widget header (show online team members)
+    let agent_rows = sqlx::query(
+        "SELECT id, name, avatar_url, status FROM agents WHERE tenant_id = $1 AND status = 'online' ORDER BY name ASC LIMIT 5",
+    )
+    .bind(&state.default_tenant_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let agents: Vec<Value> = agent_rows
+        .iter()
+        .map(|row| {
+            json!({
+                "id": row.get::<String, _>("id"),
+                "name": row.get::<String, _>("name"),
+                "avatarUrl": row.get::<Option<String>, _>("avatar_url").unwrap_or_default(),
+            })
+        })
+        .collect();
+
+    (
+        StatusCode::OK,
+        Json(json!({ "settings": settings, "agents": agents })),
+    )
+        .into_response()
 }
 
 async fn health() -> impl IntoResponse {
@@ -6485,18 +7036,37 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     .unwrap_or("")
                     .to_string();
 
-                let is_valid = sqlx::query_scalar::<_, i64>(
-                    "SELECT COUNT(1) FROM auth_tokens WHERE token = $1",
+                let agent_row = sqlx::query(
+                    "SELECT a.id, a.name, a.email, a.status, a.role, a.avatar_url, a.team_ids, a.inbox_ids FROM auth_tokens t JOIN agents a ON a.id = t.agent_id WHERE t.token = $1",
                 )
                 .bind(&token)
-                .fetch_one(&state.db)
+                .fetch_optional(&state.db)
                 .await
-                .unwrap_or(0)
-                    > 0;
+                .ok()
+                .flatten();
 
-                if is_valid {
+                if let Some(row) = agent_row {
+                    let profile = AgentProfile {
+                        id: row.get("id"),
+                        name: row.get("name"),
+                        email: row.get("email"),
+                        status: row.get("status"),
+                        role: row.get("role"),
+                        avatar_url: row
+                            .get::<Option<String>, _>("avatar_url")
+                            .unwrap_or_default(),
+                        team_ids: serde_json::from_str::<Vec<String>>(
+                            &row.get::<String, _>("team_ids"),
+                        )
+                        .unwrap_or_default(),
+                        inbox_ids: serde_json::from_str::<Vec<String>>(
+                            &row.get::<String, _>("inbox_ids"),
+                        )
+                        .unwrap_or_default(),
+                    };
                     let mut rt = state.realtime.lock().await;
                     rt.agents.insert(client_id);
+                    rt.agent_profiles.insert(client_id, profile);
                     drop(rt);
                     emit_session_snapshot(state.clone()).await;
                 } else {
@@ -6534,6 +7104,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         &target_session_id,
                         "visitor",
                         text,
+                        None,
                         None,
                         None,
                     )
@@ -6686,7 +7257,20 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     set_agent_human_typing(state.clone(), client_id, session_id, false).await;
                     let _ = ensure_session(state.clone(), session_id).await;
                     let sender = if internal { "team" } else { "agent" };
-                    let _ = add_message(state.clone(), session_id, sender, text, None, None).await;
+                    let agent_profile = {
+                        let rt = state.realtime.lock().await;
+                        rt.agent_profiles.get(&client_id).cloned()
+                    };
+                    let _ = add_message(
+                        state.clone(),
+                        session_id,
+                        sender,
+                        text,
+                        None,
+                        None,
+                        agent_profile.as_ref(),
+                    )
+                    .await;
                 }
             }
             _ => {}
@@ -6709,6 +7293,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
         }
         rt.clients.remove(&client_id);
         rt.agents.remove(&client_id);
+        rt.agent_profiles.remove(&client_id);
         if let Some(previous) = rt.watched_session.remove(&client_id) {
             if let Some(set) = rt.session_watchers.get_mut(&previous) {
                 set.remove(&client_id);
@@ -6924,11 +7509,30 @@ pub async fn run() {
         .route("/api/auth/me", get(get_me))
         .route("/api/tenants", get(get_tenants).post(create_tenant))
         .route("/api/tenants/{tenant_id}/switch", post(switch_tenant))
+        .route("/api/tenant/members", get(get_tenant_members))
+        .route(
+            "/api/tenant/members/{member_id}/role",
+            patch(update_member_role),
+        )
+        .route(
+            "/api/tenant/members/{member_id}",
+            axum::routing::delete(remove_member),
+        )
+        .route(
+            "/api/tenant/invitations",
+            get(get_tenant_invitations).post(invite_member),
+        )
+        .route(
+            "/api/tenant/invitations/{invitation_id}",
+            axum::routing::delete(revoke_invitation),
+        )
+        .route("/api/invitation/{inv_token}", get(get_invitation_info))
         .route(
             "/api/tenant/settings",
             get(get_tenant_settings).patch(patch_tenant_settings),
         )
         .route("/api/agent/status", patch(patch_agent_status))
+        .route("/api/agent/profile", patch(patch_agent_profile))
         .route("/api/contacts", get(get_contacts).post(create_contact))
         .route(
             "/api/contacts/{contact_id}",

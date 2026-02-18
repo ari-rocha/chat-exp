@@ -59,7 +59,7 @@ body {
   overflow: hidden;
   box-shadow: 0 24px 68px rgba(0, 0, 0, 0.34);
   display: grid;
-  grid-template-rows: 54px 1fr 48px 34px;
+  grid-template-rows: 58px 1fr 48px 34px;
   transform-origin: bottom right;
   perspective: 1200px;
   transform-style: preserve-3d;
@@ -134,10 +134,13 @@ body {
   font-size: 18px;
 }
 
-.left-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+/* ── Header Brand ── */
+.header-brand {
+  font-size: 16px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .right-actions {
@@ -714,9 +717,36 @@ body {
   font-size: 16px;
 }
 
+/* ── Agent Avatar in Messages ── */
+.agent-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  display: inline-grid;
+  place-items: center;
+}
+
+.agent-avatar-initial {
+  background: linear-gradient(135deg, #8b5cf6, #6366f1);
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: -0.02em;
+}
+
+.agent-name-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  padding-left: 2px;
+  margin-bottom: -4px;
+}
+
 .mini-icon-spacer {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   display: inline-block;
 }
 

@@ -259,6 +259,8 @@ export default function App() {
     name: "",
     email: "",
     password: "",
+    workspaceName: "",
+    invitationToken: "",
   });
   const [authError, setAuthError] = useState("");
 
@@ -740,13 +742,29 @@ export default function App() {
     try {
       const path =
         authMode === "register" ? "/api/auth/register" : "/api/auth/login";
+      const body =
+        authMode === "register"
+          ? {
+              name: authForm.name,
+              email: authForm.email,
+              password: authForm.password,
+              workspaceName: authForm.workspaceName || undefined,
+              invitationToken: authForm.invitationToken || undefined,
+            }
+          : { email: authForm.email, password: authForm.password };
       const payload = await apiFetch(path, "", {
         method: "POST",
-        body: JSON.stringify(authForm),
+        body: JSON.stringify(body),
       });
       localStorage.setItem(TOKEN_KEY, payload.token);
       setToken(payload.token);
-      setAuthForm({ name: "", email: "", password: "" });
+      setAuthForm({
+        name: "",
+        email: "",
+        password: "",
+        workspaceName: "",
+        invitationToken: "",
+      });
     } catch (error) {
       setAuthError(error.message);
     }
@@ -1418,6 +1436,9 @@ export default function App() {
           setTenantSettings={setTenantSettings}
           saveTenantSettings={saveTenantSettings}
           tenants={tenants}
+          agent={agent}
+          apiFetch={apiFetch}
+          token={token}
         />
       </section>
     ) : view === "csat" ? (

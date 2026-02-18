@@ -20,6 +20,12 @@ pub struct ChatMessage {
     #[serde(default)]
     pub widget: Option<Value>,
     pub created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(default)]
+    pub agent_name: String,
+    #[serde(default)]
+    pub agent_avatar_url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -81,8 +87,35 @@ pub struct AgentProfile {
     pub name: String,
     pub email: String,
     pub status: String,
+    pub role: String,
+    pub avatar_url: String,
     pub team_ids: Vec<String>,
     pub inbox_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TenantInvitation {
+    pub id: String,
+    pub tenant_id: String,
+    pub email: String,
+    pub role: String,
+    pub token: String,
+    pub status: String,
+    pub invited_by: String,
+    pub created_at: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TenantMember {
+    pub id: String,
+    pub name: String,
+    pub email: String,
+    pub role: String,
+    pub status: String,
+    pub avatar_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -276,6 +309,7 @@ pub struct CsatSurvey {
 pub struct RealtimeState {
     pub clients: HashMap<usize, mpsc::UnboundedSender<String>>,
     pub agents: HashSet<usize>,
+    pub agent_profiles: HashMap<usize, AgentProfile>,
     pub session_watchers: HashMap<String, HashSet<usize>>,
     pub watched_session: HashMap<usize, String>,
     pub agent_auto_typing_counts: HashMap<String, usize>,
@@ -306,6 +340,28 @@ pub struct RegisterBody {
     pub name: String,
     pub email: String,
     pub password: String,
+    #[serde(default)]
+    pub workspace_name: Option<String>,
+    #[serde(default)]
+    pub invitation_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InviteMemberBody {
+    pub email: String,
+    #[serde(default = "default_member_role")]
+    pub role: String,
+}
+
+fn default_member_role() -> String {
+    "agent".to_string()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateMemberRoleBody {
+    pub role: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -319,6 +375,13 @@ pub struct LoginBody {
 #[serde(rename_all = "camelCase")]
 pub struct StatusBody {
     pub status: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PatchAgentProfileBody {
+    pub name: Option<String>,
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
