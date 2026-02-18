@@ -22,8 +22,57 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { useState as useStateReact } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+
+function MessageAvatar({ message, tenantSettings }) {
+  const [hover, setHover] = useStateReact(false);
+  const isBot =
+    message.agentId === "__bot__" || (!message.agentId && !message.agentName);
+  const avatarUrl =
+    message.agentAvatarUrl || (isBot ? tenantSettings?.botAvatarUrl : "") || "";
+  const name =
+    message.agentName || (isBot ? tenantSettings?.botName || "Bot" : "Agent");
+  const initials = (() => {
+    if (!name) return "A";
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return name[0].toUpperCase();
+  })();
+
+  return (
+    <div
+      className="relative inline-flex flex-shrink-0"
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      {avatarUrl ? (
+        <img
+          src={avatarUrl}
+          alt={name}
+          className="h-6 w-6 rounded-full object-cover ring-2 ring-white"
+        />
+      ) : (
+        <span
+          className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold text-white ring-2 ring-white ${
+            isBot
+              ? "bg-gradient-to-br from-emerald-500 to-teal-500"
+              : "bg-gradient-to-br from-violet-500 to-indigo-500"
+          }`}
+        >
+          {initials}
+        </span>
+      )}
+      {hover && (
+        <div className="absolute bottom-full right-0 mb-1.5 z-50 whitespace-nowrap rounded-md bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-white shadow-lg pointer-events-none">
+          {name}
+          <div className="absolute top-full right-2 -mt-px h-0 w-0 border-x-4 border-t-4 border-x-transparent border-t-slate-900" />
+        </div>
+      )}
+    </div>
+  );
+}
 
 function getSessionTitle(session) {
   if (!session) return "No conversation selected";
@@ -100,6 +149,7 @@ export default function ConversationsView({
   setNewConvAttrKey,
   newConvAttrValue,
   setNewConvAttrValue,
+  tenantSettings,
 }) {
   const handleComposerKeyDown = (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
@@ -216,11 +266,11 @@ export default function ConversationsView({
           </header>
 
           <ScrollArea className="conversation-thread h-full min-h-0 px-5 py-4">
-            <div className="space-y-3">
-              {messages.map((message) => {
+            <div className="flex flex-col">
+              {messages.map((message, index) => {
                 if (message.sender === "system") {
                   return (
-                    <div key={message.id} className="flex justify-center">
+                    <div key={message.id} className="flex justify-center my-3">
                       <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] text-slate-500">
                         {String(message.text ?? "")}
                       </span>
@@ -228,13 +278,48 @@ export default function ConversationsView({
                   );
                 }
 
+                const prev = messages[index - 1];
+                const next = messages[index + 1];
                 const isAgent = message.sender === "agent";
                 const isTeam = message.sender === "team";
+                const isVisitor = !isAgent && !isTeam;
+                const senderGroup = isAgent || isTeam ? "right" : "left";
+                const prevGroup =
+                  prev && prev.sender !== "system"
+                    ? prev.sender === "agent" || prev.sender === "team"
+                      ? "right"
+                      : "left"
+                    : null;
+                const nextGroup =
+                  next && next.sender !== "system"
+                    ? next.sender === "agent" || next.sender === "team"
+                      ? "right"
+                      : "left"
+                    : null;
+                const isLastInSequence =
+                  nextGroup !== senderGroup ||
+                  ((isAgent || isTeam) &&
+                    next &&
+                    next.agentId !== message.agentId);
+                const gapTop =
+                  prevGroup === senderGroup &&
+                  (!prev || prev.agentId === message.agentId)
+                    ? "mt-1"
+                    : "mt-3";
                 return (
                   <article
                     key={message.id}
-                    className={`${isAgent || isTeam ? "ml-auto" : ""} w-fit max-w-[76%]`}
+                    className={`flex items-end gap-1.5 ${gapTop} ${isAgent || isTeam ? "ml-auto flex-row-reverse" : ""} w-fit max-w-[76%]`}
                   >
+                    {(isAgent || isTeam) &&
+                      (isLastInSequence ? (
+                        <MessageAvatar
+                          message={message}
+                          tenantSettings={tenantSettings}
+                        />
+                      ) : (
+                        <span className="inline-block h-6 w-6 flex-shrink-0" />
+                      ))}
                     <div
                       className={`rounded-xl border px-3 py-2 text-sm shadow-sm ${
                         isAgent

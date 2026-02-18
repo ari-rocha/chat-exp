@@ -1368,6 +1368,7 @@ export default function App() {
           setNewConvAttrKey={setNewConvAttrKey}
           newConvAttrValue={newConvAttrValue}
           setNewConvAttrValue={setNewConvAttrValue}
+          tenantSettings={tenantSettings}
         />
       </div>
     );

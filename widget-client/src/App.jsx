@@ -478,7 +478,10 @@ export default function App() {
               const next = messages[index + 1];
               const isAgent = m.sender === "agent";
               const showAgentIcon =
-                isAgent && (!next || next.sender !== "agent");
+                isAgent &&
+                (!next ||
+                  next.sender !== "agent" ||
+                  next.agentId !== m.agentId);
               const showAgentName =
                 isAgent &&
                 (m.agentName || brandSettings?.botName) &&
