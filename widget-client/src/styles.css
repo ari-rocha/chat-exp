@@ -1,9 +1,10 @@
 :root {
   --gold: #e4b84f;
+  --accent: #1f2230;
   --paper: #ececec;
   --text: #2b2b2b;
   --agent-bg: #e3e3e3;
-  --visitor-bg: #e5b94c;
+  --visitor-bg: var(--gold);
 }
 
 * {
@@ -14,7 +15,7 @@ body {
   margin: 0;
   min-height: 100vh;
   font-family: "Segoe UI", Tahoma, sans-serif;
-  background: radial-gradient(circle at 20% 20%, #2f3446, #1f2230);
+  background: var(--accent);
 }
 
 .widget-host {
@@ -498,8 +499,8 @@ body {
 
 .inline-submit {
   width: 100%;
-  border: 1px solid #d6a83f;
-  background: #e4b84f;
+  border: 1px solid color-mix(in srgb, var(--gold) 85%, #000);
+  background: var(--gold);
   color: #2d2412;
   border-radius: 10px;
   padding: 9px 12px;
@@ -679,8 +680,8 @@ body {
 
 .carousel-action {
   width: 100%;
-  border: 1px solid #d6a83f;
-  background: #e4b84f;
+  border: 1px solid color-mix(in srgb, var(--gold) 85%, #000);
+  background: var(--gold);
   color: #2d2412;
   border-radius: 10px;
   padding: 9px 12px;

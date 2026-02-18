@@ -114,7 +114,16 @@ export default function App() {
       try {
         const bRes = await fetch(`${API_URL}/api/widget/bootstrap`);
         const bData = await bRes.json();
-        if (bData?.settings) setBrandSettings(bData.settings);
+        if (bData?.settings) {
+          setBrandSettings(bData.settings);
+          const root = document.documentElement;
+          if (bData.settings.primaryColor) {
+            root.style.setProperty("--gold", bData.settings.primaryColor);
+          }
+          if (bData.settings.accentColor) {
+            root.style.setProperty("--accent", bData.settings.accentColor);
+          }
+        }
         if (Array.isArray(bData?.agents)) setBootstrapAgents(bData.agents);
       } catch {}
 
