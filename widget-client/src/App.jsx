@@ -243,7 +243,12 @@ export default function App() {
   useEffect(() => {
     if (!listRef.current) return;
     if (!stickToBottomRef.current) return;
-    listRef.current.scrollTop = listRef.current.scrollHeight;
+    const el = listRef.current;
+    el.scrollTop = el.scrollHeight;
+    // Re-scroll after paint so late-rendered items (system pills, widgets) are visible
+    requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
   }, [messages, agentTyping, open]);
 
   const onBodyScroll = () => {
