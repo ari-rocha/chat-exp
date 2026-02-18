@@ -12,7 +12,7 @@ use crate::types::*;
 use axum::{
     extract::{
         ws::{Message, WebSocket},
-        Path, State, WebSocketUpgrade,
+        Path, Query, State, WebSocketUpgrade,
     },
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
@@ -380,9 +380,22 @@ async fn auth_tenant_from_headers(
             .await
             .ok()
             .flatten()
-            .unwrap_or_else(|| state.default_tenant_id.clone());
+            .ok_or((
+                StatusCode::UNAUTHORIZED,
+                Json(json!({ "error": "no tenant associated with token" })),
+            ))?;
 
     Ok(tenant_id)
+}
+
+/// Resolve the tenant_id for a given session from the database.
+async fn tenant_for_session(state: &Arc<AppState>, session_id: &str) -> Option<String> {
+    sqlx::query_scalar::<_, String>("SELECT tenant_id FROM sessions WHERE id = $1")
+        .bind(session_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
 }
 
 async fn emit_to_client<T: Serialize>(
@@ -721,7 +734,7 @@ async fn resolve_contact_from_visitor_id(
     }
 }
 
-async fn ensure_session(state: Arc<AppState>, session_id: &str) -> Session {
+async fn ensure_session(state: Arc<AppState>, session_id: &str, tenant_id: &str) -> Session {
     let existing = sqlx::query(
         "SELECT id, tenant_id, created_at, updated_at, channel, assignee_agent_id, inbox_id, team_id, flow_id, handover_active, status, priority, contact_id, visitor_id FROM sessions WHERE id = $1",
     )
@@ -753,8 +766,18 @@ async fn ensure_session(state: Arc<AppState>, session_id: &str) -> Session {
     } else {
         created = true;
         let now = now_iso();
+        // Look up the first enabled flow for this tenant
+        let default_flow_id: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM flows WHERE tenant_id = $1 AND enabled = true ORDER BY created_at ASC LIMIT 1",
+        )
+        .bind(tenant_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+
         let session = Session {
-            tenant_id: state.default_tenant_id.clone(),
+            tenant_id: tenant_id.to_string(),
             id: session_id.to_string(),
             created_at: now.clone(),
             updated_at: now,
@@ -763,7 +786,7 @@ async fn ensure_session(state: Arc<AppState>, session_id: &str) -> Session {
             assignee_agent_id: None,
             inbox_id: None,
             team_id: None,
-            flow_id: Some(state.default_flow_id.clone()),
+            flow_id: default_flow_id,
             contact_id: None,
             visitor_id: String::new(),
             handover_active: false,
@@ -804,8 +827,10 @@ async fn resolve_visitor_target_session(
         return (requested_session_id.to_string(), false);
     }
 
+    // Inherit tenant from the closed session
+    let old_tenant = tenant_for_session(&state, requested_session_id).await.unwrap_or_default();
     let new_session_id = Uuid::new_v4().to_string();
-    let _ = ensure_session(state, &new_session_id).await;
+    let _ = ensure_session(state, &new_session_id, &old_tenant).await;
     (new_session_id, true)
 }
 
@@ -1432,13 +1457,7 @@ async fn generate_ai_reply(
     let transcript = recent_session_context(&state, session_id, 14).await;
 
     // Fetch tenant_id for this session
-    let tenant_id: String = sqlx::query_scalar("SELECT tenant_id FROM sessions WHERE id = $1")
-        .bind(session_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| state.default_tenant_id.clone());
+    let tenant_id: String = tenant_for_session(&state, session_id).await.unwrap_or_default();
 
     // Fetch contact info linked to this session
     let mut contact_block = String::new();
@@ -1853,10 +1872,11 @@ async fn send_flow_agent_message(
     tokio::time::sleep(Duration::from_millis(delay_ms.clamp(120, 6000))).await;
 
     // Look up bot profile from tenant settings so flow/AI messages carry bot identity
+    let sess_tenant = tenant_for_session(&state, session_id).await.unwrap_or_default();
     let bot_profile = sqlx::query_as::<_, (String, String)>(
         "SELECT bot_name, bot_avatar_url FROM tenant_settings WHERE tenant_id = $1",
     )
-    .bind(&state.default_tenant_id)
+    .bind(&sess_tenant)
     .fetch_optional(&state.db)
     .await
     .ok()
@@ -1910,12 +1930,13 @@ async fn save_flow_cursor(
     variables: &HashMap<String, String>,
 ) {
     let vars_json = serde_json::to_string(variables).unwrap_or_else(|_| "{}".to_string());
+    let sess_tenant = tenant_for_session(state, session_id).await.unwrap_or_default();
     let _ = sqlx::query(
         "INSERT INTO flow_cursors (tenant_id, session_id, flow_id, node_id, node_type, variables, created_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $7) \
          ON CONFLICT (tenant_id, session_id) DO UPDATE SET flow_id = $3, node_id = $4, node_type = $5, variables = $6, created_at = $7",
     )
-    .bind(&state.default_tenant_id)
+    .bind(&sess_tenant)
     .bind(session_id)
     .bind(flow_id)
     .bind(node_id)
@@ -1928,8 +1949,9 @@ async fn save_flow_cursor(
 
 /// Remove the flow cursor when the flow completes or we no longer need to wait.
 async fn clear_flow_cursor(state: &Arc<AppState>, session_id: &str) {
+    let sess_tenant = tenant_for_session(state, session_id).await.unwrap_or_default();
     let _ = sqlx::query("DELETE FROM flow_cursors WHERE tenant_id = $1 AND session_id = $2")
-        .bind(&state.default_tenant_id)
+        .bind(&sess_tenant)
         .bind(session_id)
         .execute(&state.db)
         .await;
@@ -1940,10 +1962,11 @@ async fn get_flow_cursor(
     state: &Arc<AppState>,
     session_id: &str,
 ) -> Option<(String, String, String, HashMap<String, String>)> {
+    let sess_tenant = tenant_for_session(state, session_id).await.unwrap_or_default();
     let row = sqlx::query(
         "SELECT flow_id, node_id, node_type, variables FROM flow_cursors WHERE tenant_id = $1 AND session_id = $2",
     )
-    .bind(&state.default_tenant_id)
+    .bind(&sess_tenant)
     .bind(session_id)
     .fetch_optional(&state.db)
     .await
@@ -3212,15 +3235,7 @@ async fn execute_flow_from(
                     .unwrap_or_default();
                 if !tags.is_empty() {
                     // Get tenant_id for this session
-                    let sess_tenant = sqlx::query_scalar::<_, String>(
-                        "SELECT tenant_id FROM sessions WHERE id = $1",
-                    )
-                    .bind(&session_id)
-                    .fetch_optional(&state.db)
-                    .await
-                    .ok()
-                    .flatten()
-                    .unwrap_or_else(|| state.default_tenant_id.clone());
+                    let sess_tenant = tenant_for_session(&state, &session_id).await.unwrap_or_default();
 
                     for tag_name in &tags {
                         if action == "remove" {
@@ -3410,15 +3425,7 @@ async fn execute_flow_from(
                 if !text.is_empty() {
                     // Persist as a real conversation note
                     let note_id = Uuid::new_v4().to_string();
-                    let sess_tenant = sqlx::query_scalar::<_, String>(
-                        "SELECT tenant_id FROM sessions WHERE id = $1",
-                    )
-                    .bind(&session_id)
-                    .fetch_optional(&state.db)
-                    .await
-                    .ok()
-                    .flatten()
-                    .unwrap_or_else(|| state.default_tenant_id.clone());
+                    let sess_tenant = tenant_for_session(&state, &session_id).await.unwrap_or_default();
                     let _ = sqlx::query(
                         "INSERT INTO conversation_notes (id, tenant_id, session_id, agent_id, text, created_at) VALUES ($1,$2,$3,'bot',$4,$5)",
                     )
@@ -3726,9 +3733,12 @@ async fn run_flow_for_visitor_message(
     let flow = if let Some(flow_id) = assigned_flow_id {
         get_flow_by_id_db(&state.db, &flow_id).await
     } else {
+        // Scope flow lookup to the session's tenant
+        let sess_tenant = tenant_for_session(&state, &session_id).await.unwrap_or_default();
         let row = sqlx::query(
-            "SELECT id FROM flows WHERE enabled = true ORDER BY created_at ASC LIMIT 1",
+            "SELECT id FROM flows WHERE tenant_id = $1 AND enabled = true ORDER BY created_at ASC LIMIT 1",
         )
+        .bind(&sess_tenant)
         .fetch_optional(&state.db)
         .await
         .ok()
@@ -3887,8 +3897,20 @@ async fn post_session(
     State(state): State<Arc<AppState>>,
     body: Option<Json<Value>>,
 ) -> impl IntoResponse {
+    let tenant_id = body
+        .as_ref()
+        .and_then(|b| b.get("tenantId"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if tenant_id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "tenantId is required" })),
+        )
+            .into_response();
+    }
     let session_id = Uuid::new_v4().to_string();
-    let _ = ensure_session(state.clone(), &session_id).await;
+    let _ = ensure_session(state.clone(), &session_id, tenant_id).await;
 
     // If visitor sent a visitorId, resolve their contact from previous sessions
     let visitor_id = body
@@ -3904,32 +3926,19 @@ async fn post_session(
         StatusCode::CREATED,
         Json(json!({ "sessionId": session_id })),
     )
+        .into_response()
 }
 
 async fn get_sessions(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
-    let tenant_filter = match bearer_token(&headers) {
-        Some(token) => {
-            sqlx::query_scalar::<_, String>("SELECT tenant_id FROM auth_tokens WHERE token = $1")
-                .bind(token)
-                .fetch_optional(&state.db)
-                .await
-                .ok()
-                .flatten()
-        }
-        None => None,
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(tid) => tid,
+        Err(err) => return err.into_response(),
     };
-    let rows = if let Some(tenant_id) = tenant_filter {
-        sqlx::query("SELECT id FROM sessions WHERE tenant_id = $1 ORDER BY updated_at DESC")
-            .bind(tenant_id)
-            .fetch_all(&state.db)
-            .await
-            .unwrap_or_default()
-    } else {
-        sqlx::query("SELECT id FROM sessions ORDER BY updated_at DESC")
-            .fetch_all(&state.db)
-            .await
-            .unwrap_or_default()
-    };
+    let rows = sqlx::query("SELECT id FROM sessions WHERE tenant_id = $1 ORDER BY updated_at DESC")
+        .bind(&tenant_id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
     let mut list = Vec::with_capacity(rows.len());
     for row in rows {
         let session_id: String = row.get("id");
@@ -3939,14 +3948,13 @@ async fn get_sessions(State(state): State<Arc<AppState>>, headers: HeaderMap) ->
     }
 
     list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    Json(json!({ "sessions": list }))
+    Json(json!({ "sessions": list })).into_response()
 }
 
 async fn get_messages(
     Path(session_id): Path<String>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let _ = ensure_session(state.clone(), &session_id).await;
     let messages = get_session_messages_db(&state.db, &session_id).await;
     Json(json!({ "messages": visible_messages_for_widget(&messages) }))
 }
@@ -3976,8 +3984,6 @@ async fn post_message(
     } else {
         session_id.clone()
     };
-
-    let _ = ensure_session(state.clone(), &target_session_id).await;
 
     let Some(message) = add_message(
         state.clone(),
@@ -4018,8 +4024,6 @@ async fn close_session_by_visitor(
     Path(session_id): Path<String>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let _ = ensure_session(state.clone(), &session_id).await;
-
     let Some((summary, changed)) = set_session_status(&state, &session_id, "closed").await else {
         return (
             StatusCode::NOT_FOUND,
@@ -4305,9 +4309,10 @@ async fn login_agent(
 }
 
 async fn get_me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
-    let tenant_id = auth_tenant_from_headers(&state, &headers)
-        .await
-        .unwrap_or_else(|_| state.default_tenant_id.clone());
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(tid) => tid,
+        Err(err) => return err.into_response(),
+    };
     match auth_agent_from_headers(&state, &headers).await {
         Ok(agent) => (
             StatusCode::OK,
@@ -6859,13 +6864,7 @@ async fn submit_csat(
         )
             .into_response();
     }
-    let tenant_id = sqlx::query_scalar::<_, String>("SELECT tenant_id FROM sessions WHERE id = $1")
-        .bind(&session_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| state.default_tenant_id.clone());
+    let tenant_id = tenant_for_session(&state, &session_id).await.unwrap_or_default();
     let survey = CsatSurvey {
         id: Uuid::new_v4().to_string(),
         tenant_id: tenant_id.clone(),
@@ -6954,11 +6953,24 @@ async fn get_csat_report(
         .into_response()
 }
 
-async fn widget_bootstrap(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn widget_bootstrap(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let tenant_id = match params.get("tenant_id") {
+        Some(tid) if !tid.is_empty() => tid.clone(),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "tenant_id query parameter is required" })),
+            )
+                .into_response();
+        }
+    };
     let settings = sqlx::query(
         "SELECT tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
     )
-    .bind(&state.default_tenant_id)
+    .bind(&tenant_id)
     .fetch_optional(&state.db)
     .await
     .ok()
@@ -6982,7 +6994,7 @@ async fn widget_bootstrap(State(state): State<Arc<AppState>>) -> impl IntoRespon
     let agent_rows = sqlx::query(
         "SELECT id, name, avatar_url, status FROM agents WHERE tenant_id = $1 AND status = 'online' ORDER BY name ASC LIMIT 5",
     )
-    .bind(&state.default_tenant_id)
+    .bind(&tenant_id)
     .fetch_all(&state.db)
     .await
     .unwrap_or_default();
@@ -7046,7 +7058,22 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
         match envelope.event.as_str() {
             "widget:join" => {
                 if let Some(session_id) = envelope.data.get("sessionId").and_then(Value::as_str) {
-                    let session = ensure_session(state.clone(), session_id).await;
+                    let tenant_id = envelope
+                        .data
+                        .get("tenantId")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    if tenant_id.is_empty() {
+                        emit_to_client(
+                            &state,
+                            client_id,
+                            "error",
+                            json!({ "message": "tenantId is required" }),
+                        )
+                        .await;
+                        continue;
+                    }
+                    let session = ensure_session(state.clone(), session_id, tenant_id).await;
 
                     // Resolve contact from persistent visitor identity
                     let visitor_id = envelope
@@ -7154,7 +7181,6 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         .await;
                     }
 
-                    let _ = ensure_session(state.clone(), &target_session_id).await;
                     let _ = add_message(
                         state.clone(),
                         &target_session_id,
@@ -7183,7 +7209,6 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
             "widget:opened" => {
                 let session_id = envelope.data.get("sessionId").and_then(Value::as_str);
                 if let Some(session_id) = session_id {
-                    let _ = ensure_session(state.clone(), session_id).await;
                     let state_clone = state.clone();
                     let session_clone = session_id.to_string();
                     tokio::spawn(async move {
@@ -7254,7 +7279,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
             }
             "agent:request-history" => {
                 if let Some(session_id) = envelope.data.get("sessionId").and_then(Value::as_str) {
-                    let session = ensure_session(state.clone(), session_id).await;
+                    let messages = get_session_messages_db(&state.db, session_id).await;
 
                     {
                         let mut rt = state.realtime.lock().await;
@@ -7271,7 +7296,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                             .insert(client_id);
                     }
 
-                    emit_to_client(&state, client_id, "session:history", session.messages).await;
+                    emit_to_client(&state, client_id, "session:history", messages).await;
                     if is_agent_typing(&state, session_id).await {
                         emit_to_client(
                             &state,
@@ -7311,7 +7336,6 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     .unwrap_or(false);
                 if let (Some(session_id), Some(text)) = (session_id, text) {
                     set_agent_human_typing(state.clone(), client_id, session_id, false).await;
-                    let _ = ensure_session(state.clone(), session_id).await;
                     let sender = if internal { "team" } else { "agent" };
                     let agent_profile = {
                         let rt = state.realtime.lock().await;
@@ -7391,169 +7415,8 @@ pub async fn run() {
         .await
         .expect("failed to run sqlx migrations");
 
-    let default_tenant_id = "default-workspace".to_string();
-    let default_tenant_now = now_iso();
-    let _ = sqlx::query(
-        "INSERT INTO tenants (id, name, slug, created_at, updated_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING",
-    )
-    .bind(&default_tenant_id)
-    .bind("Default Workspace")
-    .bind("default-workspace")
-    .bind(&default_tenant_now)
-    .bind(&default_tenant_now)
-    .execute(&db)
-    .await;
-    let _ = sqlx::query(
-        "INSERT INTO tenant_settings (tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (tenant_id) DO NOTHING",
-    )
-    .bind(&default_tenant_id)
-    .bind("Support")
-    .bind("#e4b84f")
-    .bind("#1f2230")
-    .bind("")
-    .bind("#")
-    .bind("bottom-right")
-    .bind("Hello! How can we help?")
-    .bind("")
-    .bind("")
-    .bind(now_iso())
-    .bind(now_iso())
-    .execute(&db)
-    .await;
-
-    let default_flow_id = "default-flow".to_string();
-    let now = now_iso();
-    let default_flow = ChatFlow {
-        tenant_id: default_tenant_id.clone(),
-        id: default_flow_id.clone(),
-        name: "Welcome Demo Flow".to_string(),
-        description: "Default onboarding flow with delayed demo messages.".to_string(),
-        enabled: true,
-        created_at: now.clone(),
-        updated_at: now,
-        nodes: vec![
-            FlowNode {
-                id: "trigger-welcome".to_string(),
-                node_type: "trigger".to_string(),
-                position: FlowPosition { x: 120.0, y: 200.0 },
-                data: json!({ "label": "Trigger", "on": "widget_open", "keywords": [] }),
-            },
-            FlowNode {
-                id: "msg-hello".to_string(),
-                node_type: "message".to_string(),
-                position: FlowPosition { x: 420.0, y: 100.0 },
-                data: json!({ "label": "Hello", "text": "Hello!", "delayMs": 500 }),
-            },
-            FlowNode {
-                id: "msg-demo".to_string(),
-                node_type: "message".to_string(),
-                position: FlowPosition { x: 420.0, y: 210.0 },
-                data: json!({ "label": "Demo", "text": "This is a demo.", "delayMs": 900 }),
-            },
-            FlowNode {
-                id: "msg-nice".to_string(),
-                node_type: "message".to_string(),
-                position: FlowPosition { x: 420.0, y: 320.0 },
-                data: json!({ "label": "Nice Day", "text": "Have a wonderful day 😊", "delayMs": 1200 }),
-            },
-            FlowNode {
-                id: "end-flow".to_string(),
-                node_type: "end".to_string(),
-                position: FlowPosition { x: 760.0, y: 210.0 },
-                data: json!({ "label": "End" }),
-            },
-        ],
-        edges: vec![
-            FlowEdge {
-                id: "e-trigger-hello".to_string(),
-                source: "trigger-welcome".to_string(),
-                target: "msg-hello".to_string(),
-                source_handle: None,
-                target_handle: None,
-                data: json!({}),
-            },
-            FlowEdge {
-                id: "e-hello-demo".to_string(),
-                source: "msg-hello".to_string(),
-                target: "msg-demo".to_string(),
-                source_handle: None,
-                target_handle: None,
-                data: json!({}),
-            },
-            FlowEdge {
-                id: "e-demo-nice".to_string(),
-                source: "msg-demo".to_string(),
-                target: "msg-nice".to_string(),
-                source_handle: None,
-                target_handle: None,
-                data: json!({}),
-            },
-            FlowEdge {
-                id: "e-nice-end".to_string(),
-                source: "msg-nice".to_string(),
-                target: "end-flow".to_string(),
-                source_handle: None,
-                target_handle: None,
-                data: json!({}),
-            },
-        ],
-        input_variables: vec![],
-        ai_tool: false,
-        ai_tool_description: String::new(),
-    };
-
-    let _ = sqlx::query(
-        "INSERT INTO flows (id, tenant_id, name, description, enabled, created_at, updated_at, nodes, edges, input_variables) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (id) DO NOTHING",    )
-    .bind(&default_flow.id)
-    .bind(&default_flow.tenant_id)
-    .bind(&default_flow.name)
-    .bind(&default_flow.description)
-    .bind(default_flow.enabled)
-    .bind(&default_flow.created_at)
-    .bind(&default_flow.updated_at)
-    .bind(serde_json::to_string(&default_flow.nodes).unwrap_or_else(|_| "[]".to_string()))
-    .bind(serde_json::to_string(&default_flow.edges).unwrap_or_else(|_| "[]".to_string()))
-    .bind("[]")
-    .execute(&db)
-    .await;
-    let seed_now = now_iso();
-    let _ = sqlx::query(
-        "INSERT INTO teams (id, tenant_id, name, agent_ids) VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO NOTHING",
-    )
-    .bind("default-team")
-    .bind(&default_tenant_id)
-    .bind("Support")
-    .bind("[]")
-    .execute(&db)
-    .await;
-    let _ = sqlx::query(
-        "INSERT INTO inboxes (id, tenant_id, name, channels, agent_ids) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING",
-    )
-    .bind("default-inbox")
-    .bind(&default_tenant_id)
-    .bind("General")
-    .bind("[\"web\",\"whatsapp\"]")
-    .bind("[]")
-    .execute(&db)
-    .await;
-    let _ = sqlx::query(
-        "INSERT INTO canned_replies (id, tenant_id, title, shortcut, category, body, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING",
-    )
-    .bind("seed-greet")
-    .bind(&default_tenant_id)
-    .bind("Greeting")
-    .bind("/greet")
-    .bind("General")
-    .bind("Hi {{visitor_id}}, thanks for reaching out. I am {{agent_name}} and I can help you with this.")
-    .bind(&seed_now)
-    .bind(&seed_now)
-    .execute(&db)
-    .await;
-
     let state = Arc::new(AppState {
         db,
-        default_flow_id,
-        default_tenant_id,
         realtime: Mutex::new(RealtimeState::default()),
         next_client_id: AtomicUsize::new(0),
         ai_client: reqwest::Client::new(),

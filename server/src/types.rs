@@ -322,8 +322,6 @@ pub struct RealtimeState {
 
 pub struct AppState {
     pub db: PgPool,
-    pub default_flow_id: String,
-    pub default_tenant_id: String,
     pub realtime: Mutex<RealtimeState>,
     pub next_client_id: AtomicUsize,
     pub ai_client: reqwest::Client,

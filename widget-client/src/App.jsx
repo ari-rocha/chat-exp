@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:4000/ws";
+const TENANT_ID = import.meta.env.VITE_TENANT_ID ?? window.CHAT_TENANT_ID ?? "";
 
 const icon = (
   <svg viewBox="0 0 48 48" aria-hidden="true">
@@ -112,7 +113,7 @@ export default function App() {
     const boot = async () => {
       // Fetch widget bootstrap (settings + online agents)
       try {
-        const bRes = await fetch(`${API_URL}/api/widget/bootstrap`);
+        const bRes = await fetch(`${API_URL}/api/widget/bootstrap?tenant_id=${encodeURIComponent(TENANT_ID)}`);
         const bData = await bRes.json();
         if (bData?.settings) {
           setBrandSettings(bData.settings);
@@ -131,7 +132,7 @@ export default function App() {
       const res = await fetch(`${API_URL}/api/session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ visitorId: visitorId.current }),
+        body: JSON.stringify({ visitorId: visitorId.current, tenantId: TENANT_ID }),
       });
       const data = await res.json();
       setSessionId(data.sessionId);
@@ -152,7 +153,7 @@ export default function App() {
       wsRef.current = ws;
 
       ws.addEventListener("open", () => {
-        sendWsEvent("widget:join", { sessionId, visitorId: visitorId.current });
+        sendWsEvent("widget:join", { sessionId, visitorId: visitorId.current, tenantId: TENANT_ID });
         if (openRef.current) {
           sendWsEvent("widget:opened", { sessionId });
         }
@@ -403,7 +404,7 @@ export default function App() {
     const res = await fetch(`${API_URL}/api/session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ visitorId: visitorId.current }),
+      body: JSON.stringify({ visitorId: visitorId.current, tenantId: TENANT_ID }),
     });
     const data = await res.json();
     if (!data?.sessionId) return;
