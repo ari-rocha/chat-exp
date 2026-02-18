@@ -3640,6 +3640,7 @@ async fn run_flow_for_visitor_message(
             // We have a paused flow — resume it from the paused node
             if let Some(flow) = get_flow_by_id_db(&state.db, &cursor_flow_id).await {
                 let cursor_node_type = _cursor_node_type.clone();
+                let cursor_node_id_copy = cursor_node_id.clone();
                 execute_flow_from(
                     state.clone(),
                     session_id.clone(),
@@ -3649,10 +3650,18 @@ async fn run_flow_for_visitor_message(
                     cursor_vars,
                 )
                 .await;
-                // If cursor still exists after resume, the visitor's text didn't match
-                // any button/option — fall through to normal AI handling
+                // Only fall through to AI if cursor is still on the SAME buttons/select node
+                // (meaning the visitor's text didn't match any option). If cursor moved to a
+                // different node (e.g. start_flow saving a new pause), the click was handled.
+                let still_on_same_node = if let Some((_, post_node_id, _, _)) =
+                    get_flow_cursor(&state, &session_id).await
+                {
+                    post_node_id == cursor_node_id_copy
+                } else {
+                    false
+                };
                 if (cursor_node_type == "buttons" || cursor_node_type == "select")
-                    && get_flow_cursor(&state, &session_id).await.is_some()
+                    && still_on_same_node
                 {
                     // Don't consume the message — let AI handle it below
                 } else {
