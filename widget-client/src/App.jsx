@@ -374,7 +374,10 @@ export default function App() {
   };
 
   const renderAgentAvatar = (msg, size = 28) => {
-    const avatarUrl = msg?.agentAvatarUrl || (!msg?.agentName ? brandSettings?.botAvatarUrl : "") || "";
+    const avatarUrl =
+      msg?.agentAvatarUrl ||
+      (!msg?.agentName ? brandSettings?.botAvatarUrl : "") ||
+      "";
     const name = msg?.agentName || brandSettings?.botName || "";
     if (avatarUrl) {
       return (
