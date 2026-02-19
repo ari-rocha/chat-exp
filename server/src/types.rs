@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    path::PathBuf,
     sync::atomic::AtomicUsize,
 };
 
@@ -370,6 +371,7 @@ pub struct AppState {
     pub realtime: Mutex<RealtimeState>,
     pub next_client_id: AtomicUsize,
     pub ai_client: reqwest::Client,
+    pub media_storage_dir: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]

@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     env,
+    path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -355,6 +356,219 @@ fn signed_whatsapp_media_url(
     let exp = Utc::now().timestamp() + ttl_seconds.max(120);
     let sig = sign_whatsapp_media_token(app_secret, channel_id, media_id, exp).unwrap_or_default();
     format!("/api/channels/{channel_id}/whatsapp/media/{media_id}?exp={exp}&sig={sig}")
+}
+
+fn media_extension_from_filename(name: &str) -> Option<String> {
+    let ext = name.rsplit('.').next()?.trim().to_ascii_lowercase();
+    if ext.is_empty() || ext.len() > 10 {
+        return None;
+    }
+    if ext.chars().all(|c| c.is_ascii_alphanumeric()) {
+        Some(ext)
+    } else {
+        None
+    }
+}
+
+fn media_extension_from_mime(mime: &str, fallback_kind: &str) -> String {
+    let mt = mime.to_ascii_lowercase();
+    if mt.contains("jpeg") || mt.contains("jpg") {
+        "jpg".to_string()
+    } else if mt.contains("png") {
+        "png".to_string()
+    } else if mt.contains("webp") {
+        "webp".to_string()
+    } else if mt.contains("gif") {
+        "gif".to_string()
+    } else if mt.contains("mpeg") || mt.contains("mp3") {
+        "mp3".to_string()
+    } else if mt.contains("ogg") {
+        "ogg".to_string()
+    } else if mt.contains("wav") {
+        "wav".to_string()
+    } else if mt.contains("mp4") {
+        "mp4".to_string()
+    } else if mt.contains("quicktime") {
+        "mov".to_string()
+    } else if mt.contains("pdf") {
+        "pdf".to_string()
+    } else if mt.contains("json") {
+        "json".to_string()
+    } else if mt.contains("plain") {
+        "txt".to_string()
+    } else {
+        match fallback_kind {
+            "image" | "sticker" => "jpg".to_string(),
+            "audio" | "voice" => "ogg".to_string(),
+            "video" => "mp4".to_string(),
+            "document" => "bin".to_string(),
+            _ => "bin".to_string(),
+        }
+    }
+}
+
+fn media_content_type_from_extension(ext: &str) -> &'static str {
+    match ext {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "mp3" => "audio/mpeg",
+        "ogg" => "audio/ogg",
+        "wav" => "audio/wav",
+        "mp4" => "video/mp4",
+        "mov" => "video/quicktime",
+        "pdf" => "application/pdf",
+        "txt" => "text/plain; charset=utf-8",
+        "json" => "application/json",
+        _ => "application/octet-stream",
+    }
+}
+
+fn is_safe_media_file_name(value: &str) -> bool {
+    !value.is_empty()
+        && !value.contains('/')
+        && !value.contains('\\')
+        && !value.contains("..")
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
+
+async fn fetch_whatsapp_media_from_meta(
+    state: &Arc<AppState>,
+    access_token: &str,
+    media_id: &str,
+) -> Result<(Bytes, String), String> {
+    let metadata_response = state
+        .ai_client
+        .get(format!("https://graph.facebook.com/v21.0/{media_id}"))
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !metadata_response.status().is_success() {
+        let status = metadata_response.status();
+        let body = metadata_response.text().await.unwrap_or_default();
+        return Err(format!(
+            "whatsapp media metadata error {}: {}",
+            status.as_u16(),
+            body
+        ));
+    }
+
+    let metadata = metadata_response
+        .json::<Value>()
+        .await
+        .unwrap_or_else(|_| json!({}));
+    let media_url = metadata
+        .get("url")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if media_url.is_empty() {
+        return Err("missing media url from whatsapp".to_string());
+    }
+    let fallback_mime = metadata
+        .get("mime_type")
+        .and_then(Value::as_str)
+        .unwrap_or("application/octet-stream")
+        .to_string();
+
+    let media_response = state
+        .ai_client
+        .get(media_url)
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !media_response.status().is_success() {
+        let status = media_response.status();
+        let body = media_response.text().await.unwrap_or_default();
+        return Err(format!(
+            "whatsapp media download error {}: {}",
+            status.as_u16(),
+            body
+        ));
+    }
+
+    let content_type = media_response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or(&fallback_mime)
+        .to_string();
+    let bytes = media_response.bytes().await.map_err(|e| e.to_string())?;
+    Ok((bytes, content_type))
+}
+
+async fn archive_whatsapp_media_widget(
+    state: &Arc<AppState>,
+    channel: &Channel,
+    widget: Value,
+) -> Value {
+    if widget.get("type").and_then(Value::as_str).unwrap_or("") != "attachment" {
+        return widget;
+    }
+    let media_id = widget
+        .get("mediaId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if media_id.is_empty() {
+        return widget;
+    }
+
+    let access_token = config_text(&channel.config, "accessToken");
+    if access_token.is_empty() {
+        return widget;
+    }
+
+    let Ok((bytes, mime_type)) =
+        fetch_whatsapp_media_from_meta(state, &access_token, &media_id).await
+    else {
+        return widget;
+    };
+
+    let attachment_type = widget
+        .get("attachmentType")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let original_name = widget
+        .get("filename")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let ext = media_extension_from_filename(&original_name)
+        .unwrap_or_else(|| media_extension_from_mime(&mime_type, &attachment_type));
+    let file_name = format!("{}.{}", Uuid::new_v4(), ext);
+    let path = state.media_storage_dir.join(&file_name);
+
+    if tokio::fs::write(&path, &bytes).await.is_err() {
+        return widget;
+    }
+
+    let mut next = widget;
+    if let Some(obj) = next.as_object_mut() {
+        obj.insert(
+            "url".to_string(),
+            Value::String(format!("/api/media/{file_name}")),
+        );
+        obj.insert("mimeType".to_string(), Value::String(mime_type));
+        obj.insert("stored".to_string(), Value::Bool(true));
+        obj.insert("storage".to_string(), Value::String("local".to_string()));
+        obj.insert("storedFileName".to_string(), Value::String(file_name));
+        obj.insert(
+            "sizeBytes".to_string(),
+            Value::Number(serde_json::Number::from(bytes.len() as u64)),
+        );
+    }
+    next
 }
 
 fn whatsapp_inbound_content(
@@ -6858,6 +7072,10 @@ async fn whatsapp_webhook_event(
                 else {
                     continue;
                 };
+                let widget = match widget {
+                    Some(w) => Some(archive_whatsapp_media_widget(&state, &channel, w).await),
+                    None => None,
+                };
 
                 let Some(session_id) = find_or_create_whatsapp_session(
                     &state,
@@ -6966,107 +7184,13 @@ async fn whatsapp_media_proxy(
             .into_response();
     }
 
-    let metadata_response = match state
-        .ai_client
-        .get(format!("https://graph.facebook.com/v21.0/{media_id}"))
-        .bearer_auth(&access_token)
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(_) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({ "error": "failed to load whatsapp media metadata" })),
-            )
-                .into_response();
-        }
-    };
-
-    if !metadata_response.status().is_success() {
-        let status = metadata_response.status();
-        let body = metadata_response.text().await.unwrap_or_default();
-        return (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({
-                "error": "whatsapp media metadata error",
-                "upstreamStatus": status.as_u16(),
-                "details": body
-            })),
-        )
-            .into_response();
-    }
-
-    let metadata = metadata_response
-        .json::<Value>()
-        .await
-        .unwrap_or_else(|_| json!({}));
-    let media_url = metadata
-        .get("url")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    if media_url.is_empty() {
-        return (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({ "error": "missing media url from whatsapp" })),
-        )
-            .into_response();
-    }
-    let fallback_mime = metadata
-        .get("mime_type")
-        .and_then(Value::as_str)
-        .unwrap_or("application/octet-stream")
-        .to_string();
-
-    let media_response = match state
-        .ai_client
-        .get(media_url)
-        .bearer_auth(&access_token)
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(_) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({ "error": "failed to download whatsapp media" })),
-            )
-                .into_response();
-        }
-    };
-
-    if !media_response.status().is_success() {
-        let status = media_response.status();
-        let body = media_response.text().await.unwrap_or_default();
-        return (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({
-                "error": "whatsapp media download error",
-                "upstreamStatus": status.as_u16(),
-                "details": body
-            })),
-        )
-            .into_response();
-    }
-
-    let content_type = media_response
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or(&fallback_mime)
-        .to_string();
-    let body = match media_response.bytes().await {
-        Ok(b) => b,
-        Err(_) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({ "error": "invalid media response body" })),
-            )
-                .into_response();
-        }
-    };
+    let (body, content_type) =
+        match fetch_whatsapp_media_from_meta(&state, &access_token, &media_id).await {
+            Ok(v) => v,
+            Err(err) => {
+                return (StatusCode::BAD_GATEWAY, Json(json!({ "error": err }))).into_response();
+            }
+        };
 
     let mut response = axum::response::Response::new(axum::body::Body::from(body));
     *response.status_mut() = StatusCode::OK;
@@ -7075,6 +7199,45 @@ async fn whatsapp_media_proxy(
         HeaderValue::from_static("private, max-age=300"),
     );
     if let Ok(v) = HeaderValue::from_str(&content_type) {
+        response.headers_mut().insert(header::CONTENT_TYPE, v);
+    }
+    response.into_response()
+}
+
+async fn serve_stored_media(
+    Path(file_name): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    if !is_safe_media_file_name(&file_name) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invalid media file name" })),
+        )
+            .into_response();
+    }
+    let path = state.media_storage_dir.join(&file_name);
+    let Ok(bytes) = tokio::fs::read(&path).await else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "media file not found" })),
+        )
+            .into_response();
+    };
+
+    let ext = file_name
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let content_type = media_content_type_from_extension(&ext);
+
+    let mut response = axum::response::Response::new(axum::body::Body::from(bytes));
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=31536000, immutable"),
+    );
+    if let Ok(v) = HeaderValue::from_str(content_type) {
         response.headers_mut().insert(header::CONTENT_TYPE, v);
     }
     response.into_response()
@@ -9806,6 +9969,16 @@ pub async fn run() {
         .unwrap_or(4000);
     let database_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432/chat_exp".to_string());
+    let media_storage_dir = env::var("MEDIA_STORAGE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("./media_uploads"));
+    if let Err(err) = tokio::fs::create_dir_all(&media_storage_dir).await {
+        panic!(
+            "failed to create media storage directory {}: {}",
+            media_storage_dir.display(),
+            err
+        );
+    }
     let db = PgPoolOptions::new()
         .max_connections(10)
         .connect(&database_url)
@@ -9822,10 +9995,12 @@ pub async fn run() {
         realtime: Mutex::new(RealtimeState::default()),
         next_client_id: AtomicUsize::new(0),
         ai_client: reqwest::Client::new(),
+        media_storage_dir,
     });
 
     let app = Router::new()
         .route("/health", get(health))
+        .route("/api/media/{file_name}", get(serve_stored_media))
         .route("/api/widget/bootstrap", get(widget_bootstrap))
         .route("/api/auth/register", post(register_agent))
         .route("/api/auth/signup", post(signup_user))
