@@ -12,6 +12,22 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:4000/ws";
 const TOKEN_KEY = "agent_auth_token";
+const API_BASE = API_URL.replace(/\/+$/, "");
+
+function resolveApiUrl(url) {
+  const value = String(url || "").trim();
+  if (!value) return "";
+  if (
+    value.startsWith("http://") ||
+    value.startsWith("https://") ||
+    value.startsWith("data:") ||
+    value.startsWith("blob:")
+  ) {
+    return value;
+  }
+  if (value.startsWith("/")) return `${API_BASE}${value}`;
+  return `${API_BASE}/${value}`;
+}
 
 const FLOW_NODE_PRESETS = {
   trigger: { label: "Trigger", on: "widget_open", keywords: [] },
@@ -1256,7 +1272,8 @@ export default function App() {
 
   const renderMessageWidget = (message) => {
     const widget = message?.widget;
-    if (!widget || message?.sender !== "agent") return null;
+    if (!widget) return null;
+    if (message?.sender !== "agent" && widget.type !== "attachment") return null;
 
     if (widget.type === "link_preview") {
       return (
@@ -1280,6 +1297,76 @@ export default function App() {
             <span>{widget.url || ""}</span>
           </div>
         </a>
+      );
+    }
+
+    if (widget.type === "attachment") {
+      const attachmentType = String(
+        widget.attachmentType || widget.kind || "file",
+      ).toLowerCase();
+      const isAgentTone = message?.sender === "agent";
+      const canPreviewImage =
+        attachmentType === "image" || attachmentType === "sticker";
+      const canPreviewAudio =
+        attachmentType === "audio" || attachmentType === "voice";
+      const canPreviewVideo = attachmentType === "video";
+      const title =
+        widget.filename ||
+        widget.title ||
+        (attachmentType === "voice"
+          ? "Voice Message"
+          : attachmentType === "audio"
+            ? "Audio"
+            : attachmentType === "image"
+              ? "Image"
+              : attachmentType === "video"
+                ? "Video"
+                : attachmentType === "document"
+                  ? "Document"
+                  : attachmentType === "location"
+                    ? "Location"
+                    : "Attachment");
+      const href = resolveApiUrl(widget.url || widget.mapUrl || "");
+      const caption =
+        widget.caption || widget.description || (href ? "" : message?.text || "");
+
+      return (
+        <div
+          className={`agent-widget agent-attachment ${isAgentTone ? "agent-attachment-agent" : "agent-attachment-neutral"}`}
+        >
+          {canPreviewImage && href ? (
+            <a href={href} target="_blank" rel="noreferrer noopener">
+              <img
+                src={href}
+                alt={title}
+                className="agent-attachment-image"
+                loading="lazy"
+              />
+            </a>
+          ) : null}
+          {canPreviewAudio && href ? (
+            <audio controls preload="metadata" className="agent-attachment-audio">
+              <source src={href} type={widget.mimeType || "audio/mpeg"} />
+            </audio>
+          ) : null}
+          {canPreviewVideo && href ? (
+            <video
+              controls
+              preload="metadata"
+              className="agent-attachment-video"
+              src={href}
+            />
+          ) : null}
+          <div className="agent-attachment-meta">
+            <strong>{title}</strong>
+            {caption ? <p>{caption}</p> : null}
+            {href ? (
+              <a href={href} target="_blank" rel="noreferrer noopener">
+                Open {attachmentType}
+              </a>
+            ) : null}
+          </div>
+        </div>
       );
     }
 

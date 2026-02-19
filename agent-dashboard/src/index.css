@@ -603,3 +603,63 @@
     overflow: hidden;
     text-overflow: ellipsis;
 }
+
+.agent-attachment {
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 12px;
+    padding: 8px;
+    display: grid;
+    gap: 8px;
+}
+
+.agent-attachment-agent {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: rgba(255, 255, 255, 0.38);
+}
+
+.agent-attachment-neutral {
+    background: #f8fafc;
+    border-color: #dbe4f0;
+}
+
+.agent-attachment-image {
+    width: 100%;
+    max-height: 220px;
+    object-fit: cover;
+    border-radius: 10px;
+    display: block;
+}
+
+.agent-attachment-audio {
+    width: 100%;
+}
+
+.agent-attachment-video {
+    width: 100%;
+    max-height: 260px;
+    border-radius: 10px;
+    background: #0f172a;
+}
+
+.agent-attachment-meta {
+    display: grid;
+    gap: 4px;
+}
+
+.agent-attachment-meta strong {
+    font-size: 12px;
+    line-height: 1.2;
+}
+
+.agent-attachment-meta p {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.25;
+}
+
+.agent-attachment-meta a {
+    font-size: 12px;
+    text-decoration: underline;
+    color: inherit;
+    opacity: 0.9;
+}

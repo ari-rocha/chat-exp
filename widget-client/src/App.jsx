@@ -4,6 +4,22 @@ import remarkGfm from "remark-gfm";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:4000/ws";
+const API_BASE = API_URL.replace(/\/+$/, "");
+
+function resolveApiUrl(url) {
+  const value = String(url || "").trim();
+  if (!value) return "";
+  if (
+    value.startsWith("http://") ||
+    value.startsWith("https://") ||
+    value.startsWith("data:") ||
+    value.startsWith("blob:")
+  ) {
+    return value;
+  }
+  if (value.startsWith("/")) return `${API_BASE}${value}`;
+  return `${API_BASE}/${value}`;
+}
 
 function getInitialTenantId() {
   return (
@@ -706,6 +722,100 @@ export default function App() {
                                     </span>
                                   </div>
                                 </a>
+                              )}
+                            {m.sender === "agent" &&
+                              m.widget?.type === "attachment" && (
+                                <div className="message-widget attachment-widget">
+                                  {(() => {
+                                    const attachmentUrl = resolveApiUrl(
+                                      m.widget?.url || m.widget?.mapUrl || "",
+                                    );
+                                    return (
+                                      <>
+                                  {(m.widget?.attachmentType === "image" ||
+                                    m.widget?.attachmentType === "sticker") &&
+                                  attachmentUrl ? (
+                                    <a
+                                      href={attachmentUrl}
+                                      target="_blank"
+                                      rel="noreferrer noopener"
+                                      className="attachment-media-link"
+                                    >
+                                      <img
+                                        src={attachmentUrl}
+                                        alt={
+                                          m.widget?.filename ||
+                                          m.widget?.title ||
+                                          "Attachment"
+                                        }
+                                        loading="lazy"
+                                        className="attachment-image"
+                                      />
+                                    </a>
+                                  ) : null}
+                                  {(m.widget?.attachmentType === "audio" ||
+                                    m.widget?.attachmentType === "voice") &&
+                                  attachmentUrl ? (
+                                    <audio
+                                      controls
+                                      preload="metadata"
+                                      className="attachment-audio"
+                                    >
+                                      <source
+                                        src={attachmentUrl}
+                                        type={
+                                          m.widget?.mimeType || "audio/mpeg"
+                                        }
+                                      />
+                                    </audio>
+                                  ) : null}
+                                  {m.widget?.attachmentType === "video" &&
+                                  attachmentUrl ? (
+                                    <video
+                                      controls
+                                      preload="metadata"
+                                      className="attachment-video"
+                                      src={attachmentUrl}
+                                    />
+                                  ) : null}
+                                  <div className="attachment-body">
+                                    <strong>
+                                      {m.widget?.filename ||
+                                        m.widget?.title ||
+                                        (m.widget?.attachmentType === "voice"
+                                          ? "Voice Message"
+                                          : m.widget?.attachmentType ===
+                                              "audio"
+                                            ? "Audio"
+                                            : m.widget?.attachmentType ===
+                                                "document"
+                                              ? "Document"
+                                              : m.widget?.attachmentType ===
+                                                  "location"
+                                                ? "Location"
+                                                : "Attachment")}
+                                    </strong>
+                                    {(m.widget?.caption ||
+                                      m.widget?.description) && (
+                                      <p>
+                                        {m.widget?.caption ||
+                                          m.widget?.description}
+                                      </p>
+                                    )}
+                                    {attachmentUrl && (
+                                      <a
+                                        href={attachmentUrl}
+                                        target="_blank"
+                                        rel="noreferrer noopener"
+                                      >
+                                        Open attachment
+                                      </a>
+                                    )}
+                                  </div>
+                                      </>
+                                    );
+                                  })()}
+                                </div>
                               )}
                             {m.sender === "agent" &&
                               m.widget?.type === "select" &&

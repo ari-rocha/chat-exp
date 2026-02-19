@@ -15,7 +15,7 @@ use axum::{
         ws::{Message, WebSocket},
         Path, Query, State, WebSocketUpgrade,
     },
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::IntoResponse,
     routing::{get, patch, post},
     Json, Router,
@@ -304,25 +304,102 @@ fn verify_whatsapp_signature(
     mac.verify_slice(&signature_bytes).is_ok()
 }
 
-fn whatsapp_inbound_text(message: &Value) -> Option<String> {
+fn sign_whatsapp_media_token(
+    app_secret: &str,
+    channel_id: &str,
+    media_id: &str,
+    exp: i64,
+) -> Option<String> {
+    if app_secret.is_empty() {
+        return None;
+    }
+    let payload = format!("{channel_id}:{media_id}:{exp}");
+    let mut mac = Hmac::<Sha256>::new_from_slice(app_secret.as_bytes()).ok()?;
+    mac.update(payload.as_bytes());
+    Some(hex::encode(mac.finalize().into_bytes()))
+}
+
+fn verify_whatsapp_media_token(
+    app_secret: &str,
+    channel_id: &str,
+    media_id: &str,
+    exp: i64,
+    sig: &str,
+) -> bool {
+    if app_secret.is_empty() {
+        return true;
+    }
+    if exp < Utc::now().timestamp() {
+        return false;
+    }
+    let Ok(signature_bytes) = hex::decode(sig.trim()) else {
+        return false;
+    };
+    let payload = format!("{channel_id}:{media_id}:{exp}");
+    let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(app_secret.as_bytes()) else {
+        return false;
+    };
+    mac.update(payload.as_bytes());
+    mac.verify_slice(&signature_bytes).is_ok()
+}
+
+fn signed_whatsapp_media_url(
+    channel_id: &str,
+    media_id: &str,
+    app_secret: &str,
+    ttl_seconds: i64,
+) -> String {
+    if app_secret.is_empty() {
+        return format!("/api/channels/{channel_id}/whatsapp/media/{media_id}");
+    }
+    let exp = Utc::now().timestamp() + ttl_seconds.max(120);
+    let sig = sign_whatsapp_media_token(app_secret, channel_id, media_id, exp).unwrap_or_default();
+    format!("/api/channels/{channel_id}/whatsapp/media/{media_id}?exp={exp}&sig={sig}")
+}
+
+fn whatsapp_inbound_content(
+    message: &Value,
+    channel_id: &str,
+    app_secret: &str,
+) -> Option<(String, Option<Value>)> {
     let msg_type = message
         .get("type")
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_ascii_lowercase();
 
-    let text = match msg_type.as_str() {
-        "text" => message
+    if msg_type == "text" {
+        let text = message
             .get("text")
             .and_then(|v| v.get("body"))
             .and_then(Value::as_str)
-            .unwrap_or(""),
-        "button" => message
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        return if text.is_empty() {
+            None
+        } else {
+            Some((text, None))
+        };
+    }
+
+    if msg_type == "button" {
+        let text = message
             .get("button")
             .and_then(|v| v.get("text"))
             .and_then(Value::as_str)
-            .unwrap_or(""),
-        "interactive" => message
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        return if text.is_empty() {
+            None
+        } else {
+            Some((text, None))
+        };
+    }
+
+    if msg_type == "interactive" {
+        let text = message
             .get("interactive")
             .and_then(|v| {
                 v.get("button_reply")
@@ -334,16 +411,133 @@ fn whatsapp_inbound_text(message: &Value) -> Option<String> {
                             .and_then(Value::as_str)
                     })
             })
-            .unwrap_or(""),
-        _ => "",
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        return if text.is_empty() {
+            None
+        } else {
+            Some((text, None))
+        };
     }
-    .trim()
-    .to_string();
 
-    if text.is_empty() {
+    if msg_type == "location" {
+        let location = message
+            .get("location")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        let lat = location
+            .get("latitude")
+            .and_then(Value::as_f64)
+            .unwrap_or_default();
+        let lng = location
+            .get("longitude")
+            .and_then(Value::as_f64)
+            .unwrap_or_default();
+        let name = location
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let address = location
+            .get("address")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let map_url = if lat.abs() > 0.0 || lng.abs() > 0.0 {
+            format!("https://maps.google.com/?q={lat},{lng}")
+        } else {
+            String::new()
+        };
+        let text = if !name.is_empty() {
+            format!("Shared location: {name}")
+        } else if !address.is_empty() {
+            format!("Shared location: {address}")
+        } else {
+            "Shared a location".to_string()
+        };
+        let widget = json!({
+            "type": "attachment",
+            "attachmentType": "location",
+            "title": name,
+            "description": address,
+            "latitude": lat,
+            "longitude": lng,
+            "mapUrl": map_url
+        });
+        return Some((text, Some(widget)));
+    }
+
+    if matches!(
+        msg_type.as_str(),
+        "image" | "audio" | "video" | "document" | "sticker"
+    ) {
+        let body = message.get(&msg_type).cloned().unwrap_or_else(|| json!({}));
+        let media_id = body
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if media_id.is_empty() {
+            return Some((format!("Sent a {msg_type} message"), None));
+        }
+        let caption = body
+            .get("caption")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let mime_type = body
+            .get("mime_type")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let filename = body
+            .get("filename")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let attachment_type =
+            if msg_type == "audio" && body.get("voice").and_then(Value::as_bool).unwrap_or(false) {
+                "voice".to_string()
+            } else {
+                msg_type.clone()
+            };
+        let fallback = match attachment_type.as_str() {
+            "image" => "Sent an image",
+            "voice" => "Sent a voice message",
+            "audio" => "Sent an audio file",
+            "video" => "Sent a video",
+            "document" => "Sent a document",
+            "sticker" => "Sent a sticker",
+            _ => "Sent an attachment",
+        };
+        let text = if caption.is_empty() {
+            fallback.to_string()
+        } else {
+            caption.clone()
+        };
+        let widget = json!({
+            "type": "attachment",
+            "attachmentType": attachment_type,
+            "mediaId": media_id,
+            "url": signed_whatsapp_media_url(channel_id, &media_id, app_secret, 60 * 60 * 24),
+            "mimeType": mime_type,
+            "filename": filename,
+            "caption": caption
+        });
+        return Some((text, Some(widget)));
+    }
+
+    if msg_type.is_empty() {
         None
     } else {
-        Some(text)
+        Some((format!("Sent a {msg_type} message"), None))
     }
 }
 
@@ -6659,7 +6853,9 @@ async fn whatsapp_webhook_event(
                 let Some(visitor_id) = whatsapp_visitor_id(&from) else {
                     continue;
                 };
-                let Some(text) = whatsapp_inbound_text(&message) else {
+                let Some((text, widget)) =
+                    whatsapp_inbound_content(&message, &channel.id, &app_secret)
+                else {
                     continue;
                 };
 
@@ -6691,7 +6887,7 @@ async fn whatsapp_webhook_event(
                     "visitor",
                     &text,
                     None,
-                    None,
+                    widget,
                     None,
                 )
                 .await
@@ -6720,6 +6916,168 @@ async fn whatsapp_webhook_event(
         Json(json!({ "received": true, "processed": processed })),
     )
         .into_response()
+}
+
+async fn whatsapp_media_proxy(
+    Path((channel_id, media_id)): Path<(String, String)>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let Some(channel) = find_channel_by_id(&state, &channel_id).await else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "channel not found" })),
+        )
+            .into_response();
+    };
+    if channel.channel_type != "whatsapp" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": format!(
+                    "channel exists but type is '{}', expected 'whatsapp'",
+                    channel.channel_type
+                )
+            })),
+        )
+            .into_response();
+    }
+
+    let app_secret = config_text(&channel.config, "appSecret");
+    let exp = params
+        .get("exp")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or_default();
+    let sig = params.get("sig").cloned().unwrap_or_default();
+    if !verify_whatsapp_media_token(&app_secret, &channel_id, &media_id, exp, &sig) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "invalid or expired media token" })),
+        )
+            .into_response();
+    }
+
+    let access_token = config_text(&channel.config, "accessToken");
+    if access_token.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "missing whatsapp access token" })),
+        )
+            .into_response();
+    }
+
+    let metadata_response = match state
+        .ai_client
+        .get(format!("https://graph.facebook.com/v21.0/{media_id}"))
+        .bearer_auth(&access_token)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": "failed to load whatsapp media metadata" })),
+            )
+                .into_response();
+        }
+    };
+
+    if !metadata_response.status().is_success() {
+        let status = metadata_response.status();
+        let body = metadata_response.text().await.unwrap_or_default();
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({
+                "error": "whatsapp media metadata error",
+                "upstreamStatus": status.as_u16(),
+                "details": body
+            })),
+        )
+            .into_response();
+    }
+
+    let metadata = metadata_response
+        .json::<Value>()
+        .await
+        .unwrap_or_else(|_| json!({}));
+    let media_url = metadata
+        .get("url")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if media_url.is_empty() {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": "missing media url from whatsapp" })),
+        )
+            .into_response();
+    }
+    let fallback_mime = metadata
+        .get("mime_type")
+        .and_then(Value::as_str)
+        .unwrap_or("application/octet-stream")
+        .to_string();
+
+    let media_response = match state
+        .ai_client
+        .get(media_url)
+        .bearer_auth(&access_token)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": "failed to download whatsapp media" })),
+            )
+                .into_response();
+        }
+    };
+
+    if !media_response.status().is_success() {
+        let status = media_response.status();
+        let body = media_response.text().await.unwrap_or_default();
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({
+                "error": "whatsapp media download error",
+                "upstreamStatus": status.as_u16(),
+                "details": body
+            })),
+        )
+            .into_response();
+    }
+
+    let content_type = media_response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or(&fallback_mime)
+        .to_string();
+    let body = match media_response.bytes().await {
+        Ok(b) => b,
+        Err(_) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": "invalid media response body" })),
+            )
+                .into_response();
+        }
+    };
+
+    let mut response = axum::response::Response::new(axum::body::Body::from(body));
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=300"),
+    );
+    if let Ok(v) = HeaderValue::from_str(&content_type) {
+        response.headers_mut().insert(header::CONTENT_TYPE, v);
+    }
+    response.into_response()
 }
 
 async fn list_channels(
@@ -9561,6 +9919,10 @@ pub async fn run() {
         .route(
             "/api/channels/{channel_id}/whatsapp/webhook",
             get(whatsapp_webhook_verify).post(whatsapp_webhook_event),
+        )
+        .route(
+            "/api/channels/{channel_id}/whatsapp/media/{media_id}",
+            get(whatsapp_media_proxy),
         )
         .route("/api/agents", get(get_agents))
         .route(
