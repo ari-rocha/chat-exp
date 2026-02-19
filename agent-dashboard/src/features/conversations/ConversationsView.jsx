@@ -152,6 +152,7 @@ export default function ConversationsView({
   newConvAttrValue,
   setNewConvAttrValue,
   tenantSettings,
+  onOpenSettings,
 }) {
   const handleComposerKeyDown = (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
@@ -231,6 +232,7 @@ export default function ConversationsView({
       setActiveId={setActiveId}
       formatTime={formatTime}
       sessionPreview={sessionPreview}
+      onOpenSettings={onOpenSettings}
       mainPanel={
         <section className="crm-main grid h-full min-h-0 overflow-hidden grid-rows-[56px_minmax(0,1fr)_auto] bg-[#f8f9fb]">
           <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4">

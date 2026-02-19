@@ -251,7 +251,7 @@ export default function App() {
   const [view, setViewRaw] = useState("conversations");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [theme, setTheme] = useState(
-    localStorage.getItem("agent_dashboard_theme") || "dark",
+    localStorage.getItem("agent_dashboard_theme") || "light",
   );
 
   // Intercept "customization" view to open settings dialog instead
@@ -1493,6 +1493,28 @@ export default function App() {
           newConvAttrValue={newConvAttrValue}
           setNewConvAttrValue={setNewConvAttrValue}
           tenantSettings={tenantSettings}
+          onOpenSettings={() => setSettingsOpen(true)}
+        />
+
+        <CustomizationView
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+          tenantSettings={tenantSettings}
+          setTenantSettings={setTenantSettings}
+          saveTenantSettings={saveTenantSettings}
+          tenants={tenants}
+          agent={agent}
+          agents={agents}
+          teams={teams}
+          setTeams={setTeams}
+          inboxes={inboxes}
+          setInboxes={setInboxes}
+          channels={channels}
+          setChannels={setChannels}
+          channelRecords={channelRecords}
+          setChannelRecords={setChannelRecords}
+          apiFetch={apiFetch}
+          token={token}
         />
       </div>
     );
