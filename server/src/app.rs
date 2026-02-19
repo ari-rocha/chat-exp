@@ -280,6 +280,34 @@ fn whatsapp_phone_from_visitor_id(visitor_id: &str) -> Option<String> {
     normalize_whatsapp_phone(visitor_id.trim_start_matches("whatsapp:"))
 }
 
+fn whatsapp_contact_profile_names(value: &Value) -> HashMap<String, String> {
+    let contacts = value
+        .get("contacts")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut map = HashMap::new();
+    for contact in contacts {
+        let wa_id = contact
+            .get("wa_id")
+            .and_then(Value::as_str)
+            .or_else(|| contact.get("input").and_then(Value::as_str))
+            .unwrap_or("");
+        let Some(digits) = normalize_whatsapp_phone(wa_id) else {
+            continue;
+        };
+        let name = contact
+            .get("profile")
+            .and_then(|p| p.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        map.insert(digits, name);
+    }
+    map
+}
+
 fn verify_whatsapp_signature(
     app_secret: &str,
     signature_header: Option<&str>,
@@ -1000,23 +1028,43 @@ async fn find_or_create_whatsapp_session(
     inbox_id: Option<&str>,
     visitor_id: &str,
 ) -> Option<String> {
-    let existing = sqlx::query_scalar::<_, String>(
+    let inbox_filter = inbox_id.map(|v| v.to_string());
+    let existing_rows = sqlx::query(
         "SELECT id FROM sessions \
          WHERE tenant_id = $1 \
            AND channel = 'whatsapp' \
            AND visitor_id = $2 \
            AND status = 'open' \
-           AND handover_active = false \
-         ORDER BY updated_at DESC LIMIT 1",
+           AND (($3::text IS NULL AND inbox_id IS NULL) OR inbox_id = $3) \
+         ORDER BY updated_at DESC",
     )
     .bind(tenant_id)
     .bind(visitor_id)
-    .fetch_optional(&state.db)
+    .bind(&inbox_filter)
+    .fetch_all(&state.db)
     .await
     .ok()
-    .flatten();
-    if existing.is_some() {
-        return existing;
+    .unwrap_or_default();
+    if let Some(primary) = existing_rows.first() {
+        let primary_id: String = primary.get("id");
+        if existing_rows.len() > 1 {
+            let duplicate_ids = existing_rows
+                .iter()
+                .skip(1)
+                .map(|r| r.get::<String, _>("id"))
+                .collect::<Vec<_>>();
+            if !duplicate_ids.is_empty() {
+                let _ = sqlx::query(
+                    "UPDATE sessions SET status = 'closed', updated_at = $1 \
+                     WHERE id = ANY($2::text[])",
+                )
+                .bind(now_iso())
+                .bind(&duplicate_ids)
+                .execute(&state.db)
+                .await;
+            }
+        }
+        return Some(primary_id);
     }
 
     let flow_id = sqlx::query_scalar::<_, String>(
@@ -1041,7 +1089,7 @@ async fn find_or_create_whatsapp_session(
     .bind(&now)
     .bind("whatsapp")
     .bind(Option::<String>::None)
-    .bind(inbox_id.map(|v| v.to_string()))
+    .bind(inbox_filter)
     .bind(Option::<String>::None)
     .bind(flow_id)
     .bind(false)
@@ -1279,7 +1327,11 @@ async fn persist_message(pool: &PgPool, message: &ChatMessage) {
 
 async fn get_session_summary_db(pool: &PgPool, session_id: &str) -> Option<SessionSummary> {
     let session_row = sqlx::query(
-        "SELECT id, tenant_id, created_at, updated_at, channel, assignee_agent_id, inbox_id, team_id, flow_id, handover_active, status, priority, contact_id FROM sessions WHERE id = $1",
+        "SELECT s.id, s.tenant_id, s.created_at, s.updated_at, s.channel, s.assignee_agent_id, s.inbox_id, s.team_id, s.flow_id, s.handover_active, s.status, s.priority, s.contact_id, s.visitor_id, \
+                c.display_name AS contact_name, c.email AS contact_email, c.phone AS contact_phone \
+         FROM sessions s \
+         LEFT JOIN contacts c ON c.id = s.contact_id \
+         WHERE s.id = $1",
     )
     .bind(session_id)
     .fetch_optional(pool)
@@ -1337,6 +1389,12 @@ async fn get_session_summary_db(pool: &PgPool, session_id: &str) -> Option<Sessi
         team_id: session_row.get("team_id"),
         flow_id: session_row.get("flow_id"),
         contact_id: session_row.get("contact_id"),
+        contact_name: session_row.get("contact_name"),
+        contact_email: session_row.get("contact_email"),
+        contact_phone: session_row.get("contact_phone"),
+        visitor_id: session_row
+            .get::<Option<String>, _>("visitor_id")
+            .unwrap_or_default(),
         handover_active: session_row.get("handover_active"),
         status: session_row.get("status"),
         priority: session_row.get("priority"),
@@ -1860,6 +1918,13 @@ async fn resolve_contact_from_visitor_id(
         return;
     }
 
+    let tenant_id = tenant_for_session(state, session_id)
+        .await
+        .unwrap_or_default();
+    if tenant_id.is_empty() {
+        return;
+    }
+
     // Store the visitor_id on the session
     let _ = sqlx::query("UPDATE sessions SET visitor_id = $1 WHERE id = $2")
         .bind(visitor_id)
@@ -1867,7 +1932,8 @@ async fn resolve_contact_from_visitor_id(
         .execute(&state.db)
         .await;
 
-    // Skip if session already has a contact
+    // Skip if session already has a valid same-tenant contact.
+    // Self-heal old cross-tenant mislinks by clearing invalid contact_id.
     let existing: Option<Option<String>> =
         sqlx::query_scalar("SELECT contact_id FROM sessions WHERE id = $1")
             .bind(session_id)
@@ -1877,29 +1943,96 @@ async fn resolve_contact_from_visitor_id(
             .flatten();
     if let Some(Some(ref cid)) = existing {
         if !cid.is_empty() {
-            return;
+            let valid_for_tenant = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(1) FROM contacts WHERE id = $1 AND tenant_id = $2",
+            )
+            .bind(cid)
+            .bind(&tenant_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0)
+                > 0;
+            if valid_for_tenant {
+                return;
+            }
+            let _ = sqlx::query("UPDATE sessions SET contact_id = NULL WHERE id = $1")
+                .bind(session_id)
+                .execute(&state.db)
+                .await;
         }
     }
 
-    // Find the most recent other session with this visitor_id that has a contact
-    let prev_contact: Option<String> = sqlx::query_scalar(
-        "SELECT contact_id FROM sessions \
-         WHERE visitor_id = $1 AND id != $2 AND contact_id IS NOT NULL AND contact_id != '' \
-         ORDER BY updated_at DESC LIMIT 1",
+    // Find the most recent other same-tenant session with this visitor_id that has a valid contact
+    let mut resolved_contact_id: Option<String> = sqlx::query_scalar(
+        "SELECT s.contact_id FROM sessions s \
+         INNER JOIN contacts c ON c.id = s.contact_id AND c.tenant_id = $3 \
+         WHERE s.tenant_id = $3 AND s.visitor_id = $1 AND s.id != $2 \
+           AND s.contact_id IS NOT NULL AND s.contact_id != '' \
+         ORDER BY s.updated_at DESC LIMIT 1",
     )
     .bind(visitor_id)
     .bind(session_id)
+    .bind(&tenant_id)
     .fetch_optional(&state.db)
     .await
     .ok()
     .flatten();
 
-    if let Some(cid) = prev_contact {
+    // For WhatsApp visitors, also try to resolve by CRM phone/external_id.
+    if resolved_contact_id.is_none() {
+        if let Some(phone_digits) = whatsapp_phone_from_visitor_id(visitor_id) {
+            resolved_contact_id = sqlx::query_scalar(
+                "SELECT id FROM contacts \
+                 WHERE tenant_id = $1 \
+                   AND (external_id = $2 OR external_id = $3 OR regexp_replace(phone, '[^0-9]', '', 'g') = $3) \
+                 ORDER BY updated_at DESC LIMIT 1",
+            )
+            .bind(&tenant_id)
+            .bind(visitor_id)
+            .bind(&phone_digits)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+
+            if resolved_contact_id.is_none() {
+                let new_id = Uuid::new_v4().to_string();
+                let now = now_iso();
+                let _ = sqlx::query(
+                    "INSERT INTO contacts \
+                     (id, tenant_id, display_name, email, phone, external_id, metadata, created_at, updated_at, company, location, avatar_url, last_seen_at, browser, os) \
+                     VALUES ($1,$2,'','',$3,$4,'{}',$5,$6,'','','',$7,'','')",
+                )
+                .bind(&new_id)
+                .bind(&tenant_id)
+                .bind(&phone_digits)
+                .bind(visitor_id)
+                .bind(&now)
+                .bind(&now)
+                .bind(&now)
+                .execute(&state.db)
+                .await;
+                resolved_contact_id = Some(new_id);
+            }
+        }
+    }
+
+    if let Some(cid) = resolved_contact_id {
         let _ = sqlx::query("UPDATE sessions SET contact_id = $1 WHERE id = $2")
             .bind(&cid)
             .bind(session_id)
             .execute(&state.db)
             .await;
+
+        let _ = sqlx::query(
+            "UPDATE sessions SET contact_id = $1 \
+             WHERE tenant_id = $3 AND visitor_id = $2 AND visitor_id != '' AND (contact_id IS NULL OR contact_id = '')",
+        )
+        .bind(&cid)
+        .bind(visitor_id)
+        .bind(&tenant_id)
+        .execute(&state.db)
+        .await;
 
         // Update contact last_seen_at
         let _ = sqlx::query("UPDATE contacts SET last_seen_at = $1 WHERE id = $2")
@@ -1912,6 +2045,128 @@ async fn resolve_contact_from_visitor_id(
             emit_session_update(state, summary).await;
         }
     }
+}
+
+async fn ensure_whatsapp_contact_for_visitor(
+    state: &Arc<AppState>,
+    tenant_id: &str,
+    visitor_id: &str,
+    from_phone_raw: &str,
+    profile_name: &str,
+    channel_id: &str,
+) -> Option<String> {
+    if tenant_id.trim().is_empty() || visitor_id.trim().is_empty() {
+        return None;
+    }
+    let phone_digits = normalize_whatsapp_phone(from_phone_raw)
+        .or_else(|| whatsapp_phone_from_visitor_id(visitor_id))
+        .unwrap_or_default();
+    if phone_digits.is_empty() {
+        return None;
+    }
+
+    let existing = sqlx::query(
+        "SELECT id, display_name, phone, external_id, metadata FROM contacts \
+         WHERE tenant_id = $1 \
+           AND (external_id = $2 OR external_id = $3 OR regexp_replace(phone, '[^0-9]', '', 'g') = $3) \
+         ORDER BY updated_at DESC LIMIT 1",
+    )
+    .bind(tenant_id)
+    .bind(visitor_id)
+    .bind(&phone_digits)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    let now = now_iso();
+    if let Some(row) = existing {
+        let contact_id: String = row.get("id");
+        let display_name: String = row.get("display_name");
+        let phone: String = row.get("phone");
+        let external_id: String = row.get("external_id");
+        let metadata_raw: String = row.get("metadata");
+
+        let merged_display_name = if display_name.trim().is_empty() && !profile_name.trim().is_empty()
+        {
+            profile_name.trim().to_string()
+        } else {
+            display_name
+        };
+        let merged_phone = if phone.trim().is_empty() {
+            phone_digits.clone()
+        } else {
+            phone
+        };
+        let merged_external_id = if external_id.trim().is_empty() {
+            visitor_id.to_string()
+        } else {
+            external_id
+        };
+
+        let mut metadata_value = parse_json_text(&metadata_raw);
+        if !metadata_value.is_object() {
+            metadata_value = json!({});
+        }
+        let mut wa_meta = metadata_value
+            .get("whatsapp")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        if !wa_meta.is_object() {
+            wa_meta = json!({});
+        }
+        wa_meta["visitorId"] = Value::String(visitor_id.to_string());
+        wa_meta["waId"] = Value::String(phone_digits.clone());
+        wa_meta["channelId"] = Value::String(channel_id.to_string());
+        if !profile_name.trim().is_empty() {
+            wa_meta["profileName"] = Value::String(profile_name.trim().to_string());
+        }
+        metadata_value["whatsapp"] = wa_meta;
+
+        let _ = sqlx::query(
+            "UPDATE contacts SET display_name = $1, phone = $2, external_id = $3, metadata = $4, last_seen_at = $5, updated_at = $6 WHERE id = $7",
+        )
+        .bind(&merged_display_name)
+        .bind(&merged_phone)
+        .bind(&merged_external_id)
+        .bind(metadata_value.to_string())
+        .bind(&now)
+        .bind(&now)
+        .bind(&contact_id)
+        .execute(&state.db)
+        .await;
+        return Some(contact_id);
+    }
+
+    let contact_id = Uuid::new_v4().to_string();
+    let mut metadata = json!({
+        "whatsapp": {
+            "visitorId": visitor_id,
+            "waId": phone_digits,
+            "channelId": channel_id,
+        }
+    });
+    if !profile_name.trim().is_empty() {
+        metadata["whatsapp"]["profileName"] = Value::String(profile_name.trim().to_string());
+    }
+    let _ = sqlx::query(
+        "INSERT INTO contacts \
+         (id, tenant_id, display_name, email, phone, external_id, metadata, created_at, updated_at, company, location, avatar_url, last_seen_at, browser, os) \
+         VALUES ($1,$2,$3,'',$4,$5,$6,$7,$8,'','','',$9,'','')",
+    )
+    .bind(&contact_id)
+    .bind(tenant_id)
+    .bind(profile_name.trim())
+    .bind(metadata["whatsapp"]["waId"].as_str().unwrap_or_default())
+    .bind(visitor_id)
+    .bind(metadata.to_string())
+    .bind(&now)
+    .bind(&now)
+    .bind(&now)
+    .execute(&state.db)
+    .await;
+
+    Some(contact_id)
 }
 
 async fn ensure_session(state: Arc<AppState>, session_id: &str, tenant_id: &str) -> Session {
@@ -2004,25 +2259,60 @@ async fn resolve_visitor_target_session(
     state: Arc<AppState>,
     requested_session_id: &str,
 ) -> (String, bool) {
-    let is_closed = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(1) FROM sessions WHERE id = $1 AND status = 'closed'",
+    let old_row = sqlx::query(
+        "SELECT tenant_id, status, visitor_id, contact_id FROM sessions WHERE id = $1 LIMIT 1",
     )
     .bind(requested_session_id)
-    .fetch_one(&state.db)
+    .fetch_optional(&state.db)
     .await
-    .unwrap_or(0)
-        > 0;
+    .ok()
+    .flatten();
+    let Some(old_row) = old_row else {
+        return (requested_session_id.to_string(), false);
+    };
+    let old_tenant: String = old_row.get("tenant_id");
+    let old_status: String = old_row.get("status");
+    let old_visitor_id: String = old_row
+        .get::<Option<String>, _>("visitor_id")
+        .unwrap_or_default();
+    let old_contact_id: Option<String> = old_row.get("contact_id");
 
-    if !is_closed {
+    if old_status != "closed" {
         return (requested_session_id.to_string(), false);
     }
 
-    // Inherit tenant from the closed session
-    let old_tenant = tenant_for_session(&state, requested_session_id)
-        .await
-        .unwrap_or_default();
     let new_session_id = Uuid::new_v4().to_string();
-    let _ = ensure_session(state, &new_session_id, &old_tenant).await;
+    let _ = ensure_session(state.clone(), &new_session_id, &old_tenant).await;
+
+    let valid_contact_id = if let Some(cid) = old_contact_id {
+        let same_tenant = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(1) FROM contacts WHERE id = $1 AND tenant_id = $2",
+        )
+        .bind(&cid)
+        .bind(&old_tenant)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0)
+            > 0;
+        if same_tenant { Some(cid) } else { None }
+    } else {
+        None
+    };
+
+    let _ = sqlx::query(
+        "UPDATE sessions SET visitor_id = $1, contact_id = $2, updated_at = $3 WHERE id = $4",
+    )
+    .bind(&old_visitor_id)
+    .bind(&valid_contact_id)
+    .bind(now_iso())
+    .bind(&new_session_id)
+    .execute(&state.db)
+    .await;
+
+    if valid_contact_id.is_none() && !old_visitor_id.is_empty() {
+        resolve_contact_from_visitor_id(&state, &new_session_id, &old_visitor_id).await;
+    }
+
     (new_session_id, true)
 }
 
@@ -2733,9 +3023,10 @@ async fn generate_ai_reply(
             .flatten();
     if let Some(cid) = &contact_id {
         let contact_row = sqlx::query(
-            "SELECT display_name, email, phone, company, location FROM contacts WHERE id = $1",
+            "SELECT display_name, email, phone, company, location FROM contacts WHERE id = $1 AND tenant_id = $2",
         )
         .bind(cid)
+        .bind(&tenant_id)
         .fetch_optional(&state.db)
         .await
         .ok()
@@ -2762,24 +3053,28 @@ async fn generate_ai_reply(
             if !location.is_empty() {
                 contact_block.push_str(&format!("\n- Location: {}", location));
             }
-        }
-        // Include custom attributes
-        let custom_attrs = sqlx::query(
-            "SELECT attribute_key, attribute_value FROM contact_custom_attributes WHERE contact_id = $1",
-        )
-        .bind(cid)
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
-        for attr_row in &custom_attrs {
-            let key: String = attr_row.get("attribute_key");
-            let val: String = attr_row.get("attribute_value");
-            if !val.is_empty() {
-                contact_block.push_str(&format!("\n- {}: {}", key, val));
+
+            // Include custom attributes only when contact is tenant-valid.
+            let custom_attrs = sqlx::query(
+                "SELECT attribute_key, attribute_value FROM contact_custom_attributes \
+                 WHERE contact_id = $1 \
+                   AND EXISTS (SELECT 1 FROM contacts WHERE id = $1 AND tenant_id = $2)",
+            )
+            .bind(cid)
+            .bind(&tenant_id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
+            for attr_row in &custom_attrs {
+                let key: String = attr_row.get("attribute_key");
+                let val: String = attr_row.get("attribute_value");
+                if !val.is_empty() {
+                    contact_block.push_str(&format!("\n- {}: {}", key, val));
+                }
             }
-        }
-        if !contact_block.is_empty() {
-            contact_block.push('\n');
+            if !contact_block.is_empty() {
+                contact_block.push('\n');
+            }
         }
     }
 
@@ -2973,6 +3268,9 @@ async fn extract_vars_with_ai(
 
     // Include a large conversation window so the AI can see the full collection dialogue
     let transcript = recent_session_context(state, session_id, 20).await;
+    let tenant_id = tenant_for_session(state, session_id)
+        .await
+        .unwrap_or_default();
 
     // Build contact info block so the AI knows who the user is
     let mut contact_block = String::new();
@@ -2986,9 +3284,10 @@ async fn extract_vars_with_ai(
             .flatten();
     if let Some(cid) = &contact_id {
         let contact_row = sqlx::query(
-            "SELECT display_name, email, phone, company, location FROM contacts WHERE id = $1",
+            "SELECT display_name, email, phone, company, location FROM contacts WHERE id = $1 AND tenant_id = $2",
         )
         .bind(cid)
+        .bind(&tenant_id)
         .fetch_optional(&state.db)
         .await
         .ok()
@@ -3318,10 +3617,15 @@ async fn resolve_contact_by_email(state: &Arc<AppState>, session_id: &str, email
 
     // Also link all other sessions with the same visitor_id
     let _ = sqlx::query(
-        "UPDATE sessions SET contact_id = $1 WHERE visitor_id = (SELECT visitor_id FROM sessions WHERE id = $2) AND visitor_id != '' AND contact_id IS NULL",
+        "UPDATE sessions SET contact_id = $1 \
+         WHERE tenant_id = $3 \
+           AND visitor_id = (SELECT visitor_id FROM sessions WHERE id = $2) \
+           AND visitor_id != '' \
+           AND contact_id IS NULL",
     )
     .bind(&contact_id)
     .bind(session_id)
+    .bind(&tenant_id)
     .execute(&state.db)
     .await;
 
@@ -7656,6 +7960,7 @@ async fn whatsapp_webhook_event(
 
         for change in changes {
             let value = change.get("value").cloned().unwrap_or_else(|| json!({}));
+            let contact_profile_names = whatsapp_contact_profile_names(&value);
             let metadata_phone_id = value
                 .get("metadata")
                 .and_then(|m| m.get("phone_number_id"))
@@ -7683,6 +7988,11 @@ async fn whatsapp_webhook_event(
                 let Some(visitor_id) = whatsapp_visitor_id(&from) else {
                     continue;
                 };
+                let from_digits = normalize_whatsapp_phone(&from).unwrap_or_default();
+                let profile_name = contact_profile_names
+                    .get(&from_digits)
+                    .cloned()
+                    .unwrap_or_default();
                 let Some((text, widget)) =
                     whatsapp_inbound_content(&message, &channel.id, &app_secret)
                 else {
@@ -7714,7 +8024,26 @@ async fn whatsapp_webhook_event(
                 .execute(&state.db)
                 .await;
 
-                resolve_contact_from_visitor_id(&state, &session_id, &visitor_id).await;
+                if let Some(contact_id) = ensure_whatsapp_contact_for_visitor(
+                    &state,
+                    &channel.tenant_id,
+                    &visitor_id,
+                    &from,
+                    &profile_name,
+                    &channel.id,
+                )
+                .await
+                {
+                    let _ = sqlx::query(
+                        "UPDATE sessions SET contact_id = $1 WHERE visitor_id = $2 AND visitor_id != ''",
+                    )
+                    .bind(&contact_id)
+                    .bind(&visitor_id)
+                    .execute(&state.db)
+                    .await;
+                } else {
+                    resolve_contact_from_visitor_id(&state, &session_id, &visitor_id).await;
+                }
                 let persisted = add_message(
                     state.clone(),
                     &session_id,
@@ -9958,12 +10287,76 @@ async fn patch_session_contact(
     if let Err(err) = auth_agent_from_headers(&state, &headers).await {
         return err.into_response();
     }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+
+    let session_row = sqlx::query("SELECT tenant_id, visitor_id FROM sessions WHERE id = $1")
+        .bind(&session_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+    let Some(session_row) = session_row else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "session not found" })),
+        )
+            .into_response();
+    };
+    let session_tenant: String = session_row.get("tenant_id");
+    let visitor_id: String = session_row
+        .get::<Option<String>, _>("visitor_id")
+        .unwrap_or_default();
+    if session_tenant != tenant_id {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "session not in active workspace" })),
+        )
+            .into_response();
+    }
+
+    if let Some(cid) = body.contact_id.as_ref() {
+        let contact_in_tenant = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(1) FROM contacts WHERE id = $1 AND tenant_id = $2",
+        )
+        .bind(cid)
+        .bind(&tenant_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0)
+            > 0;
+        if !contact_in_tenant {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "contact does not belong to this workspace" })),
+            )
+                .into_response();
+        }
+    }
+
     let _ = sqlx::query("UPDATE sessions SET contact_id = $1, updated_at = $2 WHERE id = $3")
         .bind(&body.contact_id)
         .bind(now_iso())
         .bind(&session_id)
         .execute(&state.db)
         .await;
+
+    if let Some(cid) = body.contact_id.as_ref() {
+        if !visitor_id.is_empty() {
+            let _ = sqlx::query(
+                "UPDATE sessions SET contact_id = $1 \
+                 WHERE tenant_id = $3 AND visitor_id = $2 AND visitor_id != '' AND (contact_id IS NULL OR contact_id = '')",
+            )
+            .bind(cid)
+            .bind(&visitor_id)
+            .bind(&tenant_id)
+            .execute(&state.db)
+            .await;
+        }
+    }
+
     let summary = get_session_summary_db(&state.db, &session_id).await;
     if let Some(s) = &summary {
         emit_session_update(&state, s.clone()).await;

@@ -35,9 +35,26 @@ function titleCase(value) {
   return String(value || "").replace(/^\w/, (m) => m.toUpperCase());
 }
 
-function getSessionTitle(session) {
+function visitorIdToPhone(session) {
+  const raw = String(session?.visitorId || "");
+  if (!raw) return "";
+  const value = raw.startsWith("whatsapp:") ? raw.slice("whatsapp:".length) : raw;
+  return value.trim();
+}
+
+function getSessionTitle(session, linkedContact = null) {
   if (!session) return "Unknown user";
-  const base = session.contactName || session.displayName || session.name;
+  const base =
+    linkedContact?.displayName ||
+    linkedContact?.email ||
+    linkedContact?.phone ||
+    session.contactName ||
+    session.contactEmail ||
+    session.contactPhone ||
+    session.displayName ||
+    session.name ||
+    session.phone ||
+    visitorIdToPhone(session);
   if (base) return base;
   return `Visitor ${String(session.id || "").slice(0, 6)}`;
 }
@@ -49,8 +66,8 @@ function getSessionSubtitle(session) {
   return preview || "Hi, I want to ask something...";
 }
 
-export function sessionInitials(session) {
-  const title = getSessionTitle(session);
+export function sessionInitials(session, linkedContact = null) {
+  const title = getSessionTitle(session, linkedContact);
   return (
     title
       .split(" ")

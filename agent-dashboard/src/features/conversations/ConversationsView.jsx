@@ -126,9 +126,18 @@ function MessageAvatar({ message, tenantSettings }) {
   );
 }
 
-function getSessionTitle(session) {
+function getSessionTitle(session, linkedContact = null) {
   if (!session) return "No conversation selected";
-  const base = session.contactName || session.displayName || session.name;
+  const base =
+    linkedContact?.displayName ||
+    linkedContact?.email ||
+    linkedContact?.phone ||
+    session.contactName ||
+    session.contactEmail ||
+    session.contactPhone ||
+    session.displayName ||
+    session.name ||
+    session.phone;
   if (base) return base;
   return `Visitor ${String(session.id || "").slice(0, 6)}`;
 }
@@ -468,11 +477,11 @@ export default function ConversationsView({
           <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4">
             <div className="flex items-center gap-2">
               <div className="flex h-7 w-7 items-center justify-center rounded-full bg-fuchsia-100 text-[10px] font-semibold text-fuchsia-700">
-                {sessionInitials(activeSession)}
+                {sessionInitials(activeSession, sessionContact)}
               </div>
               <div>
                 <p className="text-sm font-semibold text-slate-900">
-                  {getSessionTitle(activeSession)}
+                  {getSessionTitle(activeSession, sessionContact)}
                 </p>
                 <p className="text-[11px] text-slate-500">
                   {activeSession
@@ -1094,10 +1103,10 @@ export default function ConversationsView({
           <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
             <div className="flex items-center gap-2">
               <div className="flex h-7 w-7 items-center justify-center rounded-full bg-fuchsia-100 text-[10px] font-semibold text-fuchsia-700">
-                {sessionInitials(activeSession)}
+                {sessionInitials(activeSession, sessionContact)}
               </div>
               <p className="text-sm font-semibold text-slate-900">
-                {getSessionTitle(activeSession)}
+                {getSessionTitle(activeSession, sessionContact)}
               </p>
             </div>
             <Button
