@@ -1520,6 +1520,10 @@ export default function App() {
           setChannels={setChannels}
           channelRecords={channelRecords}
           setChannelRecords={setChannelRecords}
+          cannedReplies={cannedReplies}
+          setCannedReplies={setCannedReplies}
+          tags={tags}
+          setTags={setTags}
           apiFetch={apiFetch}
           token={token}
         />
@@ -1637,6 +1641,10 @@ export default function App() {
         setChannels={setChannels}
         channelRecords={channelRecords}
         setChannelRecords={setChannelRecords}
+        cannedReplies={cannedReplies}
+        setCannedReplies={setCannedReplies}
+        tags={tags}
+        setTags={setTags}
         apiFetch={apiFetch}
         token={token}
       />

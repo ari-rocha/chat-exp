@@ -15,7 +15,10 @@ import {
   CircleUserRound,
   Globe,
   Inbox,
+  MessageSquareText,
+  Pencil,
   Settings2,
+  Tag,
   Trash2,
   UserPlus,
   Users,
@@ -33,6 +36,8 @@ const NAV_SECTIONS = [
     items: [
       { key: "general", label: "General", icon: Settings2 },
       { key: "channels", label: "Channels", icon: Globe },
+      { key: "canned", label: "Canned Responses", icon: MessageSquareText },
+      { key: "tags", label: "Tags", icon: Tag },
       { key: "teams", label: "Teams", icon: Users },
       { key: "members", label: "Members", icon: UserPlus, adminOnly: true },
     ],
@@ -64,6 +69,10 @@ export default function CustomizationView({
   setChannels,
   channelRecords,
   setChannelRecords,
+  cannedReplies,
+  setCannedReplies,
+  tags,
+  setTags,
   apiFetch,
   token,
 }) {
@@ -84,6 +93,22 @@ export default function CustomizationView({
   const [editingChannel, setEditingChannel] = useState(null);
   const [routingError, setRoutingError] = useState("");
   const [routingSaving, setRoutingSaving] = useState(false);
+
+  // Canned replies
+  const [cannedTitle, setCannedTitle] = useState("");
+  const [cannedShortcut, setCannedShortcut] = useState("");
+  const [cannedBody, setCannedBody] = useState("");
+  const [cannedSaving, setCannedSaving] = useState(false);
+  const [editingCanned, setEditingCanned] = useState(null);
+  const [showCannedDialog, setShowCannedDialog] = useState(false);
+
+  // Tags
+  const [tagName, setTagName] = useState("");
+  const [tagColor, setTagColor] = useState("#3b82f6");
+  const [tagDescription, setTagDescription] = useState("");
+  const [tagSaving, setTagSaving] = useState(false);
+  const [editingTag, setEditingTag] = useState(null);
+  const [showTagDialog, setShowTagDialog] = useState(false);
 
   const isOwner = agent?.role === "owner";
   const isAdmin = agent?.role === "admin";
@@ -334,6 +359,168 @@ export default function CustomizationView({
     } finally {
       setProfileSaving(false);
     }
+  };
+
+  /* ── canned replies ── */
+  const saveCannedReply = async (e) => {
+    e.preventDefault();
+    if (!cannedTitle.trim() || !cannedBody.trim()) return;
+    setCannedSaving(true);
+    try {
+      if (editingCanned) {
+        const res = await apiFetch(
+          `/api/canned-replies/${editingCanned.id}`,
+          token,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              title: cannedTitle.trim(),
+              shortcut: cannedShortcut.trim(),
+              body: cannedBody.trim(),
+            }),
+          },
+        );
+        if (res.cannedReply) {
+          setCannedReplies((prev) =>
+            prev.map((r) => (r.id === editingCanned.id ? res.cannedReply : r)),
+          );
+        }
+        setEditingCanned(null);
+      } else {
+        const res = await apiFetch("/api/canned-replies", token, {
+          method: "POST",
+          body: JSON.stringify({
+            title: cannedTitle.trim(),
+            shortcut: cannedShortcut.trim(),
+            category: "",
+            body: cannedBody.trim(),
+          }),
+        });
+        if (res.cannedReply)
+          setCannedReplies((prev) => [...prev, res.cannedReply]);
+      }
+      setCannedTitle("");
+      setCannedShortcut("");
+      setCannedBody("");
+      setShowCannedDialog(false);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setCannedSaving(false);
+    }
+  };
+
+  const deleteCannedReply = async (id) => {
+    if (!confirm("Delete this canned response?")) return;
+    try {
+      await apiFetch(`/api/canned-replies/${id}`, token, { method: "DELETE" });
+      setCannedReplies((prev) => prev.filter((r) => r.id !== id));
+      if (editingCanned?.id === id) {
+        setEditingCanned(null);
+        setCannedTitle("");
+        setCannedShortcut("");
+        setCannedBody("");
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const openCannedDialog = (reply = null) => {
+    if (reply) {
+      setEditingCanned(reply);
+      setCannedTitle(reply.title);
+      setCannedShortcut(reply.shortcut || "");
+      setCannedBody(reply.body);
+    } else {
+      setEditingCanned(null);
+      setCannedTitle("");
+      setCannedShortcut("");
+      setCannedBody("");
+    }
+    setShowCannedDialog(true);
+  };
+
+  const closeCannedDialog = () => {
+    setShowCannedDialog(false);
+    setEditingCanned(null);
+    setCannedTitle("");
+    setCannedShortcut("");
+    setCannedBody("");
+  };
+
+  /* ── tags ── */
+  const createOrUpdateTag = async (e) => {
+    e.preventDefault();
+    if (!tagName.trim()) return;
+    setTagSaving(true);
+    try {
+      if (editingTag) {
+        const res = await apiFetch(`/api/tags/${editingTag.id}`, token, {
+          method: "PATCH",
+          body: JSON.stringify({
+            name: tagName.trim(),
+            color: tagColor,
+            description: tagDescription.trim(),
+          }),
+        });
+        if (res.tag)
+          setTags((prev) =>
+            prev.map((t) => (t.id === editingTag.id ? res.tag : t)),
+          );
+        setEditingTag(null);
+      } else {
+        const res = await apiFetch("/api/tags", token, {
+          method: "POST",
+          body: JSON.stringify({
+            name: tagName.trim(),
+            color: tagColor,
+            description: tagDescription.trim(),
+          }),
+        });
+        if (res.tag) setTags((prev) => [...prev, res.tag]);
+      }
+      setTagName("");
+      setTagDescription("");
+      setShowTagDialog(false);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setTagSaving(false);
+    }
+  };
+
+  const deleteTag = async (id) => {
+    if (!confirm("Delete this tag?")) return;
+    try {
+      await apiFetch(`/api/tags/${id}`, token, { method: "DELETE" });
+      setTags((prev) => prev.filter((t) => t.id !== id));
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const openTagDialog = (tag = null) => {
+    if (tag) {
+      setEditingTag(tag);
+      setTagName(tag.name);
+      setTagColor(tag.color || "#3b82f6");
+      setTagDescription(tag.description || "");
+    } else {
+      setEditingTag(null);
+      setTagName("");
+      setTagColor("#3b82f6");
+      setTagDescription("");
+    }
+    setShowTagDialog(true);
+  };
+
+  const closeTagDialog = () => {
+    setShowTagDialog(false);
+    setEditingTag(null);
+    setTagName("");
+    setTagColor("#3b82f6");
+    setTagDescription("");
   };
 
   const openChannelEditor = (channel) => {
@@ -1237,6 +1424,355 @@ export default function CustomizationView({
     </div>
   );
 
+  /* ──────────── Canned Responses ──────────── */
+  const renderCannedPage = () => (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="text-base font-semibold text-slate-900">
+          Canned Responses
+        </h2>
+        <Button
+          onClick={() => openCannedDialog()}
+          className="bg-blue-600 text-white hover:bg-blue-700"
+          size="sm"
+        >
+          Add Canned Response
+        </Button>
+      </div>
+      <p className="mb-6 text-sm text-slate-500">
+        Pre-written replies agents can use with the / shortcut.
+      </p>
+
+      {/* Table */}
+      {(cannedReplies || []).length === 0 ? (
+        <div className="rounded-lg border border-dashed border-slate-300 p-8 text-center">
+          <MessageSquareText
+            size={28}
+            className="mx-auto mb-2 text-slate-300"
+          />
+          <p className="text-sm text-slate-500">No canned responses yet.</p>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-slate-200 overflow-hidden">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50">
+                <th className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  Title
+                </th>
+                <th className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  Shortcut
+                </th>
+                <th className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  Content
+                </th>
+                <th className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider w-20">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {(cannedReplies || []).map((reply) => (
+                <tr
+                  key={reply.id}
+                  className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50/50 transition-colors"
+                >
+                  <td className="px-4 py-3 text-sm font-medium text-slate-900">
+                    {reply.title}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-slate-600">
+                    {reply.shortcut ? (
+                      <Badge
+                        variant="secondary"
+                        className="text-[11px] font-mono"
+                      >
+                        /{reply.shortcut}
+                      </Badge>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-slate-500 max-w-xs truncate">
+                    {reply.body}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => openCannedDialog(reply)}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-blue-600 transition-colors"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteCannedReply(reply.id)}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Dialog */}
+      <Dialog
+        open={showCannedDialog}
+        onOpenChange={(v) => {
+          if (!v) closeCannedDialog();
+        }}
+      >
+        <DialogContent className="p-0 gap-0">
+          <div className="px-6 pt-5 pb-4 border-b border-slate-200">
+            <DialogTitle className="text-base font-semibold text-slate-900">
+              {editingCanned ? "Edit Canned Response" : "Add Canned Response"}
+            </DialogTitle>
+            <DialogDescription className="text-sm text-slate-500 mt-1">
+              {editingCanned
+                ? "Update the canned response details."
+                : "Create a pre-written reply for quick use."}
+            </DialogDescription>
+          </div>
+          <form onSubmit={saveCannedReply} className="px-6 py-4 space-y-4">
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                Title
+              </label>
+              <Input
+                value={cannedTitle}
+                onChange={(e) => setCannedTitle(e.target.value)}
+                placeholder="e.g. Greeting"
+                required
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                Shortcut
+              </label>
+              <Input
+                value={cannedShortcut}
+                onChange={(e) => setCannedShortcut(e.target.value)}
+                placeholder="/shortcut"
+              />
+              <p className="mt-1 text-xs text-slate-400">
+                Agents type / followed by this shortcut to insert the response.
+              </p>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                Content
+              </label>
+              <Textarea
+                value={cannedBody}
+                onChange={(e) => setCannedBody(e.target.value)}
+                placeholder="Response body…"
+                required
+                rows={4}
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={closeCannedDialog}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={cannedSaving}
+                className="bg-blue-600 text-white hover:bg-blue-700"
+              >
+                {cannedSaving ? "Saving…" : editingCanned ? "Update" : "Create"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+
+  /* ──────────── Tags ──────────── */
+  const TAG_COLORS = [
+    "#3b82f6",
+    "#ef4444",
+    "#f59e0b",
+    "#10b981",
+    "#8b5cf6",
+    "#ec4899",
+    "#06b6d4",
+    "#f97316",
+    "#6366f1",
+    "#14b8a6",
+  ];
+
+  const renderTagsPage = () => (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="text-base font-semibold text-slate-900">Tags</h2>
+        <Button
+          onClick={() => openTagDialog()}
+          className="bg-blue-600 text-white hover:bg-blue-700"
+          size="sm"
+        >
+          Add Tag
+        </Button>
+      </div>
+      <p className="mb-6 text-sm text-slate-500">
+        Labels to organize and filter conversations.
+      </p>
+
+      {/* Table */}
+      {(tags || []).length === 0 ? (
+        <div className="rounded-lg border border-dashed border-slate-300 p-8 text-center">
+          <Tag size={28} className="mx-auto mb-2 text-slate-300" />
+          <p className="text-sm text-slate-500">No tags yet.</p>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-slate-200 overflow-hidden">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50">
+                <th className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  Name
+                </th>
+                <th className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  Description
+                </th>
+                <th className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  Color
+                </th>
+                <th className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider w-20">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {(tags || []).map((t) => (
+                <tr
+                  key={t.id}
+                  className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50/50 transition-colors"
+                >
+                  <td className="px-4 py-3 text-sm font-medium text-slate-900">
+                    {t.name}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-slate-500 max-w-xs truncate">
+                    {t.description || "—"}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span
+                      className="inline-block h-5 w-5 rounded-full ring-1 ring-black/10"
+                      style={{ background: t.color || "#3b82f6" }}
+                    />
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => openTagDialog(t)}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-blue-600 transition-colors"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteTag(t.id)}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Dialog */}
+      <Dialog
+        open={showTagDialog}
+        onOpenChange={(v) => {
+          if (!v) closeTagDialog();
+        }}
+      >
+        <DialogContent className="p-0 gap-0">
+          <div className="px-6 pt-5 pb-4 border-b border-slate-200">
+            <DialogTitle className="text-base font-semibold text-slate-900">
+              {editingTag ? "Edit Tag" : "Add Tag"}
+            </DialogTitle>
+            <DialogDescription className="text-sm text-slate-500 mt-1">
+              {editingTag
+                ? "Update the tag details below."
+                : "Create a label for organizing conversations."}
+            </DialogDescription>
+          </div>
+          <form onSubmit={createOrUpdateTag} className="px-6 py-4 space-y-4">
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                Name
+              </label>
+              <Input
+                value={tagName}
+                onChange={(e) => setTagName(e.target.value)}
+                placeholder="e.g. VIP, Bug, Urgent"
+                required
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                Description
+              </label>
+              <Input
+                value={tagDescription}
+                onChange={(e) => setTagDescription(e.target.value)}
+                placeholder="A short description of this tag"
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                Color
+              </label>
+              <div className="flex items-center gap-3 mt-1">
+                <input
+                  type="color"
+                  value={tagColor}
+                  onChange={(e) => setTagColor(e.target.value)}
+                  className="h-9 w-16 rounded border border-slate-300 cursor-pointer bg-white"
+                  style={{ padding: 0 }}
+                  aria-label="Pick tag color"
+                />
+                <span
+                  className="inline-block h-7 w-7 rounded-full border border-slate-200"
+                  style={{ background: tagColor }}
+                />
+                <span className="text-xs text-slate-500">{tagColor}</span>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={closeTagDialog}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={tagSaving}
+                className="bg-blue-600 text-white hover:bg-blue-700"
+              >
+                {tagSaving ? "Saving…" : editingTag ? "Update" : "Create"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+
   /* ──────────── Content Router ──────────── */
   const renderContent = () => {
     if (editingChannel) return renderChannelEditorPage();
@@ -1247,6 +1783,10 @@ export default function CustomizationView({
         return renderGeneralPage();
       case "channels":
         return renderChannelsListPage();
+      case "canned":
+        return renderCannedPage();
+      case "tags":
+        return renderTagsPage();
       case "teams":
         return renderTeamsPage();
       case "members":

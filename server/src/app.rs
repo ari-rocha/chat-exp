@@ -7849,7 +7849,7 @@ async fn get_tags(State(state): State<Arc<AppState>>, headers: HeaderMap) -> imp
         Ok(id) => id,
         Err(err) => return err.into_response(),
     };
-    let rows = sqlx::query("SELECT id, tenant_id, name, color, created_at FROM tags WHERE tenant_id = $1 ORDER BY name ASC")
+    let rows = sqlx::query("SELECT id, tenant_id, name, color, description, created_at FROM tags WHERE tenant_id = $1 ORDER BY name ASC")
         .bind(&tenant_id)
         .fetch_all(&state.db)
         .await
@@ -7861,6 +7861,7 @@ async fn get_tags(State(state): State<Arc<AppState>>, headers: HeaderMap) -> imp
             tenant_id: r.get("tenant_id"),
             name: r.get("name"),
             color: r.get("color"),
+            description: r.get("description"),
             created_at: r.get("created_at"),
         })
         .collect();
@@ -7884,13 +7885,15 @@ async fn create_tag(
         tenant_id,
         name: body.name.trim().to_string(),
         color: body.color,
+        description: body.description,
         created_at: now_iso(),
     };
-    let _ = sqlx::query("INSERT INTO tags (id, tenant_id, name, color, created_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (tenant_id, name) DO NOTHING")
+    let _ = sqlx::query("INSERT INTO tags (id, tenant_id, name, color, description, created_at) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (tenant_id, name) DO NOTHING")
         .bind(&tag.id)
         .bind(&tag.tenant_id)
         .bind(&tag.name)
         .bind(&tag.color)
+        .bind(&tag.description)
         .bind(&tag.created_at)
         .execute(&state.db)
         .await;
@@ -7910,6 +7913,76 @@ async fn delete_tag(
         .execute(&state.db)
         .await;
     (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
+async fn update_tag(
+    Path(tag_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateTagBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    // Build dynamic SET clauses
+    let mut sets = Vec::new();
+    let mut idx = 3u32;
+    if body.name.is_some() {
+        sets.push(format!("name = ${idx}"));
+        idx += 1;
+    }
+    if body.color.is_some() {
+        sets.push(format!("color = ${idx}"));
+        idx += 1;
+    }
+    if body.description.is_some() {
+        sets.push(format!("description = ${idx}"));
+    }
+    if sets.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "nothing to update" })),
+        )
+            .into_response();
+    }
+    let sql = format!("UPDATE tags SET {} WHERE id = $1 AND tenant_id = $2 RETURNING id, tenant_id, name, color, description, created_at", sets.join(", "));
+    let mut q = sqlx::query(&sql).bind(&tag_id).bind(&tenant_id);
+    if let Some(ref n) = body.name {
+        q = q.bind(n.trim());
+    }
+    if let Some(ref c) = body.color {
+        q = q.bind(c.as_str());
+    }
+    if let Some(ref d) = body.description {
+        q = q.bind(d.as_str());
+    }
+    match q.fetch_optional(&state.db).await {
+        Ok(Some(r)) => {
+            let tag = Tag {
+                id: r.get("id"),
+                tenant_id: r.get("tenant_id"),
+                name: r.get("name"),
+                color: r.get("color"),
+                description: r.get("description"),
+                created_at: r.get("created_at"),
+            };
+            (StatusCode::OK, Json(json!({ "tag": tag }))).into_response()
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "tag not found" })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 // ── Custom Attribute Definitions CRUD ───────────────────────────────
@@ -8053,7 +8126,7 @@ async fn get_session_tags(
         return err.into_response();
     }
     let rows = sqlx::query(
-        "SELECT t.id, t.tenant_id, t.name, t.color, t.created_at FROM tags t INNER JOIN conversation_tags ct ON ct.tag_id = t.id WHERE ct.session_id = $1 ORDER BY t.name ASC",
+        "SELECT t.id, t.tenant_id, t.name, t.color, t.description, t.created_at FROM tags t INNER JOIN conversation_tags ct ON ct.tag_id = t.id WHERE ct.session_id = $1 ORDER BY t.name ASC",
     )
     .bind(&session_id)
     .fetch_all(&state.db)
@@ -8066,6 +8139,7 @@ async fn get_session_tags(
             tenant_id: r.get("tenant_id"),
             name: r.get("name"),
             color: r.get("color"),
+            description: r.get("description"),
             created_at: r.get("created_at"),
         })
         .collect();
@@ -8904,7 +8978,10 @@ pub async fn run() {
             axum::routing::delete(delete_contact_attribute),
         )
         .route("/api/tags", get(get_tags).post(create_tag))
-        .route("/api/tags/{tag_id}", axum::routing::delete(delete_tag))
+        .route(
+            "/api/tags/{tag_id}",
+            axum::routing::delete(delete_tag).patch(update_tag),
+        )
         .route(
             "/api/attribute-definitions",
             get(get_attribute_definitions).post(create_attribute_definition),

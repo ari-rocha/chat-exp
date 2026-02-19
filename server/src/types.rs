@@ -311,6 +311,8 @@ pub struct Tag {
     pub tenant_id: String,
     pub name: String,
     pub color: String,
+    #[serde(default)]
+    pub description: String,
     pub created_at: String,
 }
 
@@ -583,6 +585,16 @@ pub struct CreateTagBody {
     pub name: String,
     #[serde(default = "default_tag_color")]
     pub color: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateTagBody {
+    pub name: Option<String>,
+    pub color: Option<String>,
+    pub description: Option<String>,
 }
 
 fn default_tag_color() -> String {
