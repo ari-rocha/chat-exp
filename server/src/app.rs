@@ -14,7 +14,7 @@ use axum::{
     body::Bytes,
     extract::{
         ws::{Message, WebSocket},
-        Path, Query, State, WebSocketUpgrade,
+        Multipart, Path, Query, State, WebSocketUpgrade,
     },
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::IntoResponse,
@@ -425,6 +425,19 @@ fn media_content_type_from_extension(ext: &str) -> &'static str {
     }
 }
 
+fn attachment_type_from_mime(mime: &str) -> String {
+    let mt = mime.to_ascii_lowercase();
+    if mt.starts_with("image/") {
+        "image".to_string()
+    } else if mt.starts_with("audio/") {
+        "audio".to_string()
+    } else if mt.starts_with("video/") {
+        "video".to_string()
+    } else {
+        "document".to_string()
+    }
+}
+
 fn is_safe_media_file_name(value: &str) -> bool {
     !value.is_empty()
         && !value.contains('/')
@@ -433,6 +446,22 @@ fn is_safe_media_file_name(value: &str) -> bool {
         && value
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
+
+fn resolve_public_url(base: &str, url: &str) -> String {
+    let value = url.trim();
+    if value.is_empty() {
+        return String::new();
+    }
+    if value.starts_with("http://") || value.starts_with("https://") {
+        return value.to_string();
+    }
+    let base = base.trim_end_matches('/');
+    if value.starts_with('/') {
+        format!("{base}{value}")
+    } else {
+        format!("{base}/{value}")
+    }
 }
 
 async fn fetch_whatsapp_media_from_meta(
@@ -829,10 +858,11 @@ async fn find_or_create_whatsapp_session(
     }
 }
 
-async fn send_whatsapp_text_for_session(
+async fn send_whatsapp_message_for_session(
     state: Arc<AppState>,
     session_id: String,
     text: String,
+    widget: Option<Value>,
 ) -> Result<(), String> {
     let session_row = sqlx::query(
         "SELECT tenant_id, inbox_id, channel, visitor_id FROM sessions WHERE id = $1 LIMIT 1",
@@ -896,6 +926,64 @@ async fn send_whatsapp_text_for_session(
         return Err("missing whatsapp accessToken or phoneNumberId".to_string());
     }
 
+    let mut payload = json!({
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to_phone,
+    });
+
+    let attachment = widget
+        .as_ref()
+        .filter(|w| w.get("type").and_then(Value::as_str) == Some("attachment"));
+    if let Some(att) = attachment {
+        let attachment_type = att
+            .get("attachmentType")
+            .and_then(Value::as_str)
+            .unwrap_or("document")
+            .to_ascii_lowercase();
+        let media_link = resolve_public_url(
+            &state.public_base_url,
+            att.get("url").and_then(Value::as_str).unwrap_or(""),
+        );
+        if media_link.is_empty() {
+            return Err("missing attachment url for whatsapp media send".to_string());
+        }
+        match attachment_type.as_str() {
+            "image" | "sticker" => {
+                payload["type"] = json!("image");
+                payload["image"] = json!({
+                    "link": media_link,
+                    "caption": text,
+                });
+            }
+            "audio" | "voice" => {
+                payload["type"] = json!("audio");
+                payload["audio"] = json!({ "link": media_link });
+            }
+            "video" => {
+                payload["type"] = json!("video");
+                payload["video"] = json!({
+                    "link": media_link,
+                    "caption": text,
+                });
+            }
+            _ => {
+                payload["type"] = json!("document");
+                payload["document"] = json!({
+                    "link": media_link,
+                    "filename": att.get("filename").and_then(Value::as_str).unwrap_or("attachment"),
+                    "caption": text,
+                });
+            }
+        }
+    } else {
+        payload["type"] = json!("text");
+        payload["text"] = json!({
+            "preview_url": false,
+            "body": text
+        });
+    }
+
     let response = state
         .ai_client
         .post(format!(
@@ -903,16 +991,7 @@ async fn send_whatsapp_text_for_session(
             phone_number_id
         ))
         .bearer_auth(&access_token)
-        .json(&json!({
-            "messaging_product": "whatsapp",
-            "recipient_type": "individual",
-            "to": to_phone,
-            "type": "text",
-            "text": {
-                "preview_url": false,
-                "body": text
-            }
-        }))
+        .json(&payload)
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -1750,12 +1829,12 @@ async fn add_message(
     agent_profile: Option<&AgentProfile>,
 ) -> Option<ChatMessage> {
     let trimmed = text.trim();
-    if trimmed.is_empty() {
+    if trimmed.is_empty() && widget.is_none() {
         return None;
     }
 
     let mut final_widget = widget;
-    if sender == "agent" && final_widget.is_none() {
+    if sender == "agent" && final_widget.is_none() && !trimmed.is_empty() {
         final_widget = build_link_preview_widget(&state, trimmed).await;
     }
 
@@ -1810,8 +1889,11 @@ async fn add_message(
         let state_clone = state.clone();
         let session_id = session_id.to_string();
         let text = message.text.clone();
+        let widget = message.widget.clone();
         tokio::spawn(async move {
-            if let Err(err) = send_whatsapp_text_for_session(state_clone, session_id, text).await {
+            if let Err(err) =
+                send_whatsapp_message_for_session(state_clone, session_id, text, widget).await
+            {
                 eprintln!("[whatsapp] outbound delivery failed: {err}");
             }
         });
@@ -7243,6 +7325,69 @@ async fn serve_stored_media(
     response.into_response()
 }
 
+async fn upload_attachment(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    if let Err(err) = auth_tenant_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+
+    let mut uploaded: Option<Value> = None;
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let field_name = field.name().unwrap_or("").to_string();
+        if field_name != "file" {
+            continue;
+        }
+        let filename = field.file_name().unwrap_or("").to_string();
+        let content_type = field
+            .content_type()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+        let bytes = match field.bytes().await {
+            Ok(b) if !b.is_empty() => b,
+            _ => continue,
+        };
+        let ext = media_extension_from_filename(&filename)
+            .unwrap_or_else(|| media_extension_from_mime(&content_type, "document"));
+        let file_name = format!("{}.{}", Uuid::new_v4(), ext);
+        let path = state.media_storage_dir.join(&file_name);
+        if tokio::fs::write(&path, &bytes).await.is_err() {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "failed to store uploaded file" })),
+            )
+                .into_response();
+        }
+
+        uploaded = Some(json!({
+            "url": format!("/api/media/{file_name}"),
+            "fileName": if filename.is_empty() { file_name.clone() } else { filename.clone() },
+            "mimeType": content_type.clone(),
+            "sizeBytes": bytes.len(),
+            "attachmentType": attachment_type_from_mime(&content_type),
+            "storedFileName": file_name,
+            "stored": true,
+            "storage": "local"
+        }));
+        break;
+    }
+
+    let Some(file) = uploaded else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "missing file field in multipart form" })),
+        )
+            .into_response();
+    };
+
+    (StatusCode::CREATED, Json(json!({ "file": file }))).into_response()
+}
+
 async fn list_channels(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -9917,6 +10062,74 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     .await;
                 }
             }
+            "agent:attachment" => {
+                let session_id = envelope.data.get("sessionId").and_then(Value::as_str);
+                let url = envelope
+                    .data
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let file_name = envelope
+                    .data
+                    .get("fileName")
+                    .and_then(Value::as_str)
+                    .unwrap_or("attachment");
+                let mime_type = envelope
+                    .data
+                    .get("mimeType")
+                    .and_then(Value::as_str)
+                    .unwrap_or("application/octet-stream");
+                let attachment_type = envelope
+                    .data
+                    .get("attachmentType")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let text = envelope
+                    .data
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let internal = envelope
+                    .data
+                    .get("internal")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+
+                if let Some(session_id) = session_id {
+                    let sender = if internal { "team" } else { "agent" };
+                    let inferred_type = if attachment_type.trim().is_empty() {
+                        attachment_type_from_mime(mime_type)
+                    } else {
+                        attachment_type.to_string()
+                    };
+                    let widget = json!({
+                        "type": "attachment",
+                        "attachmentType": inferred_type,
+                        "url": url,
+                        "mimeType": mime_type,
+                        "filename": file_name,
+                        "stored": true,
+                        "storage": "local"
+                    });
+                    let safe_text = if text.is_empty() { String::new() } else { text };
+                    let agent_profile = {
+                        let rt = state.realtime.lock().await;
+                        rt.agent_profiles.get(&client_id).cloned()
+                    };
+                    let _ = add_message(
+                        state.clone(),
+                        session_id,
+                        sender,
+                        &safe_text,
+                        None,
+                        Some(widget),
+                        agent_profile.as_ref(),
+                    )
+                    .await;
+                }
+            }
             _ => {}
         }
     }
@@ -9972,6 +10185,10 @@ pub async fn run() {
     let media_storage_dir = env::var("MEDIA_STORAGE_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("./media_uploads"));
+    let public_base_url = env::var("API_PUBLIC_URL")
+        .unwrap_or_else(|_| format!("http://localhost:{port}"))
+        .trim_end_matches('/')
+        .to_string();
     if let Err(err) = tokio::fs::create_dir_all(&media_storage_dir).await {
         panic!(
             "failed to create media storage directory {}: {}",
@@ -9996,11 +10213,13 @@ pub async fn run() {
         next_client_id: AtomicUsize::new(0),
         ai_client: reqwest::Client::new(),
         media_storage_dir,
+        public_base_url,
     });
 
     let app = Router::new()
         .route("/health", get(health))
         .route("/api/media/{file_name}", get(serve_stored_media))
+        .route("/api/uploads/attachment", post(upload_attachment))
         .route("/api/widget/bootstrap", get(widget_bootstrap))
         .route("/api/auth/register", post(register_agent))
         .route("/api/auth/signup", post(signup_user))

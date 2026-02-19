@@ -177,7 +177,9 @@ const formatTime = (iso) => {
 async function apiFetch(path, token, options = {}) {
   const headers = new Headers(options.headers || {});
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  if (!headers.has("Content-Type") && options.body) {
+  const isFormData =
+    typeof FormData !== "undefined" && options.body instanceof FormData;
+  if (!headers.has("Content-Type") && options.body && !isFormData) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -947,6 +949,38 @@ export default function App() {
     setCannedPanelOpen(false);
   };
 
+  const sendAttachment = async (file, text = "") => {
+    if (
+      messageAudience === "user" &&
+      (activeSession?.status || "open") === "closed"
+    ) {
+      return;
+    }
+    if (!token || !activeId || !file) return false;
+
+    const formData = new FormData();
+    formData.append("file", file);
+    const payload = await apiFetch("/api/uploads/attachment", token, {
+      method: "POST",
+      body: formData,
+    });
+    const uploaded = payload?.file;
+    if (!uploaded?.url) return false;
+
+    sendWsEvent("agent:attachment", {
+      sessionId: activeId,
+      url: uploaded.url,
+      fileName: uploaded.fileName || file.name || "attachment",
+      mimeType: uploaded.mimeType || file.type || "application/octet-stream",
+      attachmentType: uploaded.attachmentType || "",
+      text: String(text || "").trim(),
+      internal: messageAudience === "team",
+    });
+    setMessageAudience("user");
+    setCannedPanelOpen(false);
+    return true;
+  };
+
   const saveNote = async () => {
     if (!token || !activeId || !noteText.trim()) return;
     const payload = await apiFetch(`/api/session/${activeId}/notes`, token, {
@@ -1539,6 +1573,7 @@ export default function App() {
           visitorDraftBySession={visitorDraftBySession}
           bottomRef={bottomRef}
           sendMessage={sendMessage}
+          sendAttachment={sendAttachment}
           messageAudience={messageAudience}
           setMessageAudience={setMessageAudience}
           cannedPanelOpen={cannedPanelOpen}

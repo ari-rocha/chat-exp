@@ -372,6 +372,7 @@ pub struct AppState {
     pub next_client_id: AtomicUsize,
     pub ai_client: reqwest::Client,
     pub media_storage_dir: PathBuf,
+    pub public_base_url: String,
 }
 
 #[derive(Debug, Deserialize)]

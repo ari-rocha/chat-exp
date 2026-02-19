@@ -22,7 +22,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useState as useStateReact } from "react";
+import { useEffect, useRef, useState as useStateReact } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -141,6 +141,7 @@ export default function ConversationsView({
   visitorDraftBySession,
   bottomRef,
   sendMessage,
+  sendAttachment,
   messageAudience,
   setMessageAudience,
   cannedPanelOpen,
@@ -189,21 +190,54 @@ export default function ConversationsView({
   onOpenSettings,
 }) {
   const [lightbox, setLightbox] = useStateReact(null);
+  const [emojiOpen, setEmojiOpen] = useStateReact(false);
+  const [pendingAttachment, setPendingAttachment] = useStateReact(null);
+  const fileInputRef = useRef(null);
+
+  const clearPendingAttachment = () => {
+    if (pendingAttachment?.previewUrl?.startsWith("blob:")) {
+      URL.revokeObjectURL(pendingAttachment.previewUrl);
+    }
+    setPendingAttachment(null);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (pendingAttachment?.previewUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(pendingAttachment.previewUrl);
+      }
+    };
+  }, [pendingAttachment]);
+
+  const canSendNow =
+    Boolean(activeId) &&
+    !(isActiveSessionClosed && messageAudience === "user") &&
+    (Boolean(pendingAttachment) || Boolean(text.trim()));
+
+  const submitComposerPayload = async () => {
+    if (!canSendNow) return;
+    sendTypingState(false);
+    if (pendingAttachment) {
+      const ok = await sendAttachment(pendingAttachment.file, text.trim());
+      if (!ok) return;
+      clearPendingAttachment();
+      setText("");
+      return;
+    }
+    sendWsEvent("agent:message", {
+      sessionId: activeId,
+      text: text.trim(),
+      internal: messageAudience === "team",
+    });
+    setText("");
+    setMessageAudience("user");
+    setCannedPanelOpen(false);
+  };
 
   const handleComposerKeyDown = (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
-      if (activeId && text.trim()) {
-        sendTypingState(false);
-        sendWsEvent("agent:message", {
-          sessionId: activeId,
-          text: text.trim(),
-          internal: messageAudience === "team",
-        });
-        setText("");
-        setMessageAudience("user");
-        setCannedPanelOpen(false);
-      }
+      void submitComposerPayload();
       return;
     }
 
@@ -243,6 +277,36 @@ export default function ConversationsView({
         setCannedPanelOpen(false);
       }
     }
+  };
+
+  const insertEmoji = (emoji) => {
+    setText((prev) => `${prev || ""}${emoji}`);
+    setEmojiOpen(false);
+    bumpTyping();
+  };
+
+  const handleSelectAttachment = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const previewable =
+      file.type.startsWith("image/") || file.type.startsWith("audio/");
+    const previewUrl = previewable ? URL.createObjectURL(file) : "";
+    if (pendingAttachment?.previewUrl?.startsWith("blob:")) {
+      URL.revokeObjectURL(pendingAttachment.previewUrl);
+    }
+    setPendingAttachment({
+      file,
+      previewUrl,
+      name: file.name,
+      type: file.type || "application/octet-stream",
+      size: file.size || 0,
+    });
+    e.target.value = "";
+  };
+
+  const handleComposerSubmit = async (e) => {
+    e.preventDefault();
+    await submitComposerPayload();
   };
 
   return (
@@ -394,18 +458,8 @@ export default function ConversationsView({
                           Internal note
                         </p>
                       ) : null}
-                      {showMessageText ? (
-                        <div
-                          className={`dashboard-md ${isAgent ? "dashboard-md-agent" : ""}`}
-                        >
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {String(message.text ?? "")}
-                          </ReactMarkdown>
-                        </div>
-                      ) : null}
-
                       {attachmentWidget ? (
-                        <div className={showMessageText ? "mt-1.5" : ""}>
+                        <div>
                           {(attachmentType === "image" ||
                             attachmentType === "sticker") &&
                           attachmentUrl ? (
@@ -466,8 +520,28 @@ export default function ConversationsView({
                           ) : null}
                         </div>
                       ) : (
-                        renderMessageWidget(message)
+                        <>
+                          {showMessageText ? (
+                            <div
+                              className={`dashboard-md ${isAgent ? "dashboard-md-agent" : ""}`}
+                            >
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                {String(message.text ?? "")}
+                              </ReactMarkdown>
+                            </div>
+                          ) : null}
+                          {renderMessageWidget(message)}
+                        </>
                       )}
+                      {attachmentWidget && showMessageText ? (
+                        <div
+                          className={`mt-1.5 dashboard-md ${isAgent ? "dashboard-md-agent" : ""}`}
+                        >
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {String(message.text ?? "")}
+                          </ReactMarkdown>
+                        </div>
+                      ) : null}
                       <time
                         className={`mt-1 block text-right text-[10px] ${isAgent ? "text-blue-100" : "text-slate-400"}`}
                       >
@@ -493,7 +567,7 @@ export default function ConversationsView({
           </ScrollArea>
 
           <form
-            onSubmit={sendMessage}
+            onSubmit={handleComposerSubmit}
             className="relative border-t border-slate-200 bg-white p-3"
           >
             {(cannedPanelOpen || slashQuery.length > 0) && (
@@ -543,6 +617,52 @@ export default function ConversationsView({
             )}
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-2.5 shadow-[0_1px_0_rgba(15,23,42,0.04)]">
+              {pendingAttachment ? (
+                <div className="mb-2 rounded-xl border border-slate-200 bg-white p-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-medium text-slate-800">
+                        {pendingAttachment.name}
+                      </p>
+                      <p className="text-[11px] text-slate-500">
+                        {pendingAttachment.type} •{" "}
+                        {Math.max(1, Math.round(pendingAttachment.size / 1024))}{" "}
+                        KB
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs text-slate-500"
+                      onClick={clearPendingAttachment}
+                    >
+                      <X size={12} className="mr-1" />
+                      Cancel
+                    </Button>
+                  </div>
+                  {pendingAttachment.previewUrl &&
+                  pendingAttachment.type.startsWith("image/") ? (
+                    <img
+                      src={pendingAttachment.previewUrl}
+                      alt={pendingAttachment.name}
+                      className="mt-2 max-h-48 rounded-lg border border-slate-200 object-contain"
+                    />
+                  ) : null}
+                  {pendingAttachment.previewUrl &&
+                  pendingAttachment.type.startsWith("audio/") ? (
+                    <audio
+                      controls
+                      preload="metadata"
+                      src={pendingAttachment.previewUrl}
+                      className="mt-2 w-full"
+                    />
+                  ) : null}
+                  <p className="mt-2 text-[11px] text-slate-500">
+                    Add an optional message below, then press Send.
+                  </p>
+                </div>
+              ) : null}
               <Textarea
                 placeholder={
                   activeId
@@ -568,30 +688,68 @@ export default function ConversationsView({
 
               <div className="mt-1 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    className="hidden"
+                    onChange={handleSelectAttachment}
+                  />
                   <Button
                     type="button"
                     size="sm"
                     variant="ghost"
                     className="h-7 w-7 rounded-full p-0 text-slate-500 hover:text-slate-700"
                     disabled={!activeId}
+                    onClick={() => fileInputRef.current?.click()}
                   >
                     <Paperclip size={14} />
                   </Button>
+                  <div className="relative">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 w-7 rounded-full p-0 text-slate-500 hover:text-slate-700"
+                      disabled={!activeId}
+                      onClick={() => setEmojiOpen((v) => !v)}
+                    >
+                      <Smile size={14} />
+                    </Button>
+                    {emojiOpen && activeId ? (
+                      <div className="absolute bottom-9 left-0 z-40 grid grid-cols-6 gap-1 rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg">
+                        {[
+                          "😀",
+                          "😁",
+                          "😂",
+                          "🙂",
+                          "😉",
+                          "😍",
+                          "😘",
+                          "😎",
+                          "🤔",
+                          "👍",
+                          "🙏",
+                          "🔥",
+                        ].map((emoji) => (
+                          <button
+                            key={emoji}
+                            type="button"
+                            className="rounded p-1 text-base hover:bg-slate-100"
+                            onClick={() => insertEmoji(emoji)}
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                   <Button
                     type="button"
                     size="sm"
                     variant="ghost"
                     className="h-7 w-7 rounded-full p-0 text-slate-500 hover:text-slate-700"
                     disabled={!activeId}
-                  >
-                    <Smile size={14} />
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 w-7 rounded-full p-0 text-slate-500 hover:text-slate-700"
-                    disabled={!activeId}
+                    onClick={() => fileInputRef.current?.click()}
                   >
                     <Image size={14} />
                   </Button>
@@ -651,7 +809,7 @@ export default function ConversationsView({
                     type="submit"
                     disabled={
                       !activeId ||
-                      !text.trim() ||
+                      (!text.trim() && !pendingAttachment) ||
                       (isActiveSessionClosed && messageAudience === "user")
                     }
                     className="h-8 rounded-lg bg-orange-500 px-3 text-white hover:bg-orange-600"
