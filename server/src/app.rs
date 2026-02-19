@@ -82,6 +82,10 @@ fn normalize_email(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
+fn normalize_canned_shortcut(value: &str) -> String {
+    value.trim().replace('/', "")
+}
+
 async fn issue_login_ticket(state: &Arc<AppState>, user_id: &str) -> Option<String> {
     let ticket = Uuid::new_v4().to_string();
     let now = Utc::now();
@@ -5756,7 +5760,7 @@ async fn create_canned_reply(
         tenant_id,
         id: Uuid::new_v4().to_string(),
         title,
-        shortcut: body.shortcut.trim().to_string(),
+        shortcut: normalize_canned_shortcut(&body.shortcut),
         category: body.category.trim().to_string(),
         body: content,
         created_at: now.clone(),
@@ -5839,7 +5843,7 @@ async fn update_canned_reply(
         reply.body = trimmed.to_string();
     }
     if let Some(shortcut) = body.shortcut {
-        reply.shortcut = shortcut.trim().to_string();
+        reply.shortcut = normalize_canned_shortcut(&shortcut);
     }
     if let Some(category) = body.category {
         reply.category = category.trim().to_string();

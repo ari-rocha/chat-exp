@@ -363,6 +363,8 @@ export default function CustomizationView({
     }
   };
 
+  const normalizeCannedShortcut = (value) => value.replaceAll("/", "");
+
   const saveWorkspaceProfile = async () => {
     setWorkspaceSaving(true);
     try {
@@ -388,7 +390,7 @@ export default function CustomizationView({
             method: "PATCH",
             body: JSON.stringify({
               title: cannedTitle.trim(),
-              shortcut: cannedShortcut.trim(),
+              shortcut: normalizeCannedShortcut(cannedShortcut).trim(),
               body: cannedBody.trim(),
             }),
           },
@@ -404,7 +406,7 @@ export default function CustomizationView({
           method: "POST",
           body: JSON.stringify({
             title: cannedTitle.trim(),
-            shortcut: cannedShortcut.trim(),
+            shortcut: normalizeCannedShortcut(cannedShortcut).trim(),
             category: "",
             body: cannedBody.trim(),
           }),
@@ -443,7 +445,7 @@ export default function CustomizationView({
     if (reply) {
       setEditingCanned(reply);
       setCannedTitle(reply.title);
-      setCannedShortcut(reply.shortcut || "");
+      setCannedShortcut(normalizeCannedShortcut(reply.shortcut || ""));
       setCannedBody(reply.body);
     } else {
       setEditingCanned(null);
@@ -1638,8 +1640,25 @@ export default function CustomizationView({
               </label>
               <Input
                 value={cannedShortcut}
-                onChange={(e) => setCannedShortcut(e.target.value)}
-                placeholder="/shortcut"
+                onChange={(e) =>
+                  setCannedShortcut(normalizeCannedShortcut(e.target.value))
+                }
+                onPaste={(e) => {
+                  const pasted = e.clipboardData?.getData("text") || "";
+                  if (pasted.includes("/")) {
+                    e.preventDefault();
+                    const input = e.currentTarget;
+                    const clean = normalizeCannedShortcut(pasted);
+                    const start = input.selectionStart ?? input.value.length;
+                    const end = input.selectionEnd ?? input.value.length;
+                    const nextValue =
+                      input.value.slice(0, start) +
+                      clean +
+                      input.value.slice(end);
+                    setCannedShortcut(nextValue);
+                  }
+                }}
+                placeholder="shortcut"
               />
               <p className="mt-1 text-xs text-slate-400">
                 Agents type / followed by this shortcut to insert the response.
