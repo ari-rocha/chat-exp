@@ -10,6 +10,7 @@ use std::{
 
 use crate::types::*;
 use axum::{
+    body::Bytes,
     extract::{
         ws::{Message, WebSocket},
         Path, Query, State, WebSocketUpgrade,
@@ -22,9 +23,11 @@ use axum::{
 use bcrypt::{hash, verify, DEFAULT_COST};
 use chrono::{Duration as ChronoDuration, Utc};
 use futures_util::{sink::SinkExt, stream::StreamExt};
+use hmac::{Hmac, Mac};
 use regex::Regex;
 use serde::Serialize;
 use serde_json::{json, Value};
+use sha2::Sha256;
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 use tokio::sync::{mpsc, Mutex};
 use tower_http::cors::CorsLayer;
@@ -201,6 +204,317 @@ fn json_text(value: &Value) -> String {
 
 fn parse_json_text(value: &str) -> Value {
     serde_json::from_str(value).unwrap_or(Value::Null)
+}
+
+fn config_text(config: &Value, key: &str) -> String {
+    config
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("")
+        .to_string()
+}
+
+fn parse_channel_row(row: sqlx::postgres::PgRow) -> Channel {
+    Channel {
+        id: row.get("id"),
+        tenant_id: row.get("tenant_id"),
+        inbox_id: row.get("inbox_id"),
+        channel_type: row.get("channel_type"),
+        name: row.get("name"),
+        config: parse_json_text(&row.get::<String, _>("config")),
+        enabled: row.get("enabled"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    }
+}
+
+fn validate_channel_config(channel_type: &str, config: &Value) -> Result<(), String> {
+    if channel_type != "whatsapp" {
+        return Ok(());
+    }
+    let required = ["phoneNumberId", "accessToken", "verifyToken", "appSecret"];
+    let missing = required
+        .iter()
+        .filter_map(|key| {
+            if config_text(config, key).is_empty() {
+                Some(*key)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "missing whatsapp config fields: {}",
+            missing.join(", ")
+        ))
+    }
+}
+
+fn normalize_whatsapp_phone(raw: &str) -> Option<String> {
+    let digits = raw
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .collect::<String>();
+    if digits.is_empty() {
+        None
+    } else {
+        Some(digits)
+    }
+}
+
+fn whatsapp_visitor_id(raw: &str) -> Option<String> {
+    let phone = normalize_whatsapp_phone(raw)?;
+    Some(format!("whatsapp:{phone}"))
+}
+
+fn whatsapp_phone_from_visitor_id(visitor_id: &str) -> Option<String> {
+    if !visitor_id.starts_with("whatsapp:") {
+        return None;
+    }
+    normalize_whatsapp_phone(visitor_id.trim_start_matches("whatsapp:"))
+}
+
+fn verify_whatsapp_signature(
+    app_secret: &str,
+    signature_header: Option<&str>,
+    body: &[u8],
+) -> bool {
+    if app_secret.is_empty() {
+        return true;
+    }
+    let signature = signature_header.unwrap_or("").trim();
+    let signature = signature
+        .strip_prefix("sha256=")
+        .unwrap_or(signature)
+        .trim();
+    if signature.is_empty() {
+        return false;
+    }
+    let Ok(signature_bytes) = hex::decode(signature) else {
+        return false;
+    };
+    let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(app_secret.as_bytes()) else {
+        return false;
+    };
+    mac.update(body);
+    mac.verify_slice(&signature_bytes).is_ok()
+}
+
+fn whatsapp_inbound_text(message: &Value) -> Option<String> {
+    let msg_type = message
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    let text = match msg_type.as_str() {
+        "text" => message
+            .get("text")
+            .and_then(|v| v.get("body"))
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+        "button" => message
+            .get("button")
+            .and_then(|v| v.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+        "interactive" => message
+            .get("interactive")
+            .and_then(|v| {
+                v.get("button_reply")
+                    .and_then(|r| r.get("title"))
+                    .and_then(Value::as_str)
+                    .or_else(|| {
+                        v.get("list_reply")
+                            .and_then(|r| r.get("title"))
+                            .and_then(Value::as_str)
+                    })
+            })
+            .unwrap_or(""),
+        _ => "",
+    }
+    .trim()
+    .to_string();
+
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+async fn find_channel_by_id(state: &Arc<AppState>, channel_id: &str) -> Option<Channel> {
+    let row = sqlx::query(
+        "SELECT id, tenant_id, inbox_id, channel_type, name, config, enabled, created_at, updated_at \
+         FROM channels WHERE id = $1",
+    )
+    .bind(channel_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()?;
+    Some(parse_channel_row(row))
+}
+
+async fn find_or_create_whatsapp_session(
+    state: &Arc<AppState>,
+    tenant_id: &str,
+    inbox_id: Option<&str>,
+    visitor_id: &str,
+) -> Option<String> {
+    let existing = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM sessions \
+         WHERE tenant_id = $1 AND channel = 'whatsapp' AND visitor_id = $2 AND status = 'open' \
+         ORDER BY updated_at DESC LIMIT 1",
+    )
+    .bind(tenant_id)
+    .bind(visitor_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    if existing.is_some() {
+        return existing;
+    }
+
+    let flow_id = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM flows WHERE tenant_id = $1 AND enabled = true ORDER BY created_at ASC LIMIT 1",
+    )
+    .bind(tenant_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    let now = now_iso();
+    let session_id = Uuid::new_v4().to_string();
+    let inserted = sqlx::query(
+        "INSERT INTO sessions \
+         (id, tenant_id, created_at, updated_at, channel, assignee_agent_id, inbox_id, team_id, flow_id, handover_active, status, priority, contact_id, visitor_id) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
+    )
+    .bind(&session_id)
+    .bind(tenant_id)
+    .bind(&now)
+    .bind(&now)
+    .bind("whatsapp")
+    .bind(Option::<String>::None)
+    .bind(inbox_id.map(|v| v.to_string()))
+    .bind(Option::<String>::None)
+    .bind(flow_id)
+    .bind(false)
+    .bind("open")
+    .bind("normal")
+    .bind(Option::<String>::None)
+    .bind(visitor_id)
+    .execute(&state.db)
+    .await
+    .is_ok();
+    if inserted {
+        Some(session_id)
+    } else {
+        None
+    }
+}
+
+async fn send_whatsapp_text_for_session(
+    state: Arc<AppState>,
+    session_id: String,
+    text: String,
+) -> Result<(), String> {
+    let session_row = sqlx::query(
+        "SELECT tenant_id, inbox_id, channel, visitor_id FROM sessions WHERE id = $1 LIMIT 1",
+    )
+    .bind(&session_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(session_row) = session_row else {
+        return Err("session not found".to_string());
+    };
+    let channel_name: String = session_row.get("channel");
+    if channel_name != "whatsapp" {
+        return Ok(());
+    }
+
+    let visitor_id: String = session_row.get("visitor_id");
+    let Some(to_phone) = whatsapp_phone_from_visitor_id(&visitor_id) else {
+        return Err("missing whatsapp visitor phone".to_string());
+    };
+    let tenant_id: String = session_row.get("tenant_id");
+    let inbox_id: Option<String> = session_row.get("inbox_id");
+
+    let scoped_channel_row = if let Some(ref inbox_id) = inbox_id {
+        sqlx::query(
+            "SELECT id, tenant_id, inbox_id, channel_type, name, config, enabled, created_at, updated_at \
+             FROM channels \
+             WHERE tenant_id = $1 AND channel_type = 'whatsapp' AND enabled = true AND inbox_id = $2 \
+             ORDER BY created_at ASC LIMIT 1",
+        )
+        .bind(&tenant_id)
+        .bind(inbox_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| e.to_string())?
+    } else {
+        None
+    };
+
+    let channel_row = match scoped_channel_row {
+        Some(row) => Some(row),
+        None => sqlx::query(
+            "SELECT id, tenant_id, inbox_id, channel_type, name, config, enabled, created_at, updated_at \
+             FROM channels \
+             WHERE tenant_id = $1 AND channel_type = 'whatsapp' AND enabled = true \
+             ORDER BY created_at ASC LIMIT 1",
+        )
+        .bind(&tenant_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| e.to_string())?,
+    };
+
+    let Some(channel_row) = channel_row else {
+        return Err("no whatsapp channel configured".to_string());
+    };
+    let channel = parse_channel_row(channel_row);
+    let access_token = config_text(&channel.config, "accessToken");
+    let phone_number_id = config_text(&channel.config, "phoneNumberId");
+    if access_token.is_empty() || phone_number_id.is_empty() {
+        return Err("missing whatsapp accessToken or phoneNumberId".to_string());
+    }
+
+    let response = state
+        .ai_client
+        .post(format!(
+            "https://graph.facebook.com/v21.0/{}/messages",
+            phone_number_id
+        ))
+        .bearer_auth(&access_token)
+        .json(&json!({
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to_phone,
+            "type": "text",
+            "text": {
+                "preview_url": false,
+                "body": text
+            }
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if response.status().is_success() {
+        return Ok(());
+    }
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    Err(format!("whatsapp api error {status}: {body}"))
 }
 
 async fn persist_session(pool: &PgPool, session: &Session) {
@@ -1081,7 +1395,19 @@ async fn add_message(
         emit_to_clients(&state, &agents, "message:new", message.clone()).await;
     }
 
+    let is_whatsapp_session = summary.channel == "whatsapp";
     emit_to_clients(&state, &agents, "session:updated", summary).await;
+
+    if sender == "agent" && is_whatsapp_session {
+        let state_clone = state.clone();
+        let session_id = session_id.to_string();
+        let text = message.text.clone();
+        tokio::spawn(async move {
+            if let Err(err) = send_whatsapp_text_for_session(state_clone, session_id, text).await {
+                eprintln!("[whatsapp] outbound delivery failed: {err}");
+            }
+        });
+    }
 
     Some(message)
 }
@@ -6205,6 +6531,197 @@ async fn get_notes(
     (StatusCode::OK, Json(json!({ "notes": notes }))).into_response()
 }
 
+async fn whatsapp_webhook_verify(
+    Path(channel_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let Some(channel) = find_channel_by_id(&state, &channel_id).await else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "channel not found" })),
+        )
+            .into_response();
+    };
+    if channel.channel_type != "whatsapp" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": format!(
+                    "channel exists but type is '{}', expected 'whatsapp'",
+                    channel.channel_type
+                )
+            })),
+        )
+            .into_response();
+    }
+
+    let mode = params.get("hub.mode").cloned().unwrap_or_default();
+    let verify_token = params.get("hub.verify_token").cloned().unwrap_or_default();
+    let challenge = params.get("hub.challenge").cloned().unwrap_or_default();
+    let expected_verify_token = config_text(&channel.config, "verifyToken");
+
+    if mode == "subscribe"
+        && !challenge.is_empty()
+        && !expected_verify_token.is_empty()
+        && verify_token == expected_verify_token
+    {
+        return (StatusCode::OK, challenge).into_response();
+    }
+
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({ "error": "invalid webhook verification token" })),
+    )
+        .into_response()
+}
+
+async fn whatsapp_webhook_event(
+    Path(channel_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    let Some(channel) = find_channel_by_id(&state, &channel_id).await else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "channel not found" })),
+        )
+            .into_response();
+    };
+    if channel.channel_type != "whatsapp" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": format!(
+                    "channel exists but type is '{}', expected 'whatsapp'",
+                    channel.channel_type
+                )
+            })),
+        )
+            .into_response();
+    }
+
+    let app_secret = config_text(&channel.config, "appSecret");
+    let signature_header = headers
+        .get("x-hub-signature-256")
+        .and_then(|v| v.to_str().ok());
+    if !verify_whatsapp_signature(&app_secret, signature_header, &body) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "invalid webhook signature" })),
+        )
+            .into_response();
+    }
+
+    let payload = serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| json!({}));
+    let expected_phone_number_id = config_text(&channel.config, "phoneNumberId");
+    let entries = payload
+        .get("entry")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let mut processed = 0usize;
+    for entry in entries {
+        let changes = entry
+            .get("changes")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        for change in changes {
+            let value = change.get("value").cloned().unwrap_or_else(|| json!({}));
+            let metadata_phone_id = value
+                .get("metadata")
+                .and_then(|m| m.get("phone_number_id"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if !expected_phone_number_id.is_empty()
+                && !metadata_phone_id.is_empty()
+                && expected_phone_number_id != metadata_phone_id
+            {
+                continue;
+            }
+
+            let messages = value
+                .get("messages")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+
+            for message in messages {
+                let from = message
+                    .get("from")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let Some(visitor_id) = whatsapp_visitor_id(&from) else {
+                    continue;
+                };
+                let Some(text) = whatsapp_inbound_text(&message) else {
+                    continue;
+                };
+
+                let Some(session_id) = find_or_create_whatsapp_session(
+                    &state,
+                    &channel.tenant_id,
+                    channel.inbox_id.as_deref(),
+                    &visitor_id,
+                )
+                .await
+                else {
+                    continue;
+                };
+
+                let _ = sqlx::query(
+                    "UPDATE sessions SET channel = 'whatsapp', inbox_id = $1, visitor_id = $2, updated_at = $3 WHERE id = $4",
+                )
+                .bind(&channel.inbox_id)
+                .bind(&visitor_id)
+                .bind(now_iso())
+                .bind(&session_id)
+                .execute(&state.db)
+                .await;
+
+                resolve_contact_from_visitor_id(&state, &session_id, &visitor_id).await;
+                if add_message(
+                    state.clone(),
+                    &session_id,
+                    "visitor",
+                    &text,
+                    None,
+                    None,
+                    None,
+                )
+                .await
+                .is_some()
+                {
+                    processed += 1;
+                    let state_clone = state.clone();
+                    let session_clone = session_id.clone();
+                    let text_clone = text.clone();
+                    tokio::spawn(async move {
+                        run_flow_for_visitor_message(
+                            state_clone,
+                            session_clone,
+                            text_clone,
+                            "visitor_message",
+                        )
+                        .await;
+                    });
+                }
+            }
+        }
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({ "received": true, "processed": processed })),
+    )
+        .into_response()
+}
+
 async fn list_channels(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -6224,25 +6741,12 @@ async fn list_channels(
     .fetch_all(&state.db)
     .await
     .unwrap_or_default();
-    let channel_records = rows
-        .into_iter()
-        .map(|row| Channel {
-            id: row.get("id"),
-            tenant_id: row.get("tenant_id"),
-            inbox_id: row.get("inbox_id"),
-            channel_type: row.get("channel_type"),
-            name: row.get("name"),
-            config: parse_json_text(&row.get::<String, _>("config")),
-            enabled: row.get("enabled"),
-            created_at: row.get("created_at"),
-            updated_at: row.get("updated_at"),
-        })
-        .collect::<Vec<_>>();
+    let channel_records = rows.into_iter().map(parse_channel_row).collect::<Vec<_>>();
     let mut unique_types = channel_records
         .iter()
         .map(|c| c.channel_type.clone())
         .collect::<Vec<_>>();
-    unique_types.extend(["web".to_string(), "api".to_string()]);
+    unique_types.extend(["web".to_string(), "api".to_string(), "whatsapp".to_string()]);
     unique_types.sort();
     unique_types.dedup();
     (
@@ -6250,7 +6754,7 @@ async fn list_channels(
         Json(json!({
             "channels": unique_types,
             "channelRecords": channel_records,
-            "availableTypes": ["web", "api"]
+            "availableTypes": ["web", "api", "whatsapp"]
         })),
     )
         .into_response()
@@ -6317,12 +6821,16 @@ async fn create_channel(
         )
             .into_response();
     }
-    if channel_type != "web" && channel_type != "api" {
+    if channel_type != "web" && channel_type != "api" && channel_type != "whatsapp" {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "channel_type must be web or api" })),
+            Json(json!({ "error": "channel_type must be web, api, or whatsapp" })),
         )
             .into_response();
+    }
+    let config = body.config.unwrap_or_else(|| json!({}));
+    if let Err(err) = validate_channel_config(&channel_type, &config) {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": err }))).into_response();
     }
     let now = now_iso();
     let final_inbox_id = inbox_id.filter(|s| !s.is_empty());
@@ -6332,7 +6840,7 @@ async fn create_channel(
         inbox_id: final_inbox_id.clone(),
         channel_type: channel_type.clone(),
         name: name.clone(),
-        config: body.config.unwrap_or_else(|| json!({})),
+        config,
         enabled: true,
         created_at: now.clone(),
         updated_at: now.clone(),
@@ -6391,12 +6899,30 @@ async fn update_channel(
     let config = body
         .config
         .unwrap_or_else(|| parse_json_text(&channel_row.get::<String, _>("config")));
+    let existing_channel_type: String = channel_row.get("channel_type");
+    let channel_type = body
+        .channel_type
+        .as_deref()
+        .map(|v| v.trim().to_ascii_lowercase())
+        .filter(|v| !v.is_empty())
+        .unwrap_or(existing_channel_type);
+    if channel_type != "web" && channel_type != "api" && channel_type != "whatsapp" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "channel_type must be web, api, or whatsapp" })),
+        )
+            .into_response();
+    }
+    if let Err(err) = validate_channel_config(&channel_type, &config) {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": err }))).into_response();
+    }
     let enabled = body.enabled.unwrap_or(channel_row.get("enabled"));
     let now = now_iso();
 
     let _ = sqlx::query(
-        "UPDATE channels SET name = $1, config = $2, enabled = $3, updated_at = $4 WHERE id = $5",
+        "UPDATE channels SET channel_type = $1, name = $2, config = $3, enabled = $4, updated_at = $5 WHERE id = $6",
     )
+    .bind(&channel_type)
     .bind(&name)
     .bind(json_text(&config))
     .bind(enabled)
@@ -6409,7 +6935,7 @@ async fn update_channel(
         id: channel_id,
         tenant_id: channel_row.get("tenant_id"),
         inbox_id: None,
-        channel_type: channel_row.get("channel_type"),
+        channel_type,
         name,
         config,
         enabled,
@@ -9031,6 +9557,10 @@ pub async fn run() {
         .route(
             "/api/channels/{channel_id}",
             patch(update_channel).delete(delete_channel),
+        )
+        .route(
+            "/api/channels/{channel_id}/whatsapp/webhook",
+            get(whatsapp_webhook_verify).post(whatsapp_webhook_event),
         )
         .route("/api/agents", get(get_agents))
         .route(

@@ -478,6 +478,7 @@ pub struct CreateChannelBody {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateChannelBody {
+    pub channel_type: Option<String>,
     pub name: Option<String>,
     #[serde(default)]
     pub config: Option<Value>,

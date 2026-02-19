@@ -545,6 +545,11 @@ export default function CustomizationView({
         name: "",
         config: {
           domain: "",
+          phoneNumberId: "",
+          businessAccountId: "",
+          verifyToken: "",
+          appSecret: "",
+          accessToken: "",
         },
       },
     );
@@ -803,16 +808,21 @@ export default function CustomizationView({
                       size="sm"
                       variant="ghost"
                       className="h-7 px-2 text-xs"
-                      onClick={() =>
-                        openChannelEditor({
-                          channelType: "web",
-                          name: "",
-                          inboxId: inbox.id,
-                          config: {
-                            domain: "",
-                          },
-                        })
-                      }
+                          onClick={() =>
+                            openChannelEditor({
+                              channelType: "web",
+                              name: "",
+                              inboxId: inbox.id,
+                              config: {
+                                domain: "",
+                                phoneNumberId: "",
+                                businessAccountId: "",
+                                verifyToken: "",
+                                appSecret: "",
+                                accessToken: "",
+                              },
+                            })
+                          }
                     >
                       + Channel
                     </Button>
@@ -839,7 +849,11 @@ export default function CustomizationView({
                       >
                         <div className="flex items-center gap-2.5">
                           <span className="text-base">
-                            {channel.channelType === "web" ? "🌐" : "🔌"}
+                            {channel.channelType === "web"
+                              ? "🌐"
+                              : channel.channelType === "whatsapp"
+                                ? "💬"
+                                : "🔌"}
                           </span>
                           <div>
                             <p className="text-sm font-medium text-slate-800">
@@ -847,9 +861,13 @@ export default function CustomizationView({
                             </p>
                             <p className="text-[11px] text-slate-400 capitalize">
                               {channel.channelType}
-                              {channel.config?.domain
+                              {channel.channelType === "web" &&
+                              channel.config?.domain
                                 ? ` · ${channel.config.domain}`
-                                : ""}
+                                : channel.channelType === "whatsapp" &&
+                                    channel.config?.phoneNumberId
+                                  ? ` · ${channel.config.phoneNumberId}`
+                                  : ""}
                             </p>
                           </div>
                         </div>
@@ -885,6 +903,7 @@ export default function CustomizationView({
     if (!editingChannel) return null;
 
     const isWeb = editingChannel.channelType === "web";
+    const isWhatsApp = editingChannel.channelType === "whatsapp";
     const updateConfig = (key, value) =>
       setEditingChannel({
         ...editingChannel,
@@ -908,7 +927,9 @@ export default function CustomizationView({
         <p className="mb-6 text-sm text-slate-500">
           {isWeb
             ? "Configure your website widget, branding and bot profile."
-            : "Configure your API channel."}
+            : isWhatsApp
+              ? "Configure your WhatsApp Business channel."
+              : "Configure your API channel."}
         </p>
 
         <div className="space-y-5 max-w-md">
@@ -933,6 +954,7 @@ export default function CustomizationView({
               >
                 <option value="web">Website Widget</option>
                 <option value="api">API</option>
+                <option value="whatsapp">WhatsApp Business</option>
               </select>
             </div>
             <div>
@@ -1203,6 +1225,74 @@ export default function CustomizationView({
                 </p>
               </fieldset>
             </>
+          )}
+
+          {isWhatsApp && (
+            <fieldset className="space-y-3 border-t border-slate-200 pt-5">
+              <legend className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
+                WhatsApp Business
+              </legend>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-slate-700">
+                  Phone Number ID
+                </label>
+                <Input
+                  value={editingChannel.config?.phoneNumberId || ""}
+                  onChange={(e) => updateConfig("phoneNumberId", e.target.value)}
+                  placeholder="e.g. 123456789012345"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-slate-700">
+                  Business Account ID
+                </label>
+                <Input
+                  value={editingChannel.config?.businessAccountId || ""}
+                  onChange={(e) =>
+                    updateConfig("businessAccountId", e.target.value)
+                  }
+                  placeholder="e.g. 109876543210987"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-slate-700">
+                  Webhook Verify Token
+                </label>
+                <Input
+                  value={editingChannel.config?.verifyToken || ""}
+                  onChange={(e) => updateConfig("verifyToken", e.target.value)}
+                  placeholder="Shared secret for webhook verification"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-slate-700">
+                  App Secret
+                </label>
+                <Input
+                  value={editingChannel.config?.appSecret || ""}
+                  onChange={(e) => updateConfig("appSecret", e.target.value)}
+                  placeholder="Meta app secret for signature validation"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-slate-700">
+                  Access Token
+                </label>
+                <Input
+                  value={editingChannel.config?.accessToken || ""}
+                  onChange={(e) => updateConfig("accessToken", e.target.value)}
+                  placeholder="Permanent WhatsApp access token"
+                />
+              </div>
+              {editingChannel.id && (
+                <p className="text-xs text-slate-500">
+                  Webhook URL:{" "}
+                  <code className="text-slate-700">
+                    {`https://${typeof window !== "undefined" ? window.location.host : "your-domain.com"}/api/channels/${editingChannel.id}/whatsapp/webhook`}
+                  </code>
+                </p>
+              )}
+            </fieldset>
           )}
 
           {routingError && (
