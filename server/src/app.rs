@@ -98,7 +98,11 @@ async fn issue_login_ticket(state: &Arc<AppState>, user_id: &str) -> Option<Stri
     .execute(&state.db)
     .await
     .is_ok();
-    if ok { Some(ticket) } else { None }
+    if ok {
+        Some(ticket)
+    } else {
+        None
+    }
 }
 
 async fn consume_login_ticket(state: &Arc<AppState>, ticket: &str) -> Option<String> {
@@ -180,7 +184,11 @@ async fn issue_workspace_token(
     .await
     .is_ok();
 
-    if inserted { Some((token, profile)) } else { None }
+    if inserted {
+        Some((token, profile))
+    } else {
+        None
+    }
 }
 
 fn json_text(value: &Value) -> String {
@@ -631,7 +639,9 @@ async fn emit_session_update(state: &Arc<AppState>, summary: SessionSummary) {
 }
 
 async fn session_realtime_recipients(state: &Arc<AppState>, session_id: &str) -> Vec<usize> {
-    let session_tenant_id = tenant_for_session(state, session_id).await.unwrap_or_default();
+    let session_tenant_id = tenant_for_session(state, session_id)
+        .await
+        .unwrap_or_default();
     let tenant_agents = agent_clients_for_tenant(state, &session_tenant_id).await;
     let rt = state.realtime.lock().await;
     let mut recipients = HashSet::new();
@@ -693,7 +703,9 @@ async fn emit_typing_state(state: &Arc<AppState>, session_id: &str, active: bool
 }
 
 async fn emit_visitor_typing(state: &Arc<AppState>, session_id: &str, text: &str, active: bool) {
-    let tenant_id = tenant_for_session(state, session_id).await.unwrap_or_default();
+    let tenant_id = tenant_for_session(state, session_id)
+        .await
+        .unwrap_or_default();
     let recipients = agent_clients_for_tenant(state, &tenant_id).await;
 
     emit_to_clients(
@@ -921,7 +933,7 @@ async fn ensure_session(state: Arc<AppState>, session_id: &str, tenant_id: &str)
     } else {
         created = true;
         let now = now_iso();
-        
+
         // Look up the first enabled flow for this tenant
         let default_flow_id: Option<String> = sqlx::query_scalar(
             "SELECT id FROM flows WHERE tenant_id = $1 AND enabled = true ORDER BY created_at ASC LIMIT 1",
@@ -4119,7 +4131,7 @@ async fn get_sessions(State(state): State<Arc<AppState>>, headers: HeaderMap) ->
         Ok(tid) => tid,
         Err(err) => return err.into_response(),
     };
-    
+
     let rows = if agent.role == "owner" || agent.role == "admin" {
         sqlx::query("SELECT id FROM sessions WHERE tenant_id = $1 ORDER BY updated_at DESC")
             .bind(&tenant_id)
@@ -4131,7 +4143,11 @@ async fn get_sessions(State(state): State<Arc<AppState>>, headers: HeaderMap) ->
         if inbox_ids.is_empty() {
             vec![]
         } else {
-            let placeholders: Vec<String> = inbox_ids.iter().enumerate().map(|(i, _)| format!("${}", i + 2)).collect();
+            let placeholders: Vec<String> = inbox_ids
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("${}", i + 2))
+                .collect();
             let query = format!(
                 "SELECT id FROM sessions WHERE tenant_id = $1 AND inbox_id = ANY(ARRAY[{}]) ORDER BY updated_at DESC",
                 placeholders.join(", ")
@@ -4427,22 +4443,17 @@ async fn register_agent(
     let workspace_username = match validate_workspace_username(&slugify(&ws_name)) {
         Ok(v) => v,
         Err(err) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "error": err })),
-            )
-                .into_response();
+            return (StatusCode::BAD_REQUEST, Json(json!({ "error": err }))).into_response();
         }
     };
 
-    let exists = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(1) FROM tenants WHERE workspace_username = $1",
-    )
-    .bind(&workspace_username)
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(0)
-        > 0;
+    let exists =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM tenants WHERE workspace_username = $1")
+            .bind(&workspace_username)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0)
+            > 0;
     if exists {
         return (
             StatusCode::CONFLICT,
@@ -4612,14 +4623,12 @@ async fn login_agent(
     Json(body): Json<LoginBody>,
 ) -> impl IntoResponse {
     let email = normalize_email(&body.email);
-    let row = sqlx::query(
-        "SELECT id, email, password_hash, full_name FROM users WHERE email = $1",
-    )
-    .bind(&email)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
+    let row = sqlx::query("SELECT id, email, password_hash, full_name FROM users WHERE email = $1")
+        .bind(&email)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
 
     let Some(row) = row else {
         return (
@@ -4863,7 +4872,7 @@ async fn get_teams(State(state): State<Arc<AppState>>, headers: HeaderMap) -> im
         Ok(id) => id,
         Err(err) => return err.into_response(),
     };
-    
+
     let rows = if agent.role == "owner" || agent.role == "admin" {
         sqlx::query("SELECT id, tenant_id, name, agent_ids FROM teams WHERE tenant_id = $1")
             .bind(&tenant_id)
@@ -5009,7 +5018,7 @@ async fn get_inboxes(State(state): State<Arc<AppState>>, headers: HeaderMap) -> 
         Ok(id) => id,
         Err(err) => return err.into_response(),
     };
-    
+
     let rows = if agent.role == "owner" || agent.role == "admin" {
         sqlx::query(
             "SELECT id, tenant_id, name, channels, agent_ids FROM inboxes WHERE tenant_id = $1",
@@ -5139,12 +5148,12 @@ async fn update_inbox(
         )
             .into_response();
     }
-    
+
     let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
         Ok(id) => id,
         Err(err) => return err.into_response(),
     };
-    
+
     let inbox_row = sqlx::query("SELECT id, tenant_id, name, channels, agent_ids FROM inboxes WHERE id = $1 AND tenant_id = $2")
         .bind(&inbox_id)
         .bind(&tenant_id)
@@ -5159,11 +5168,11 @@ async fn update_inbox(
         )
             .into_response();
     };
-    
+
     let name = body.name.unwrap_or_else(|| inbox_row.get("name"));
-    let mut channels: Vec<String> = serde_json::from_str(&inbox_row.get::<String, _>("channels"))
-        .unwrap_or_default();
-    
+    let mut channels: Vec<String> =
+        serde_json::from_str(&inbox_row.get::<String, _>("channels")).unwrap_or_default();
+
     // If channel_id is provided, link it to this inbox
     if let Some(channel_id) = body.channel_id {
         if !channel_id.is_empty() && !channels.contains(&channel_id) {
@@ -5176,14 +5185,14 @@ async fn update_inbox(
                 .await;
         }
     }
-    
+
     let _ = sqlx::query("UPDATE inboxes SET name = $1, channels = $2 WHERE id = $3")
         .bind(&name)
         .bind(serde_json::to_string(&channels).unwrap_or_else(|_| "[]".to_string()))
         .bind(&inbox_id)
         .execute(&state.db)
         .await;
-    
+
     let updated = Inbox {
         tenant_id: inbox_row.get("tenant_id"),
         id: inbox_id,
@@ -5192,7 +5201,7 @@ async fn update_inbox(
         agent_ids: serde_json::from_str(&inbox_row.get::<String, _>("agent_ids"))
             .unwrap_or_default(),
     };
-    
+
     (StatusCode::OK, Json(json!({ "inbox": updated }))).into_response()
 }
 
@@ -5212,12 +5221,12 @@ async fn delete_inbox(
         )
             .into_response();
     }
-    
+
     let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
         Ok(id) => id,
         Err(err) => return err.into_response(),
     };
-    
+
     // Check if inbox exists
     let inbox_row = sqlx::query("SELECT id FROM inboxes WHERE id = $1 AND tenant_id = $2")
         .bind(&inbox_id)
@@ -5233,19 +5242,19 @@ async fn delete_inbox(
         )
             .into_response();
     }
-    
+
     // Unlink channels from this inbox
     let _ = sqlx::query("UPDATE channels SET inbox_id = NULL WHERE inbox_id = $1")
         .bind(&inbox_id)
         .execute(&state.db)
         .await;
-    
+
     // Delete the inbox
     let _ = sqlx::query("DELETE FROM inboxes WHERE id = $1")
         .bind(&inbox_id)
         .execute(&state.db)
         .await;
-    
+
     (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
 }
 
@@ -6253,7 +6262,7 @@ async fn create_channel(
         )
             .into_response();
     }
-    
+
     // Validate inbox_id if provided (optional - channels can exist without inbox)
     let inbox_id = body.inbox_id.clone();
     if let Some(ref inbox_id_val) = inbox_id {
@@ -6341,7 +6350,7 @@ async fn update_channel(
         )
             .into_response();
     }
-    
+
     let channel_row = sqlx::query("SELECT id, tenant_id, name, channel_type, config, enabled, created_at FROM channels WHERE id = $1")
         .bind(&channel_id)
         .fetch_optional(&state.db)
@@ -6355,21 +6364,25 @@ async fn update_channel(
         )
             .into_response();
     };
-    
+
     let name = body.name.unwrap_or_else(|| channel_row.get("name"));
-    let config = body.config.unwrap_or_else(|| parse_json_text(&channel_row.get::<String, _>("config")));
+    let config = body
+        .config
+        .unwrap_or_else(|| parse_json_text(&channel_row.get::<String, _>("config")));
     let enabled = body.enabled.unwrap_or(channel_row.get("enabled"));
     let now = now_iso();
-    
-    let _ = sqlx::query("UPDATE channels SET name = $1, config = $2, enabled = $3, updated_at = $4 WHERE id = $5")
-        .bind(&name)
-        .bind(json_text(&config))
-        .bind(enabled)
-        .bind(&now)
-        .bind(&channel_id)
-        .execute(&state.db)
-        .await;
-    
+
+    let _ = sqlx::query(
+        "UPDATE channels SET name = $1, config = $2, enabled = $3, updated_at = $4 WHERE id = $5",
+    )
+    .bind(&name)
+    .bind(json_text(&config))
+    .bind(enabled)
+    .bind(&now)
+    .bind(&channel_id)
+    .execute(&state.db)
+    .await;
+
     let updated = Channel {
         id: channel_id,
         tenant_id: channel_row.get("tenant_id"),
@@ -6381,7 +6394,7 @@ async fn update_channel(
         created_at: channel_row.get("created_at"),
         updated_at: now,
     };
-    
+
     (StatusCode::OK, Json(json!({ "channel": updated }))).into_response()
 }
 
@@ -6401,7 +6414,7 @@ async fn delete_channel(
         )
             .into_response();
     }
-    
+
     let channel_row = sqlx::query("SELECT id FROM channels WHERE id = $1")
         .bind(&channel_id)
         .fetch_optional(&state.db)
@@ -6415,19 +6428,19 @@ async fn delete_channel(
         )
             .into_response();
     }
-    
+
     // Unlink from inbox but don't delete the inbox
     let _ = sqlx::query("UPDATE channels SET inbox_id = NULL WHERE id = $1")
         .bind(&channel_id)
         .execute(&state.db)
         .await;
-    
+
     // Delete the channel
     let _ = sqlx::query("DELETE FROM channels WHERE id = $1")
         .bind(&channel_id)
         .execute(&state.db)
         .await;
-    
+
     (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
 }
 
@@ -6506,21 +6519,16 @@ async fn create_tenant(
     let workspace_username = match validate_workspace_username(&workspace_username_raw) {
         Ok(v) => v,
         Err(err) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "error": err })),
-            )
-                .into_response();
+            return (StatusCode::BAD_REQUEST, Json(json!({ "error": err }))).into_response();
         }
     };
-    let exists = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(1) FROM tenants WHERE workspace_username = $1",
-    )
-    .bind(&workspace_username)
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(0)
-        > 0;
+    let exists =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM tenants WHERE workspace_username = $1")
+            .bind(&workspace_username)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0)
+            > 0;
     if exists {
         return (
             StatusCode::CONFLICT,
@@ -6667,21 +6675,16 @@ async fn create_workspace_with_ticket(
     let workspace_username = match validate_workspace_username(&workspace_username_raw) {
         Ok(v) => v,
         Err(err) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "error": err })),
-            )
-                .into_response();
+            return (StatusCode::BAD_REQUEST, Json(json!({ "error": err }))).into_response();
         }
     };
-    let exists = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(1) FROM tenants WHERE workspace_username = $1",
-    )
-    .bind(&workspace_username)
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(0)
-        > 0;
+    let exists =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM tenants WHERE workspace_username = $1")
+            .bind(&workspace_username)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0)
+            > 0;
     if exists {
         return (
             StatusCode::CONFLICT,
@@ -6803,11 +6806,11 @@ async fn switch_tenant(
     let exists = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(1) FROM agents WHERE user_id = $1 AND tenant_id = $2",
     )
-        .bind(&user.id)
-        .bind(&tenant_id)
-        .fetch_one(&state.db)
-        .await
-        .unwrap_or(0)
+    .bind(&user.id)
+    .bind(&tenant_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0)
         > 0;
     if !exists {
         return (
@@ -8302,9 +8305,9 @@ async fn widget_bootstrap(
                 .into_response();
         }
     };
-    
+
     let _channel_id = params.get("channel_id").cloned();
-    
+
     // Channel config is available for future per-channel overrides
     let _channel_config = if let Some(ref ch_id) = _channel_id {
         sqlx::query("SELECT config, channel_type FROM channels WHERE id = $1 AND tenant_id = $2")
@@ -8322,7 +8325,7 @@ async fn widget_bootstrap(
     } else {
         None
     };
-    
+
     // Fetch tenant settings
     let settings = sqlx::query(
         "SELECT tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
@@ -8627,8 +8630,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         rt.agent_tenant_by_client.get(&client_id).cloned()
                     };
                     if let Some(client_tenant_id) = client_tenant_id {
-                        let session_tenant_id =
-                            tenant_for_session(&state, session_id).await.unwrap_or_default();
+                        let session_tenant_id = tenant_for_session(&state, session_id)
+                            .await
+                            .unwrap_or_default();
                         if session_tenant_id != client_tenant_id {
                             continue;
                         }
@@ -8654,8 +8658,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         rt.agent_tenant_by_client.get(&client_id).cloned()
                     };
                     if let Some(client_tenant_id) = client_tenant_id {
-                        let session_tenant_id =
-                            tenant_for_session(&state, session_id).await.unwrap_or_default();
+                        let session_tenant_id = tenant_for_session(&state, session_id)
+                            .await
+                            .unwrap_or_default();
                         if session_tenant_id != client_tenant_id {
                             continue;
                         }
@@ -8812,7 +8817,10 @@ pub async fn run() {
         .route("/api/auth/login", post(login_agent))
         .route("/api/auth/select-workspace", post(select_workspace))
         .route("/api/auth/me", get(get_me))
-        .route("/api/workspaces", get(get_tenants).post(create_workspace_with_ticket))
+        .route(
+            "/api/workspaces",
+            get(get_tenants).post(create_workspace_with_ticket),
+        )
         .route(
             "/api/workspaces/{workspace_username}/switch",
             post(switch_workspace_by_username),
@@ -8837,7 +8845,10 @@ pub async fn run() {
             axum::routing::delete(revoke_invitation),
         )
         .route("/api/invitation/{inv_token}", get(get_invitation_info))
-        .route("/api/invitations/accept", post(accept_invitation_with_ticket))
+        .route(
+            "/api/invitations/accept",
+            post(accept_invitation_with_ticket),
+        )
         .route(
             "/api/tenant/settings",
             get(get_tenant_settings).patch(patch_tenant_settings),
@@ -8874,13 +8885,19 @@ pub async fn run() {
         .route("/api/teams", get(get_teams).post(create_team))
         .route("/api/teams/{team_id}/members", post(add_member_to_team))
         .route("/api/inboxes", get(get_inboxes).post(create_inbox))
-        .route("/api/inboxes/{inbox_id}", patch(update_inbox).delete(delete_inbox))
+        .route(
+            "/api/inboxes/{inbox_id}",
+            patch(update_inbox).delete(delete_inbox),
+        )
         .route(
             "/api/inboxes/{inbox_id}/assign",
             post(assign_agent_to_inbox),
         )
         .route("/api/channels", get(list_channels).post(create_channel))
-        .route("/api/channels/{channel_id}", patch(update_channel).delete(delete_channel))
+        .route(
+            "/api/channels/{channel_id}",
+            patch(update_channel).delete(delete_channel),
+        )
         .route("/api/agents", get(get_agents))
         .route(
             "/api/canned-replies",
