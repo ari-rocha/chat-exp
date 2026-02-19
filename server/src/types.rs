@@ -538,6 +538,15 @@ pub struct SessionHandoverBody {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SendWhatsappTemplateBody {
+    pub template_name: String,
+    pub language_code: Option<String>,
+    #[serde(default)]
+    pub parameters: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateTenantBody {
     pub name: String,
     #[serde(default)]

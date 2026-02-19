@@ -464,6 +464,202 @@ fn resolve_public_url(base: &str, url: &str) -> String {
     }
 }
 
+fn whatsapp_template_param_count(components: &[Value]) -> usize {
+    let mut total = 0usize;
+    let Ok(re) = Regex::new(r"\{\{(\d+)\}\}") else {
+        return 0;
+    };
+    for component in components {
+        let ctype = component
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_ascii_uppercase();
+        if ctype != "BODY" && ctype != "HEADER" && ctype != "FOOTER" {
+            continue;
+        }
+        if let Some(text) = component.get("text").and_then(Value::as_str) {
+            let mut max_param_idx = 0usize;
+            for cap in re.captures_iter(text) {
+                let idx = cap
+                    .get(1)
+                    .and_then(|m| m.as_str().parse::<usize>().ok())
+                    .unwrap_or(0);
+                if idx > max_param_idx {
+                    max_param_idx = idx;
+                }
+            }
+            total += max_param_idx;
+        }
+    }
+    total
+}
+
+fn whatsapp_template_body_preview(components: &[Value]) -> String {
+    components
+        .iter()
+        .find_map(|c| {
+            let ctype = c
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_ascii_uppercase();
+            if ctype == "BODY" {
+                c.get("text").and_then(Value::as_str)
+            } else {
+                None
+            }
+        })
+        .unwrap_or("")
+        .to_string()
+}
+
+fn render_whatsapp_template_body(body: &str, params: &[String]) -> String {
+    let Ok(re) = Regex::new(r"\{\{(\d+)\}\}") else {
+        return body.to_string();
+    };
+    re.replace_all(body, |caps: &regex::Captures| {
+        let idx = caps
+            .get(1)
+            .and_then(|m| m.as_str().parse::<usize>().ok())
+            .unwrap_or(0);
+        if idx == 0 {
+            return caps.get(0).map(|m| m.as_str()).unwrap_or("").to_string();
+        }
+        params
+            .get(idx - 1)
+            .cloned()
+            .unwrap_or_else(|| caps.get(0).map(|m| m.as_str()).unwrap_or("").to_string())
+    })
+    .to_string()
+}
+
+fn whatsapp_template_components_payload(components: &[Value], params: &[String]) -> Vec<Value> {
+    let Ok(re) = Regex::new(r"\{\{(\d+)\}\}") else {
+        return vec![];
+    };
+    let mut cursor = 0usize;
+    let mut out = vec![];
+    for component in components {
+        let ctype_upper = component
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_ascii_uppercase();
+        if ctype_upper != "BODY" && ctype_upper != "HEADER" {
+            continue;
+        }
+        let Some(text) = component.get("text").and_then(Value::as_str) else {
+            continue;
+        };
+        let mut needed = 0usize;
+        for cap in re.captures_iter(text) {
+            let idx = cap
+                .get(1)
+                .and_then(|m| m.as_str().parse::<usize>().ok())
+                .unwrap_or(0);
+            if idx > needed {
+                needed = idx;
+            }
+        }
+        if needed == 0 {
+            continue;
+        }
+        let kind = ctype_upper.to_ascii_lowercase();
+        let mut p = vec![];
+        for i in 0..needed {
+            let value = params.get(cursor + i).cloned().unwrap_or_default();
+            p.push(json!({ "type": "text", "text": value }));
+        }
+        cursor += needed;
+        out.push(json!({
+            "type": kind,
+            "parameters": p
+        }));
+    }
+    out
+}
+
+fn render_whatsapp_template_text(
+    components: &[Value],
+    params: &[String],
+    fallback: &str,
+) -> String {
+    let Ok(re) = Regex::new(r"\{\{(\d+)\}\}") else {
+        return fallback.to_string();
+    };
+    let mut cursor = 0usize;
+    let mut parts = vec![];
+    for component in components {
+        let ctype_upper = component
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_ascii_uppercase();
+        if ctype_upper != "BODY" && ctype_upper != "HEADER" {
+            continue;
+        }
+        let Some(text) = component.get("text").and_then(Value::as_str) else {
+            continue;
+        };
+        let mut needed = 0usize;
+        for cap in re.captures_iter(text) {
+            let idx = cap
+                .get(1)
+                .and_then(|m| m.as_str().parse::<usize>().ok())
+                .unwrap_or(0);
+            if idx > needed {
+                needed = idx;
+            }
+        }
+        let slice = if needed == 0 {
+            &[][..]
+        } else {
+            let end = (cursor + needed).min(params.len());
+            let start = cursor.min(end);
+            cursor = end;
+            &params[start..end]
+        };
+        let rendered = render_whatsapp_template_body(text, slice);
+        if !rendered.trim().is_empty() {
+            parts.push(rendered);
+        }
+    }
+    if parts.is_empty() {
+        fallback.to_string()
+    } else {
+        parts.join("\n")
+    }
+}
+
+async fn fetch_whatsapp_templates_from_meta(
+    state: &Arc<AppState>,
+    access_token: &str,
+    business_account_id: &str,
+) -> Result<Vec<Value>, String> {
+    let response = state
+        .ai_client
+        .get(format!(
+            "https://graph.facebook.com/v21.0/{}/message_templates?fields=name,status,category,language,components&limit=200",
+            business_account_id
+        ))
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .map_err(|e| format!("failed to fetch whatsapp templates: {e}"))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("whatsapp templates api error {status}: {body}"));
+    }
+    let payload = response.json::<Value>().await.unwrap_or_else(|_| json!({}));
+    Ok(payload
+        .get("data")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default())
+}
+
 async fn fetch_whatsapp_media_from_meta(
     state: &Arc<AppState>,
     access_token: &str,
@@ -864,62 +1060,8 @@ async fn send_whatsapp_message_for_session(
     text: String,
     widget: Option<Value>,
 ) -> Result<(), String> {
-    let session_row = sqlx::query(
-        "SELECT tenant_id, inbox_id, channel, visitor_id FROM sessions WHERE id = $1 LIMIT 1",
-    )
-    .bind(&session_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| e.to_string())?;
-    let Some(session_row) = session_row else {
-        return Err("session not found".to_string());
-    };
-    let channel_name: String = session_row.get("channel");
-    if channel_name != "whatsapp" {
-        return Ok(());
-    }
-
-    let visitor_id: String = session_row.get("visitor_id");
-    let Some(to_phone) = whatsapp_phone_from_visitor_id(&visitor_id) else {
-        return Err("missing whatsapp visitor phone".to_string());
-    };
-    let tenant_id: String = session_row.get("tenant_id");
-    let inbox_id: Option<String> = session_row.get("inbox_id");
-
-    let scoped_channel_row = if let Some(ref inbox_id) = inbox_id {
-        sqlx::query(
-            "SELECT id, tenant_id, inbox_id, channel_type, name, config, enabled, created_at, updated_at \
-             FROM channels \
-             WHERE tenant_id = $1 AND channel_type = 'whatsapp' AND enabled = true AND inbox_id = $2 \
-             ORDER BY created_at ASC LIMIT 1",
-        )
-        .bind(&tenant_id)
-        .bind(inbox_id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|e| e.to_string())?
-    } else {
-        None
-    };
-
-    let channel_row = match scoped_channel_row {
-        Some(row) => Some(row),
-        None => sqlx::query(
-            "SELECT id, tenant_id, inbox_id, channel_type, name, config, enabled, created_at, updated_at \
-             FROM channels \
-             WHERE tenant_id = $1 AND channel_type = 'whatsapp' AND enabled = true \
-             ORDER BY created_at ASC LIMIT 1",
-        )
-        .bind(&tenant_id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|e| e.to_string())?,
-    };
-
-    let Some(channel_row) = channel_row else {
-        return Err("no whatsapp channel configured".to_string());
-    };
-    let channel = parse_channel_row(channel_row);
+    let (channel, to_phone) =
+        whatsapp_channel_and_recipient_for_session(&state, &session_id).await?;
     let access_token = config_text(&channel.config, "accessToken");
     let phone_number_id = config_text(&channel.config, "phoneNumberId");
     if access_token.is_empty() || phone_number_id.is_empty() {
@@ -1002,6 +1144,67 @@ async fn send_whatsapp_message_for_session(
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
     Err(format!("whatsapp api error {status}: {body}"))
+}
+
+async fn whatsapp_channel_and_recipient_for_session(
+    state: &Arc<AppState>,
+    session_id: &str,
+) -> Result<(Channel, String), String> {
+    let session_row = sqlx::query(
+        "SELECT tenant_id, inbox_id, channel, visitor_id FROM sessions WHERE id = $1 LIMIT 1",
+    )
+    .bind(session_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(session_row) = session_row else {
+        return Err("session not found".to_string());
+    };
+    let channel_name: String = session_row.get("channel");
+    if channel_name != "whatsapp" {
+        return Err("session channel is not whatsapp".to_string());
+    }
+    let visitor_id: String = session_row.get("visitor_id");
+    let Some(to_phone) = whatsapp_phone_from_visitor_id(&visitor_id) else {
+        return Err("missing whatsapp visitor phone".to_string());
+    };
+    let tenant_id: String = session_row.get("tenant_id");
+    let inbox_id: Option<String> = session_row.get("inbox_id");
+
+    let scoped_channel_row = if let Some(ref inbox_id) = inbox_id {
+        sqlx::query(
+            "SELECT id, tenant_id, inbox_id, channel_type, name, config, enabled, created_at, updated_at \
+             FROM channels \
+             WHERE tenant_id = $1 AND channel_type = 'whatsapp' AND enabled = true AND inbox_id = $2 \
+             ORDER BY created_at ASC LIMIT 1",
+        )
+        .bind(&tenant_id)
+        .bind(inbox_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| e.to_string())?
+    } else {
+        None
+    };
+
+    let channel_row = match scoped_channel_row {
+        Some(row) => Some(row),
+        None => sqlx::query(
+            "SELECT id, tenant_id, inbox_id, channel_type, name, config, enabled, created_at, updated_at \
+             FROM channels \
+             WHERE tenant_id = $1 AND channel_type = 'whatsapp' AND enabled = true \
+             ORDER BY created_at ASC LIMIT 1",
+        )
+        .bind(&tenant_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| e.to_string())?,
+    };
+
+    let Some(channel_row) = channel_row else {
+        return Err("no whatsapp channel configured".to_string());
+    };
+    Ok((parse_channel_row(channel_row), to_phone))
 }
 
 async fn persist_session(pool: &PgPool, session: &Session) {
@@ -1885,7 +2088,13 @@ async fn add_message(
     let is_whatsapp_session = summary.channel == "whatsapp";
     emit_to_clients(&state, &agents, "session:updated", summary).await;
 
-    if sender == "agent" && is_whatsapp_session {
+    let already_delivered = message
+        .widget
+        .as_ref()
+        .and_then(|w| w.get("alreadyDelivered"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if sender == "agent" && is_whatsapp_session && !already_delivered {
         let state_clone = state.clone();
         let session_id = session_id.to_string();
         let text = message.text.clone();
@@ -5074,6 +5283,223 @@ async fn post_message(
         Json(json!({ "message": message, "sessionId": target_session_id })),
     )
         .into_response()
+}
+
+async fn list_whatsapp_templates(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let _agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let session_tenant_id = tenant_for_session(&state, &session_id)
+        .await
+        .unwrap_or_default();
+    if session_tenant_id.is_empty() || session_tenant_id != tenant_id {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "session not in active workspace" })),
+        )
+            .into_response();
+    }
+
+    let (channel, _to_phone) =
+        match whatsapp_channel_and_recipient_for_session(&state, &session_id).await {
+            Ok(v) => v,
+            Err(err) => {
+                return (StatusCode::BAD_REQUEST, Json(json!({ "error": err }))).into_response();
+            }
+        };
+    let access_token = config_text(&channel.config, "accessToken");
+    let business_account_id = config_text(&channel.config, "businessAccountId");
+    if access_token.is_empty() || business_account_id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "missing whatsapp accessToken or businessAccountId" })),
+        )
+            .into_response();
+    }
+
+    let raw_templates =
+        match fetch_whatsapp_templates_from_meta(&state, &access_token, &business_account_id).await
+        {
+            Ok(v) => v,
+            Err(err) => {
+                return (StatusCode::BAD_GATEWAY, Json(json!({ "error": err }))).into_response();
+            }
+        };
+    let templates = raw_templates
+        .into_iter()
+        .map(|item| {
+            let components = item
+                .get("components")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let body_preview = whatsapp_template_body_preview(&components);
+            let max_param_idx = whatsapp_template_param_count(&components);
+            json!({
+                "name": item.get("name").and_then(Value::as_str).unwrap_or(""),
+                "status": item.get("status").and_then(Value::as_str).unwrap_or(""),
+                "category": item.get("category").and_then(Value::as_str).unwrap_or(""),
+                "language": item.get("language").and_then(Value::as_str).unwrap_or(""),
+                "bodyPreview": body_preview,
+                "paramCount": max_param_idx
+            })
+        })
+        .collect::<Vec<_>>();
+
+    (StatusCode::OK, Json(json!({ "templates": templates }))).into_response()
+}
+
+async fn send_whatsapp_template(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<SendWhatsappTemplateBody>,
+) -> impl IntoResponse {
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let session_tenant_id = tenant_for_session(&state, &session_id)
+        .await
+        .unwrap_or_default();
+    if session_tenant_id.is_empty() || session_tenant_id != tenant_id {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "session not in active workspace" })),
+        )
+            .into_response();
+    }
+
+    let template_name = body.template_name.trim().to_string();
+    if template_name.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "template_name required" })),
+        )
+            .into_response();
+    }
+    let language_code = body
+        .language_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("en_US")
+        .to_string();
+
+    let (channel, to_phone) =
+        match whatsapp_channel_and_recipient_for_session(&state, &session_id).await {
+            Ok(v) => v,
+            Err(err) => {
+                return (StatusCode::BAD_REQUEST, Json(json!({ "error": err }))).into_response();
+            }
+        };
+    let access_token = config_text(&channel.config, "accessToken");
+    let phone_number_id = config_text(&channel.config, "phoneNumberId");
+    if access_token.is_empty() || phone_number_id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "missing whatsapp accessToken or phoneNumberId" })),
+        )
+            .into_response();
+    }
+
+    let params = body.parameters.clone().unwrap_or_default();
+    let raw_templates = fetch_whatsapp_templates_from_meta(
+        &state,
+        &access_token,
+        &config_text(&channel.config, "businessAccountId"),
+    )
+    .await
+    .unwrap_or_default();
+    let selected_components = raw_templates
+        .iter()
+        .find(|item| {
+            let name = item.get("name").and_then(Value::as_str).unwrap_or("");
+            let lang = item.get("language").and_then(Value::as_str).unwrap_or("");
+            name == template_name && (lang.is_empty() || lang == language_code)
+        })
+        .and_then(|item| item.get("components").and_then(Value::as_array).cloned())
+        .unwrap_or_default();
+    let mut template_payload = json!({
+        "name": template_name,
+        "language": { "code": language_code }
+    });
+    let components_payload = whatsapp_template_components_payload(&selected_components, &params);
+    if !components_payload.is_empty() {
+        template_payload["components"] = Value::Array(components_payload);
+    }
+
+    let response = match state
+        .ai_client
+        .post(format!(
+            "https://graph.facebook.com/v21.0/{}/messages",
+            phone_number_id
+        ))
+        .bearer_auth(&access_token)
+        .json(&json!({
+            "messaging_product": "whatsapp",
+            "to": to_phone,
+            "type": "template",
+            "template": template_payload
+        }))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": format!("failed to send whatsapp template: {e}") })),
+            )
+                .into_response();
+        }
+    };
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": format!("whatsapp template send error {status}: {body}") })),
+        )
+            .into_response();
+    }
+    let rendered = render_whatsapp_template_text(
+        &selected_components,
+        &params,
+        &format!("Template: {}", body.template_name.trim()),
+    );
+    let _ = add_message(
+        state.clone(),
+        &session_id,
+        "agent",
+        &rendered,
+        None,
+        Some(json!({
+            "type": "whatsapp_template",
+            "name": body.template_name,
+            "languageCode": body.language_code.unwrap_or_else(|| "en_US".to_string()),
+            "parameters": body.parameters.unwrap_or_default(),
+            "alreadyDelivered": true
+        })),
+        Some(&agent),
+    )
+    .await;
+
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
 }
 
 async fn close_session_by_visitor(
@@ -10331,6 +10757,14 @@ pub async fn run() {
         .route("/api/sessions", get(get_sessions))
         .route("/api/session/{session_id}/messages", get(get_messages))
         .route("/api/session/{session_id}/message", post(post_message))
+        .route(
+            "/api/session/{session_id}/whatsapp/templates",
+            get(list_whatsapp_templates),
+        )
+        .route(
+            "/api/session/{session_id}/whatsapp/template",
+            post(send_whatsapp_template),
+        )
         .route("/api/session/{session_id}/csat", post(submit_csat))
         .route(
             "/api/session/{session_id}/close",

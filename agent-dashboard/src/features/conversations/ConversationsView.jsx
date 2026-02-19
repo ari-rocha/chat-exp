@@ -1,6 +1,7 @@
 import WorkspaceLayout, { sessionInitials } from "@/app/WorkspaceLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
@@ -56,6 +57,25 @@ function isAttachmentPlaceholderText(text) {
     "shared a location",
   ]);
   return known.has(value) || /^sent a [a-z]+ message$/.test(value);
+}
+
+function normalizeWhatsappMarkdown(raw) {
+  const input = String(raw || "");
+  if (!input) return "";
+  let out = input;
+  // WhatsApp bold: *text* -> Markdown bold: **text**
+  out = out.replace(/\*(?!\*)([^*\n]+?)\*(?!\*)/g, (_, inner) => {
+    const trimmed = String(inner || "");
+    if (!trimmed.trim()) return `*${trimmed}*`;
+    return `**${trimmed}**`;
+  });
+  // WhatsApp strikethrough: ~text~ -> Markdown ~~text~~
+  out = out.replace(/~([^~\n]+?)~/g, (_, inner) => {
+    const trimmed = String(inner || "");
+    if (!trimmed.trim()) return `~${trimmed}~`;
+    return `~~${trimmed}~~`;
+  });
+  return out;
 }
 
 function MessageAvatar({ message, tenantSettings }) {
@@ -178,11 +198,24 @@ export default function ConversationsView({
   patchSessionContact,
   tenantSettings,
   onOpenSettings,
+  listWhatsappTemplates,
+  sendWhatsappTemplate,
 }) {
   const [lightbox, setLightbox] = useStateReact(null);
   const [emojiOpen, setEmojiOpen] = useStateReact(false);
   const [pendingAttachment, setPendingAttachment] = useStateReact(null);
+  const [waTemplatesOpen, setWaTemplatesOpen] = useStateReact(false);
+  const [waTemplates, setWaTemplates] = useStateReact([]);
+  const [waTemplatesLoading, setWaTemplatesLoading] = useStateReact(false);
+  const [waTemplatesError, setWaTemplatesError] = useStateReact("");
+  const [waTemplateQuery, setWaTemplateQuery] = useStateReact("");
+  const [waTemplateSending, setWaTemplateSending] = useStateReact(false);
+  const [waSelectedTemplate, setWaSelectedTemplate] = useStateReact(null);
+  const [waTemplateParams, setWaTemplateParams] = useStateReact([]);
   const fileInputRef = useRef(null);
+  const emojiPanelRef = useRef(null);
+  const templatePanelRef = useRef(null);
+  const textareaRef = useRef(null);
 
   const clearPendingAttachment = () => {
     if (pendingAttachment?.previewUrl?.startsWith("blob:")) {
@@ -198,6 +231,25 @@ export default function ConversationsView({
       }
     };
   }, [pendingAttachment]);
+
+  useEffect(() => {
+    const onDocPointer = (event) => {
+      if (
+        emojiPanelRef.current &&
+        !emojiPanelRef.current.contains(event.target)
+      ) {
+        setEmojiOpen(false);
+      }
+      if (
+        templatePanelRef.current &&
+        !templatePanelRef.current.contains(event.target)
+      ) {
+        setWaTemplatesOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocPointer);
+    return () => document.removeEventListener("mousedown", onDocPointer);
+  }, []);
 
   const canSendNow =
     Boolean(activeId) &&
@@ -270,7 +322,23 @@ export default function ConversationsView({
   };
 
   const insertEmoji = (emoji) => {
-    setText((prev) => `${prev || ""}${emoji}`);
+    const el = textareaRef.current;
+    if (!el) {
+      setText((prev) => `${prev || ""}${emoji}`);
+      setEmojiOpen(false);
+      bumpTyping();
+      return;
+    }
+    const start = el.selectionStart ?? String(text || "").length;
+    const end = el.selectionEnd ?? start;
+    const current = String(text || "");
+    const next = `${current.slice(0, start)}${emoji}${current.slice(end)}`;
+    setText(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + emoji.length;
+      el.setSelectionRange(pos, pos);
+    });
     setEmojiOpen(false);
     bumpTyping();
   };
@@ -298,6 +366,77 @@ export default function ConversationsView({
     e.preventDefault();
     await submitComposerPayload();
   };
+
+  const openWaTemplates = async () => {
+    if (!activeId) return;
+    setWaTemplatesOpen(true);
+    setWaTemplatesError("");
+    setWaTemplatesLoading(true);
+    try {
+      const items = await listWhatsappTemplates(activeId);
+      setWaTemplates(items);
+      setWaSelectedTemplate(null);
+      setWaTemplateParams([]);
+    } catch (err) {
+      setWaTemplatesError(err.message || "Failed to load templates");
+    } finally {
+      setWaTemplatesLoading(false);
+    }
+  };
+
+  const sendTemplate = async (tpl) => {
+    if (!activeId || !tpl?.name) return;
+    const params = waTemplateParams.map((v) => String(v || ""));
+    setWaTemplateSending(true);
+    try {
+      await sendWhatsappTemplate(activeId, {
+        templateName: tpl.name,
+        languageCode: tpl.language || "en_US",
+        parameters: params,
+      });
+      setWaTemplatesOpen(false);
+      setWaSelectedTemplate(null);
+      setWaTemplateParams([]);
+    } catch (err) {
+      setWaTemplatesError(err.message || "Failed to send template");
+    } finally {
+      setWaTemplateSending(false);
+    }
+  };
+
+  const canUseTemplates =
+    activeSession?.channel === "whatsapp" && messageAudience === "user";
+  const filteredWaTemplates = waTemplates.filter((tpl) => {
+    const q = waTemplateQuery.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      String(tpl?.name || "")
+        .toLowerCase()
+        .includes(q) ||
+      String(tpl?.bodyPreview || "")
+        .toLowerCase()
+        .includes(q)
+    );
+  });
+
+  const selectTemplateForParams = (tpl) => {
+    const count = Number.parseInt(String(tpl?.paramCount ?? "0"), 10) || 0;
+    setWaSelectedTemplate(tpl);
+    setWaTemplateParams(Array.from({ length: Math.max(0, count) }, () => ""));
+    setWaTemplatesError("");
+  };
+
+  const renderedWaPreview = (() => {
+    if (!waSelectedTemplate) return "";
+    const body = String(waSelectedTemplate.bodyPreview || "");
+    if (!body) return "";
+    return body.replace(/\{\{(\d+)\}\}/g, (_, raw) => {
+      const idx = Number.parseInt(raw, 10);
+      if (!Number.isFinite(idx) || idx <= 0) return `{{${raw}}}`;
+      const value = waTemplateParams[idx - 1];
+      return String(value || `{{${raw}}}`);
+    });
+  })();
 
   return (
     <>
@@ -398,6 +537,12 @@ export default function ConversationsView({
                     : null;
                 const attachmentWidget =
                   message?.widget?.type === "attachment" ? message.widget : null;
+                const isWhatsappMessage =
+                  activeSession?.channel === "whatsapp" ||
+                  message?.widget?.type === "whatsapp_template";
+                const renderedText = isWhatsappMessage
+                  ? normalizeWhatsappMarkdown(message.text)
+                  : String(message.text ?? "");
                 const attachmentType = String(
                   attachmentWidget?.attachmentType || "",
                 ).toLowerCase();
@@ -518,7 +663,7 @@ export default function ConversationsView({
                               className={`dashboard-md ${isAgent ? "dashboard-md-agent" : ""}`}
                             >
                               <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                {String(message.text ?? "")}
+                                {renderedText}
                               </ReactMarkdown>
                             </div>
                           ) : null}
@@ -530,7 +675,7 @@ export default function ConversationsView({
                           className={`mt-1.5 dashboard-md ${isAgent ? "dashboard-md-agent" : ""}`}
                         >
                           <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {String(message.text ?? "")}
+                            {renderedText}
                           </ReactMarkdown>
                         </div>
                       ) : null}
@@ -656,6 +801,7 @@ export default function ConversationsView({
                 </div>
               ) : null}
               <Textarea
+                ref={textareaRef}
                 placeholder={
                   activeId
                     ? isActiveSessionClosed && messageAudience === "user"
@@ -696,7 +842,7 @@ export default function ConversationsView({
                   >
                     <Paperclip size={14} />
                   </Button>
-                  <div className="relative">
+                  <div className="relative" ref={emojiPanelRef}>
                     <Button
                       type="button"
                       size="sm"
@@ -708,7 +854,7 @@ export default function ConversationsView({
                       <Smile size={14} />
                     </Button>
                     {emojiOpen && activeId ? (
-                      <div className="absolute bottom-9 left-0 z-40 grid grid-cols-6 gap-1 rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg">
+                      <div className="absolute bottom-9 left-0 z-50 grid grid-cols-6 gap-1 rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg">
                         {[
                           "😀",
                           "😁",
@@ -782,6 +928,135 @@ export default function ConversationsView({
                   >
                     <ClipboardList size={13} /> Assign to Form
                   </Button>
+                  {canUseTemplates ? (
+                    <div className="relative" ref={templatePanelRef}>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-8 rounded-lg px-2 text-[11px]"
+                        onClick={() => {
+                          if (waTemplatesOpen) {
+                            setWaTemplatesOpen(false);
+                          } else {
+                            void openWaTemplates();
+                          }
+                        }}
+                        disabled={!activeId || waTemplateSending}
+                      >
+                        WhatsApp Template
+                      </Button>
+                      {waTemplatesOpen ? (
+                        <div className="absolute bottom-10 right-0 z-50 w-80 rounded-lg border border-slate-200 bg-white p-2 shadow-xl">
+                          <Input
+                            value={waTemplateQuery}
+                            onChange={(e) => setWaTemplateQuery(e.target.value)}
+                            placeholder="Search templates"
+                            className="h-8 text-xs"
+                          />
+                          <div className="mt-2 max-h-64 space-y-1 overflow-y-auto pr-1">
+                            {waTemplatesLoading ? (
+                              <p className="text-xs text-slate-500">
+                                Loading templates...
+                              </p>
+                            ) : null}
+                            {waTemplatesError ? (
+                              <p className="text-xs text-red-600">
+                                {waTemplatesError}
+                              </p>
+                            ) : null}
+                            {!waTemplatesLoading &&
+                            filteredWaTemplates.length === 0 ? (
+                              <p className="text-xs text-slate-500">
+                                No templates found.
+                              </p>
+                            ) : null}
+                            {filteredWaTemplates.map((tpl) => (
+                              <button
+                                key={`${tpl.name}-${tpl.language || "lang"}`}
+                                type="button"
+                                className="w-full rounded-md border border-slate-200 p-2 text-left hover:bg-slate-50"
+                                onClick={() => selectTemplateForParams(tpl)}
+                                disabled={waTemplateSending}
+                              >
+                                <p className="text-xs font-semibold text-slate-800">
+                                  {tpl.name}
+                                </p>
+                                <p className="text-[10px] text-slate-500">
+                                  {(tpl.language || "en_US").toUpperCase()} •{" "}
+                                  {tpl.status || "UNKNOWN"}
+                                </p>
+                                {tpl.bodyPreview ? (
+                                  <p className="mt-1 line-clamp-2 text-[11px] text-slate-600">
+                                    {tpl.bodyPreview}
+                                  </p>
+                                ) : null}
+                              </button>
+                            ))}
+                          </div>
+                          {waSelectedTemplate ? (
+                            <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-2">
+                              <p className="text-xs font-semibold text-slate-800">
+                                {waSelectedTemplate.name}
+                              </p>
+                              {waTemplateParams.length > 0 ? (
+                                <div className="mt-2 space-y-1.5">
+                                  {waTemplateParams.map((value, idx) => (
+                                    <Input
+                                      key={`${waSelectedTemplate.name}-param-${idx}`}
+                                      value={value}
+                                      onChange={(e) =>
+                                        setWaTemplateParams((prev) =>
+                                          prev.map((v, i) =>
+                                            i === idx ? e.target.value : v,
+                                          ),
+                                        )
+                                      }
+                                      placeholder={`Parameter ${idx + 1}`}
+                                      className="h-8 text-xs"
+                                    />
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="mt-1 text-[11px] text-slate-500">
+                                  No parameters required.
+                                </p>
+                              )}
+                              {renderedWaPreview ? (
+                                <p className="mt-2 rounded border border-slate-200 bg-white p-1.5 text-[11px] text-slate-700">
+                                  {renderedWaPreview}
+                                </p>
+                              ) : null}
+                              <div className="mt-2 flex items-center justify-end gap-1.5">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2 text-[11px]"
+                                  onClick={() => {
+                                    setWaSelectedTemplate(null);
+                                    setWaTemplateParams([]);
+                                  }}
+                                  disabled={waTemplateSending}
+                                >
+                                  Cancel
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  className="h-7 px-2 text-[11px]"
+                                  onClick={() => void sendTemplate(waSelectedTemplate)}
+                                  disabled={waTemplateSending}
+                                >
+                                  {waTemplateSending ? "Sending..." : "Send Template"}
+                                </Button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <Button
                     type="button"
                     size="sm"

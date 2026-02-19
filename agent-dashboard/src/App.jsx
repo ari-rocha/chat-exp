@@ -981,6 +981,30 @@ export default function App() {
     return true;
   };
 
+  const listWhatsappTemplates = async (sessionId) => {
+    if (!token || !sessionId) return [];
+    const payload = await apiFetch(
+      `/api/session/${sessionId}/whatsapp/templates`,
+      token,
+    );
+    return Array.isArray(payload?.templates) ? payload.templates : [];
+  };
+
+  const sendWhatsappTemplate = async (
+    sessionId,
+    { templateName, languageCode, parameters },
+  ) => {
+    if (!token || !sessionId) return;
+    await apiFetch(`/api/session/${sessionId}/whatsapp/template`, token, {
+      method: "POST",
+      body: JSON.stringify({
+        templateName,
+        languageCode,
+        parameters: Array.isArray(parameters) ? parameters : [],
+      }),
+    });
+  };
+
   const saveNote = async () => {
     if (!token || !activeId || !noteText.trim()) return;
     const payload = await apiFetch(`/api/session/${activeId}/notes`, token, {
@@ -1574,6 +1598,8 @@ export default function App() {
           bottomRef={bottomRef}
           sendMessage={sendMessage}
           sendAttachment={sendAttachment}
+          listWhatsappTemplates={listWhatsappTemplates}
+          sendWhatsappTemplate={sendWhatsappTemplate}
           messageAudience={messageAudience}
           setMessageAudience={setMessageAudience}
           cannedPanelOpen={cannedPanelOpen}
