@@ -577,47 +577,68 @@ async fn emit_to_clients<T: Serialize + Clone>(
     }
 }
 
+async fn agent_clients_for_tenant(state: &Arc<AppState>, tenant_id: &str) -> Vec<usize> {
+    let rt = state.realtime.lock().await;
+    rt.agent_tenant_by_client
+        .iter()
+        .filter_map(|(client_id, client_tenant_id)| {
+            if client_tenant_id == tenant_id {
+                Some(*client_id)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>()
+}
+
 async fn emit_session_snapshot(state: Arc<AppState>) {
-    let mut list = {
-        let rows = sqlx::query("SELECT id FROM sessions ORDER BY updated_at DESC LIMIT 500")
+    let tenant_to_clients = {
+        let rt = state.realtime.lock().await;
+        let mut map = HashMap::<String, Vec<usize>>::new();
+        for (client_id, tenant_id) in &rt.agent_tenant_by_client {
+            map.entry(tenant_id.clone()).or_default().push(*client_id);
+        }
+        map
+    };
+
+    for (tenant_id, clients) in tenant_to_clients {
+        let mut list = {
+            let rows = sqlx::query(
+                "SELECT id FROM sessions WHERE tenant_id = $1 ORDER BY updated_at DESC LIMIT 500",
+            )
+            .bind(&tenant_id)
             .fetch_all(&state.db)
             .await
             .unwrap_or_default();
-        let mut items = Vec::with_capacity(rows.len());
-        for row in rows {
-            let session_id: String = row.get("id");
-            if let Some(summary) = get_session_summary_db(&state.db, &session_id).await {
-                items.push(summary);
+            let mut items = Vec::with_capacity(rows.len());
+            for row in rows {
+                let session_id: String = row.get("id");
+                if let Some(summary) = get_session_summary_db(&state.db, &session_id).await {
+                    items.push(summary);
+                }
             }
-        }
-        items
-    };
+            items
+        };
 
-    list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-
-    let agents = {
-        let rt = state.realtime.lock().await;
-        rt.agents.iter().copied().collect::<Vec<_>>()
-    };
-
-    emit_to_clients(&state, &agents, "sessions:list", list).await;
+        list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        emit_to_clients(&state, &clients, "sessions:list", list).await;
+    }
 }
 
 async fn emit_session_update(state: &Arc<AppState>, summary: SessionSummary) {
-    let agents = {
-        let rt = state.realtime.lock().await;
-        rt.agents.iter().copied().collect::<Vec<_>>()
-    };
+    let agents = agent_clients_for_tenant(state, &summary.tenant_id).await;
     emit_to_clients(state, &agents, "session:updated", summary).await;
 }
 
 async fn session_realtime_recipients(state: &Arc<AppState>, session_id: &str) -> Vec<usize> {
+    let session_tenant_id = tenant_for_session(state, session_id).await.unwrap_or_default();
+    let tenant_agents = agent_clients_for_tenant(state, &session_tenant_id).await;
     let rt = state.realtime.lock().await;
     let mut recipients = HashSet::new();
     if let Some(watchers) = rt.session_watchers.get(session_id) {
         recipients.extend(watchers.iter().copied());
     }
-    recipients.extend(rt.agents.iter().copied());
+    recipients.extend(tenant_agents);
     recipients.into_iter().collect::<Vec<_>>()
 }
 
@@ -672,10 +693,8 @@ async fn emit_typing_state(state: &Arc<AppState>, session_id: &str, active: bool
 }
 
 async fn emit_visitor_typing(state: &Arc<AppState>, session_id: &str, text: &str, active: bool) {
-    let recipients = {
-        let rt = state.realtime.lock().await;
-        rt.agents.iter().copied().collect::<Vec<_>>()
-    };
+    let tenant_id = tenant_for_session(state, session_id).await.unwrap_or_default();
+    let recipients = agent_clients_for_tenant(state, &tenant_id).await;
 
     emit_to_clients(
         state,
@@ -1021,10 +1040,7 @@ async fn add_message(
             .unwrap_or_default()
     };
 
-    let agents = {
-        let rt = state.realtime.lock().await;
-        rt.agents.iter().copied().collect::<Vec<_>>()
-    };
+    let agents = agent_clients_for_tenant(&state, &summary.tenant_id).await;
 
     if sender == "team" {
         emit_to_clients(&state, &agents, "message:new", message.clone()).await;
@@ -7981,7 +7997,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     .to_string();
 
                 let agent_row = sqlx::query(
-                    "SELECT a.id, a.name, a.email, a.status, a.role, a.avatar_url, a.team_ids, a.inbox_ids FROM auth_tokens t JOIN agents a ON a.id = t.agent_id WHERE t.token = $1",
+                    "SELECT a.id, a.name, a.email, a.status, a.role, a.avatar_url, a.team_ids, a.inbox_ids, t.tenant_id FROM auth_tokens t JOIN agents a ON a.id = t.agent_id WHERE t.token = $1",
                 )
                 .bind(&token)
                 .fetch_optional(&state.db)
@@ -8011,6 +8027,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     let mut rt = state.realtime.lock().await;
                     rt.agents.insert(client_id);
                     rt.agent_profiles.insert(client_id, profile);
+                    rt.agent_tenant_by_client
+                        .insert(client_id, row.get::<String, _>("tenant_id"));
                     drop(rt);
                     emit_session_snapshot(state.clone()).await;
                 } else {
@@ -8124,6 +8142,17 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
             }
             "agent:watch-session" => {
                 if let Some(session_id) = envelope.data.get("sessionId").and_then(Value::as_str) {
+                    let client_tenant_id = {
+                        let rt = state.realtime.lock().await;
+                        rt.agent_tenant_by_client.get(&client_id).cloned()
+                    };
+                    if let Some(client_tenant_id) = client_tenant_id {
+                        let session_tenant_id =
+                            tenant_for_session(&state, session_id).await.unwrap_or_default();
+                        if session_tenant_id != client_tenant_id {
+                            continue;
+                        }
+                    }
                     let mut rt = state.realtime.lock().await;
                     if let Some(previous) =
                         rt.watched_session.insert(client_id, session_id.to_string())
@@ -8140,6 +8169,17 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
             }
             "agent:request-history" => {
                 if let Some(session_id) = envelope.data.get("sessionId").and_then(Value::as_str) {
+                    let client_tenant_id = {
+                        let rt = state.realtime.lock().await;
+                        rt.agent_tenant_by_client.get(&client_id).cloned()
+                    };
+                    if let Some(client_tenant_id) = client_tenant_id {
+                        let session_tenant_id =
+                            tenant_for_session(&state, session_id).await.unwrap_or_default();
+                        if session_tenant_id != client_tenant_id {
+                            continue;
+                        }
+                    }
                     let messages = get_session_messages_db(&state.db, session_id).await;
 
                     {
@@ -8235,6 +8275,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
         rt.clients.remove(&client_id);
         rt.agents.remove(&client_id);
         rt.agent_profiles.remove(&client_id);
+        rt.agent_tenant_by_client.remove(&client_id);
         if let Some(previous) = rt.watched_session.remove(&client_id) {
             if let Some(set) = rt.session_watchers.get_mut(&previous) {
                 set.remove(&client_id);

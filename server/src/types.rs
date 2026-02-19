@@ -331,6 +331,7 @@ pub struct RealtimeState {
     pub clients: HashMap<usize, mpsc::UnboundedSender<String>>,
     pub agents: HashSet<usize>,
     pub agent_profiles: HashMap<usize, AgentProfile>,
+    pub agent_tenant_by_client: HashMap<usize, String>,
     pub session_watchers: HashMap<String, HashSet<usize>>,
     pub watched_session: HashMap<usize, String>,
     pub agent_auto_typing_counts: HashMap<String, usize>,
