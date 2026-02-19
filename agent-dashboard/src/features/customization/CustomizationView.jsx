@@ -50,6 +50,7 @@ const ROLE_COLORS = {
   admin: "bg-blue-100 text-blue-800",
   agent: "bg-slate-100 text-slate-700",
 };
+const PRIMARY_BUTTON_CLASS = "bg-blue-600 text-white hover:bg-blue-700";
 
 /* ──────────────────────────────────────── component ─────── */
 export default function CustomizationView({
@@ -88,6 +89,7 @@ export default function CustomizationView({
   const [profileAvatar, setProfileAvatar] = useState(agent?.avatarUrl || "");
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileSaved, setProfileSaved] = useState(false);
+  const [workspaceSaving, setWorkspaceSaving] = useState(false);
   const [teamName, setTeamName] = useState("");
   const [inboxName, setInboxName] = useState("");
   const [editingChannel, setEditingChannel] = useState(null);
@@ -361,6 +363,17 @@ export default function CustomizationView({
     }
   };
 
+  const saveWorkspaceProfile = async () => {
+    setWorkspaceSaving(true);
+    try {
+      await saveTenantSettings();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setWorkspaceSaving(false);
+    }
+  };
+
   /* ── canned replies ── */
   const saveCannedReply = async (e) => {
     e.preventDefault();
@@ -596,19 +609,19 @@ export default function CustomizationView({
             Direct image URL. Appears next to your messages in the widget.
           </p>
         </div>
-        <div className="flex items-center gap-2 pt-1">
-          <Button
-            onClick={saveProfile}
-            disabled={profileSaving}
-            className="bg-blue-600 text-white hover:bg-blue-700"
-          >
-            {profileSaving ? "Saving…" : "Save"}
-          </Button>
+        <div className="flex items-center justify-end gap-2 pt-1">
           {profileSaved && (
             <span className="text-xs text-emerald-600 font-medium">
               ✓ Saved
             </span>
           )}
+          <Button
+            onClick={saveProfile}
+            disabled={profileSaving}
+            className={PRIMARY_BUTTON_CLASS}
+          >
+            {profileSaving ? "Saving…" : "Save"}
+          </Button>
         </div>
       </div>
     </div>
@@ -620,7 +633,56 @@ export default function CustomizationView({
       <h2 className="text-base font-semibold text-slate-900">General</h2>
       <p className="mb-6 text-sm text-slate-500">Your workspace identity.</p>
 
-      <div className="space-y-3 max-w-md">
+      <div className="max-w-xl rounded-lg border border-slate-200 bg-white p-4">
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-slate-700">
+            Short bio
+          </label>
+          <Input
+            value={tenantSettings?.workspaceShortBio || ""}
+            onChange={(e) =>
+              setTenantSettings((prev) => ({
+                ...(prev || {}),
+                workspaceShortBio: e.target.value,
+              }))
+            }
+            placeholder="A short one-line summary of this workspace"
+            maxLength={140}
+          />
+          <p className="mt-1 text-xs text-slate-400">Up to 140 characters.</p>
+        </div>
+        <div className="mt-4">
+          <label className="mb-1.5 block text-xs font-medium text-slate-700">
+            Description
+          </label>
+          <Textarea
+            value={tenantSettings?.workspaceDescription || ""}
+            onChange={(e) =>
+              setTenantSettings((prev) => ({
+                ...(prev || {}),
+                workspaceDescription: e.target.value,
+              }))
+            }
+            placeholder="Describe your workspace in more detail."
+            rows={3}
+          />
+        </div>
+        <div className="mt-4 flex items-center justify-end gap-2 border-t border-slate-200 pt-4">
+          <Button
+            type="button"
+            onClick={saveWorkspaceProfile}
+            disabled={workspaceSaving}
+            className={PRIMARY_BUTTON_CLASS}
+          >
+            {workspaceSaving ? "Saving…" : "Save Workspace"}
+          </Button>
+        </div>
+      </div>
+
+      <div className="mt-6 space-y-3 max-w-md">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+          Linked Workspaces
+        </p>
         {tenants.map((tenant) => (
           <div
             key={tenant.id}
@@ -641,27 +703,35 @@ export default function CustomizationView({
   /* ──────────── Channels list ──────────── */
   const renderChannelsListPage = () => (
     <div>
-      <h2 className="text-base font-semibold text-slate-900">Channels</h2>
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="text-base font-semibold text-slate-900">Channels</h2>
+        <Button
+          type="submit"
+          form="add-inbox-form"
+          disabled={routingSaving}
+          size="sm"
+          className={`${PRIMARY_BUTTON_CLASS} shrink-0`}
+        >
+          <Inbox size={14} className="mr-1.5" />
+          Add Inbox
+        </Button>
+      </div>
       <p className="mb-6 text-sm text-slate-500">
         Configure inboxes and the channels that feed into them.
       </p>
 
       {/* Add inbox */}
-      <form onSubmit={createInbox} className="mb-6 flex gap-2 max-w-md">
+      <form
+        id="add-inbox-form"
+        onSubmit={createInbox}
+        className="mb-6 flex gap-2 max-w-md"
+      >
         <Input
           value={inboxName}
           onChange={(e) => setInboxName(e.target.value)}
           placeholder="New inbox name…"
           className="flex-1"
         />
-        <Button
-          type="submit"
-          disabled={routingSaving}
-          className="bg-blue-600 text-white hover:bg-blue-700 shrink-0"
-        >
-          <Inbox size={14} className="mr-1.5" />
-          Add Inbox
-        </Button>
       </form>
 
       {routingError && (
@@ -1138,34 +1208,11 @@ export default function CustomizationView({
           )}
 
           {/* Actions */}
-          <div className="flex items-center gap-2 border-t border-slate-200 pt-5">
-            <Button
-              onClick={async () => {
-                const payload = {
-                  channelType: editingChannel.channelType,
-                  name:
-                    editingChannel.name ||
-                    `${editingChannel.channelType} Channel`,
-                  inboxId: editingChannel.inboxId,
-                  config: editingChannel.config || {},
-                };
-                await saveChannelFromModal(payload);
-                if (editingChannel.channelType === "web") {
-                  await saveTenantSettings();
-                }
-              }}
-              disabled={routingSaving}
-              className="bg-blue-600 text-white hover:bg-blue-700"
-            >
-              {routingSaving ? "Saving…" : "Save Channel"}
-            </Button>
-            <Button variant="outline" onClick={() => setEditingChannel(null)}>
-              Cancel
-            </Button>
-            {editingChannel.id && (
+          <div className="flex items-center justify-between gap-2 border-t border-slate-200 pt-5">
+            {editingChannel.id ? (
               <Button
                 variant="ghost"
-                className="ml-auto text-red-600 hover:text-red-700 hover:bg-red-50"
+                className="text-red-600 hover:text-red-700 hover:bg-red-50"
                 onClick={() => {
                   deleteChannel(editingChannel.id);
                   setEditingChannel(null);
@@ -1174,7 +1221,34 @@ export default function CustomizationView({
                 <Trash2 size={14} className="mr-1.5" />
                 Delete
               </Button>
+            ) : (
+              <div />
             )}
+            <div className="flex items-center justify-end gap-2">
+              <Button variant="outline" onClick={() => setEditingChannel(null)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={async () => {
+                  const payload = {
+                    channelType: editingChannel.channelType,
+                    name:
+                      editingChannel.name ||
+                      `${editingChannel.channelType} Channel`,
+                    inboxId: editingChannel.inboxId,
+                    config: editingChannel.config || {},
+                  };
+                  await saveChannelFromModal(payload);
+                  if (editingChannel.channelType === "web") {
+                    await saveTenantSettings();
+                  }
+                }}
+                disabled={routingSaving}
+                className={PRIMARY_BUTTON_CLASS}
+              >
+                {routingSaving ? "Saving…" : "Save Channel"}
+              </Button>
+            </div>
           </div>
         </div>
       </div>
@@ -1184,25 +1258,33 @@ export default function CustomizationView({
   /* ──────────── Teams ──────────── */
   const renderTeamsPage = () => (
     <div>
-      <h2 className="text-base font-semibold text-slate-900">Teams</h2>
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="text-base font-semibold text-slate-900">Teams</h2>
+        <Button
+          type="submit"
+          form="add-team-form"
+          disabled={routingSaving}
+          size="sm"
+          className={PRIMARY_BUTTON_CLASS}
+        >
+          Add Team
+        </Button>
+      </div>
       <p className="mb-6 text-sm text-slate-500">
         Group agents for routing and assignment.
       </p>
 
-      <form onSubmit={createTeam} className="mb-6 flex gap-2 max-w-md">
+      <form
+        id="add-team-form"
+        onSubmit={createTeam}
+        className="mb-6 flex gap-2 max-w-md"
+      >
         <Input
           value={teamName}
           onChange={(e) => setTeamName(e.target.value)}
           placeholder="e.g. Sales, Support"
           className="flex-1"
         />
-        <Button
-          type="submit"
-          disabled={routingSaving}
-          className="bg-blue-600 text-white hover:bg-blue-700"
-        >
-          Add Team
-        </Button>
       </form>
 
       {routingError && (
@@ -1306,7 +1388,7 @@ export default function CustomizationView({
             <Button
               type="submit"
               disabled={inviteSending}
-              className="bg-blue-600 text-white hover:bg-blue-700"
+              className={PRIMARY_BUTTON_CLASS}
             >
               {inviteSending ? "Sending…" : "Invite"}
             </Button>
@@ -1433,7 +1515,7 @@ export default function CustomizationView({
         </h2>
         <Button
           onClick={() => openCannedDialog()}
-          className="bg-blue-600 text-white hover:bg-blue-700"
+          className={PRIMARY_BUTTON_CLASS}
           size="sm"
         >
           Add Canned Response
@@ -1586,7 +1668,7 @@ export default function CustomizationView({
               <Button
                 type="submit"
                 disabled={cannedSaving}
-                className="bg-blue-600 text-white hover:bg-blue-700"
+                className={PRIMARY_BUTTON_CLASS}
               >
                 {cannedSaving ? "Saving…" : editingCanned ? "Update" : "Create"}
               </Button>
@@ -1617,7 +1699,7 @@ export default function CustomizationView({
         <h2 className="text-base font-semibold text-slate-900">Tags</h2>
         <Button
           onClick={() => openTagDialog()}
-          className="bg-blue-600 text-white hover:bg-blue-700"
+          className={PRIMARY_BUTTON_CLASS}
           size="sm"
         >
           Add Tag
@@ -1762,7 +1844,7 @@ export default function CustomizationView({
               <Button
                 type="submit"
                 disabled={tagSaving}
-                className="bg-blue-600 text-white hover:bg-blue-700"
+                className={PRIMARY_BUTTON_CLASS}
               >
                 {tagSaving ? "Saving…" : editingTag ? "Update" : "Create"}
               </Button>

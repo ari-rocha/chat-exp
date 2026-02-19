@@ -272,6 +272,8 @@ pub struct Tenant {
 pub struct TenantSettings {
     pub tenant_id: String,
     pub brand_name: String,
+    pub workspace_short_bio: String,
+    pub workspace_description: String,
     pub primary_color: String,
     pub accent_color: String,
     pub logo_url: String,
@@ -544,6 +546,8 @@ pub struct CreateTenantBody {
 #[serde(rename_all = "camelCase")]
 pub struct PatchTenantSettingsBody {
     pub brand_name: Option<String>,
+    pub workspace_short_bio: Option<String>,
+    pub workspace_description: Option<String>,
     pub primary_color: Option<String>,
     pub accent_color: Option<String>,
     pub logo_url: Option<String>,

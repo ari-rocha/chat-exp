@@ -4493,10 +4493,12 @@ async fn register_agent(
     .execute(&state.db)
     .await;
     let _ = sqlx::query(
-        "INSERT INTO tenant_settings (tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+        "INSERT INTO tenant_settings (tenant_id, brand_name, workspace_short_bio, workspace_description, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
     )
     .bind(&tenant_id)
     .bind(&ws_name)
+    .bind("")
+    .bind("")
     .bind("#e4b84f")
     .bind("#1f2230")
     .bind("")
@@ -6586,6 +6588,8 @@ async fn create_tenant(
     let settings = TenantSettings {
         tenant_id: tenant.id.clone(),
         brand_name: name,
+        workspace_short_bio: "".to_string(),
+        workspace_description: "".to_string(),
         primary_color: "#e4b84f".to_string(),
         accent_color: "#1f2230".to_string(),
         logo_url: "".to_string(),
@@ -6598,10 +6602,12 @@ async fn create_tenant(
         updated_at: now.clone(),
     };
     let _ = sqlx::query(
-        "INSERT INTO tenant_settings (tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+        "INSERT INTO tenant_settings (tenant_id, brand_name, workspace_short_bio, workspace_description, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
     )
     .bind(&settings.tenant_id)
     .bind(&settings.brand_name)
+    .bind(&settings.workspace_short_bio)
+    .bind(&settings.workspace_description)
     .bind(&settings.primary_color)
     .bind(&settings.accent_color)
     .bind(&settings.logo_url)
@@ -6745,10 +6751,12 @@ async fn create_workspace_with_ticket(
     .execute(&state.db)
     .await;
     let _ = sqlx::query(
-        "INSERT INTO tenant_settings (tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+        "INSERT INTO tenant_settings (tenant_id, brand_name, workspace_short_bio, workspace_description, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
     )
     .bind(&tenant.id)
     .bind(&tenant.name)
+    .bind("")
+    .bind("")
     .bind("#e4b84f")
     .bind("#1f2230")
     .bind("")
@@ -7385,7 +7393,7 @@ async fn get_tenant_settings(
         Err(err) => return err.into_response(),
     };
     let settings = sqlx::query(
-        "SELECT tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
+        "SELECT tenant_id, brand_name, workspace_short_bio, workspace_description, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
     )
     .bind(&tenant_id)
     .fetch_optional(&state.db)
@@ -7395,6 +7403,8 @@ async fn get_tenant_settings(
     .map(|row| TenantSettings {
         tenant_id: row.get("tenant_id"),
         brand_name: row.get("brand_name"),
+        workspace_short_bio: row.get("workspace_short_bio"),
+        workspace_description: row.get("workspace_description"),
         primary_color: row.get("primary_color"),
         accent_color: row.get("accent_color"),
         logo_url: row.get("logo_url"),
@@ -7422,7 +7432,7 @@ async fn patch_tenant_settings(
         Err(err) => return err.into_response(),
     };
     let mut settings = sqlx::query(
-        "SELECT tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
+        "SELECT tenant_id, brand_name, workspace_short_bio, workspace_description, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
     )
     .bind(&tenant_id)
     .fetch_optional(&state.db)
@@ -7432,6 +7442,8 @@ async fn patch_tenant_settings(
     .map(|row| TenantSettings {
         tenant_id: row.get("tenant_id"),
         brand_name: row.get("brand_name"),
+        workspace_short_bio: row.get("workspace_short_bio"),
+        workspace_description: row.get("workspace_description"),
         primary_color: row.get("primary_color"),
         accent_color: row.get("accent_color"),
         logo_url: row.get("logo_url"),
@@ -7452,6 +7464,12 @@ async fn patch_tenant_settings(
     };
     if let Some(v) = body.brand_name {
         settings.brand_name = v;
+    }
+    if let Some(v) = body.workspace_short_bio {
+        settings.workspace_short_bio = v;
+    }
+    if let Some(v) = body.workspace_description {
+        settings.workspace_description = v;
     }
     if let Some(v) = body.primary_color {
         settings.primary_color = v;
@@ -7479,9 +7497,11 @@ async fn patch_tenant_settings(
     }
     settings.updated_at = now_iso();
     let _ = sqlx::query(
-        "UPDATE tenant_settings SET brand_name = $1, primary_color = $2, accent_color = $3, logo_url = $4, privacy_url = $5, launcher_position = $6, welcome_text = $7, bot_name = $8, bot_avatar_url = $9, updated_at = $10 WHERE tenant_id = $11",
+        "UPDATE tenant_settings SET brand_name = $1, workspace_short_bio = $2, workspace_description = $3, primary_color = $4, accent_color = $5, logo_url = $6, privacy_url = $7, launcher_position = $8, welcome_text = $9, bot_name = $10, bot_avatar_url = $11, updated_at = $12 WHERE tenant_id = $13",
     )
     .bind(&settings.brand_name)
+    .bind(&settings.workspace_short_bio)
+    .bind(&settings.workspace_description)
     .bind(&settings.primary_color)
     .bind(&settings.accent_color)
     .bind(&settings.logo_url)
@@ -8433,7 +8453,7 @@ async fn widget_bootstrap(
 
     // Fetch tenant settings
     let settings = sqlx::query(
-        "SELECT tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
+        "SELECT tenant_id, brand_name, workspace_short_bio, workspace_description, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
     )
     .bind(&tenant_id)
     .fetch_optional(&state.db)
@@ -8443,6 +8463,8 @@ async fn widget_bootstrap(
     .map(|row| TenantSettings {
         tenant_id: row.get("tenant_id"),
         brand_name: row.get("brand_name"),
+        workspace_short_bio: row.get("workspace_short_bio"),
+        workspace_description: row.get("workspace_description"),
         primary_color: row.get("primary_color"),
         accent_color: row.get("accent_color"),
         logo_url: row.get("logo_url"),
