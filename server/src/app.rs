@@ -20,7 +20,7 @@ use axum::{
     Json, Router,
 };
 use bcrypt::{hash, verify, DEFAULT_COST};
-use chrono::Utc;
+use chrono::{Duration as ChronoDuration, Utc};
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use regex::Regex;
 use serde::Serialize;
@@ -45,6 +45,142 @@ fn slugify(value: &str) -> String {
         slug = slug.replace("--", "-");
     }
     slug.trim_matches('-').to_string()
+}
+
+fn normalize_workspace_username(value: &str) -> String {
+    let mut username = value
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect::<String>();
+    while username.contains("--") {
+        username = username.replace("--", "-");
+    }
+    username.trim_matches('-').to_string()
+}
+
+fn validate_workspace_username(value: &str) -> Result<String, &'static str> {
+    let username = normalize_workspace_username(value);
+    if username.len() < 3 || username.len() > 32 {
+        return Err("workspace_username_invalid");
+    }
+    let reserved = ["admin", "api", "www", "root", "support", "help"];
+    if reserved.iter().any(|item| *item == username) {
+        return Err("workspace_username_reserved");
+    }
+    let valid = Regex::new(r"^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$")
+        .map(|re| re.is_match(&username))
+        .unwrap_or(false);
+    if !valid {
+        return Err("workspace_username_invalid");
+    }
+    Ok(username)
+}
+
+fn normalize_email(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
+async fn issue_login_ticket(state: &Arc<AppState>, user_id: &str) -> Option<String> {
+    let ticket = Uuid::new_v4().to_string();
+    let now = Utc::now();
+    let expires_at = (now + ChronoDuration::minutes(20)).to_rfc3339();
+    let created_at = now.to_rfc3339();
+    let ok = sqlx::query(
+        "INSERT INTO auth_login_tickets (ticket, user_id, created_at, expires_at, used) VALUES ($1,$2,$3,$4,$5)",
+    )
+    .bind(&ticket)
+    .bind(user_id)
+    .bind(created_at)
+    .bind(expires_at)
+    .bind(false)
+    .execute(&state.db)
+    .await
+    .is_ok();
+    if ok { Some(ticket) } else { None }
+}
+
+async fn consume_login_ticket(state: &Arc<AppState>, ticket: &str) -> Option<String> {
+    let now = Utc::now().to_rfc3339();
+    let row = sqlx::query(
+        "UPDATE auth_login_tickets SET used = true WHERE ticket = $1 AND used = false AND expires_at > $2 RETURNING user_id",
+    )
+    .bind(ticket)
+    .bind(now)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()?;
+    Some(row.get("user_id"))
+}
+
+async fn list_user_workspaces(state: &Arc<AppState>, user_id: &str) -> Vec<WorkspaceSummary> {
+    let rows = sqlx::query(
+        "SELECT t.id, t.name, t.slug, t.workspace_username, a.role \
+         FROM agents a \
+         JOIN tenants t ON t.id = a.tenant_id \
+         WHERE a.user_id = $1 \
+         ORDER BY t.created_at ASC",
+    )
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    rows.into_iter()
+        .map(|row| WorkspaceSummary {
+            id: row.get("id"),
+            name: row.get("name"),
+            slug: row.get("slug"),
+            workspace_username: row.get("workspace_username"),
+            role: row.get("role"),
+        })
+        .collect()
+}
+
+async fn issue_workspace_token(
+    state: &Arc<AppState>,
+    user_id: &str,
+    tenant_id: &str,
+) -> Option<(String, AgentProfile)> {
+    let row = sqlx::query(
+        "SELECT id, name, email, status, role, avatar_url, team_ids, inbox_ids \
+         FROM agents WHERE user_id = $1 AND tenant_id = $2 LIMIT 1",
+    )
+    .bind(user_id)
+    .bind(tenant_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()?;
+
+    let profile = AgentProfile {
+        id: row.get("id"),
+        name: row.get("name"),
+        email: row.get("email"),
+        status: row.get("status"),
+        role: row.get("role"),
+        avatar_url: row.get("avatar_url"),
+        team_ids: serde_json::from_str::<Vec<String>>(&row.get::<String, _>("team_ids"))
+            .unwrap_or_default(),
+        inbox_ids: serde_json::from_str::<Vec<String>>(&row.get::<String, _>("inbox_ids"))
+            .unwrap_or_default(),
+    };
+
+    let token = Uuid::new_v4().to_string();
+    let inserted = sqlx::query(
+        "INSERT INTO auth_tokens (token, agent_id, tenant_id, created_at) VALUES ($1,$2,$3,$4)",
+    )
+    .bind(&token)
+    .bind(&profile.id)
+    .bind(tenant_id)
+    .bind(now_iso())
+    .execute(&state.db)
+    .await
+    .is_ok();
+
+    if inserted { Some((token, profile)) } else { None }
 }
 
 fn json_text(value: &Value) -> String {
@@ -4079,9 +4215,9 @@ async fn register_agent(
     State(state): State<Arc<AppState>>,
     Json(body): Json<RegisterBody>,
 ) -> impl IntoResponse {
-    let email = body.email.trim().to_lowercase();
-    let name = body.name.trim().to_string();
-    if email.is_empty() || name.is_empty() || body.password.trim().len() < 6 {
+    let email = normalize_email(&body.email);
+    let full_name = body.name.trim().to_string();
+    if email.is_empty() || full_name.is_empty() || body.password.trim().len() < 6 {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "invalid registration payload" })),
@@ -4096,98 +4232,163 @@ async fn register_agent(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": "unable to hash password" })),
             )
-                .into_response()
+                .into_response();
         }
     };
 
-    // Determine tenant: invitation or new workspace
-    let (tenant_id, assigned_role) = if let Some(inv_token) = &body.invitation_token {
-        let inv_row =
-            sqlx::query("SELECT tenant_id, role, status FROM tenant_invitations WHERE token = $1")
-                .bind(inv_token)
-                .fetch_optional(&state.db)
-                .await
-                .ok()
-                .flatten();
-        match inv_row {
-            Some(row) => {
-                let inv_status: String = row.get("status");
-                if inv_status != "pending" {
-                    return (
-                        StatusCode::BAD_REQUEST,
-                        Json(json!({ "error": "invitation already used" })),
-                    )
-                        .into_response();
-                }
-                let tid: String = row.get("tenant_id");
-                let inv_role: String = row.get("role");
-                let _ = sqlx::query(
-                    "UPDATE tenant_invitations SET status = 'accepted' WHERE token = $1",
-                )
-                .bind(inv_token)
-                .execute(&state.db)
-                .await;
-                (tid, inv_role)
-            }
-            None => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(json!({ "error": "invalid invitation token" })),
-                )
-                    .into_response();
-            }
-        }
-    } else {
-        let ws_name = body
-            .workspace_name
-            .as_deref()
-            .unwrap_or("My Workspace")
-            .trim()
-            .to_string();
-        let ws_name = if ws_name.is_empty() {
-            "My Workspace".to_string()
-        } else {
-            ws_name
-        };
-        let now = now_iso();
-        let new_tenant_id = Uuid::new_v4().to_string();
-        let slug = slugify(&ws_name);
-        let _ = sqlx::query(
-            "INSERT INTO tenants (id, name, slug, created_at, updated_at) VALUES ($1,$2,$3,$4,$5)",
+    let user_exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM users WHERE email = $1")
+        .bind(&email)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0)
+        > 0;
+    if user_exists {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "email already registered" })),
         )
-        .bind(&new_tenant_id)
-        .bind(&ws_name)
-        .bind(&slug)
-        .bind(&now)
-        .bind(&now)
-        .execute(&state.db)
-        .await;
-        let _ = sqlx::query(
-            "INSERT INTO tenant_settings (tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
-        )
-        .bind(&new_tenant_id)
-        .bind(&ws_name)
-        .bind("#e4b84f")
-        .bind("#1f2230")
-        .bind("")
-        .bind("#")
-        .bind("bottom-right")
-        .bind("Hello! How can we help?")
-        .bind("")
-        .bind("")
-        .bind(&now)
-        .bind(&now)
-        .execute(&state.db)
-        .await;
-        (new_tenant_id, "owner".to_string())
-    };
+            .into_response();
+    }
 
-    // Check email uniqueness within the tenant
-    let exists = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(1) FROM agents WHERE tenant_id = $1 AND email = $2",
+    let user_id = Uuid::new_v4().to_string();
+    let now = now_iso();
+    if sqlx::query(
+        "INSERT INTO users (id, email, password_hash, full_name, created_at, updated_at, last_login_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
     )
-    .bind(&tenant_id)
+    .bind(&user_id)
     .bind(&email)
+    .bind(&password_hash)
+    .bind(&full_name)
+    .bind(&now)
+    .bind(&now)
+    .bind("")
+    .execute(&state.db)
+    .await
+    .is_err()
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "failed to create user" })),
+        )
+            .into_response();
+    }
+
+    if let Some(invitation_token) = body.invitation_token {
+        let inv_row = sqlx::query(
+            "SELECT tenant_id, role, status, email FROM tenant_invitations WHERE token = $1",
+        )
+        .bind(&invitation_token)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+        let Some(inv) = inv_row else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "invalid invitation token" })),
+            )
+                .into_response();
+        };
+        let status: String = inv.get("status");
+        let invited_email: String = inv.get("email");
+        if status != "pending" {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "invitation already used" })),
+            )
+                .into_response();
+        }
+        if normalize_email(&invited_email) != email {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "invitation email mismatch" })),
+            )
+                .into_response();
+        }
+        let tenant_id: String = inv.get("tenant_id");
+        let role: String = inv.get("role");
+        let agent_id = Uuid::new_v4().to_string();
+        let _ = sqlx::query(
+            "INSERT INTO agents (id, user_id, tenant_id, name, email, status, password_hash, role, avatar_url, team_ids, inbox_ids) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+        )
+        .bind(&agent_id)
+        .bind(&user_id)
+        .bind(&tenant_id)
+        .bind(&full_name)
+        .bind(&email)
+        .bind("online")
+        .bind(&password_hash)
+        .bind(&role)
+        .bind("")
+        .bind("[]")
+        .bind("[]")
+        .execute(&state.db)
+        .await;
+
+        let _ = sqlx::query("UPDATE tenant_invitations SET status = 'accepted' WHERE token = $1")
+            .bind(&invitation_token)
+            .execute(&state.db)
+            .await;
+
+        let Some((token, profile)) = issue_workspace_token(&state, &user_id, &tenant_id).await
+        else {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "failed to create auth token" })),
+            )
+                .into_response();
+        };
+        let workspaces = list_user_workspaces(&state, &user_id).await;
+        let active_workspace = workspaces
+            .iter()
+            .find(|w| w.id == tenant_id)
+            .cloned()
+            .unwrap_or(WorkspaceSummary {
+                id: tenant_id.clone(),
+                name: "".to_string(),
+                slug: "".to_string(),
+                workspace_username: "".to_string(),
+                role: role.clone(),
+            });
+        return (
+            StatusCode::CREATED,
+            Json(json!({
+                "token": token,
+                "agent": profile,
+                "tenantId": tenant_id,
+                "activeWorkspace": active_workspace,
+                "workspaces": workspaces
+            })),
+        )
+            .into_response();
+    }
+
+    let ws_name = body
+        .workspace_name
+        .as_deref()
+        .unwrap_or("My Workspace")
+        .trim()
+        .to_string();
+    let ws_name = if ws_name.is_empty() {
+        "My Workspace".to_string()
+    } else {
+        ws_name
+    };
+    let workspace_username = match validate_workspace_username(&slugify(&ws_name)) {
+        Ok(v) => v,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": err })),
+            )
+                .into_response();
+        }
+    };
+
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(1) FROM tenants WHERE workspace_username = $1",
+    )
+    .bind(&workspace_username)
     .fetch_one(&state.db)
     .await
     .unwrap_or(0)
@@ -4195,65 +4396,162 @@ async fn register_agent(
     if exists {
         return (
             StatusCode::CONFLICT,
-            Json(json!({ "error": "email already registered in this workspace" })),
+            Json(json!({ "error": "workspace_username_taken" })),
         )
             .into_response();
     }
 
-    let profile = AgentProfile {
-        id: Uuid::new_v4().to_string(),
-        name,
-        email,
-        status: "online".to_string(),
-        role: assigned_role.clone(),
-        avatar_url: "".to_string(),
-        team_ids: vec![],
-        inbox_ids: vec![],
-    };
-
-    let token = Uuid::new_v4().to_string();
-    let team_ids = serde_json::to_string(&profile.team_ids).unwrap_or_else(|_| "[]".to_string());
-    let inbox_ids = serde_json::to_string(&profile.inbox_ids).unwrap_or_else(|_| "[]".to_string());
-    if sqlx::query(
-        "INSERT INTO agents (id, tenant_id, name, email, status, password_hash, role, avatar_url, team_ids, inbox_ids) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
-    )
-    .bind(&profile.id)
-    .bind(&tenant_id)
-    .bind(&profile.name)
-    .bind(&profile.email)
-    .bind(&profile.status)
-    .bind(&password_hash)
-    .bind(&assigned_role)
-    .bind("")
-    .bind(team_ids)
-    .bind(inbox_ids)
-    .execute(&state.db)
-    .await
-    .is_err()
-    {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "failed to create agent" })),
-        )
-            .into_response();
-    }
-
+    let tenant_id = Uuid::new_v4().to_string();
+    let now = now_iso();
+    let slug = slugify(&ws_name);
     let _ = sqlx::query(
-        "INSERT INTO auth_tokens (token, agent_id, tenant_id, created_at) VALUES ($1,$2,$3,$4)",
+        "INSERT INTO tenants (id, name, slug, workspace_username, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6)",
     )
-    .bind(&token)
-    .bind(&profile.id)
     .bind(&tenant_id)
-    .bind(now_iso())
+    .bind(&ws_name)
+    .bind(&slug)
+    .bind(&workspace_username)
+    .bind(&now)
+    .bind(&now)
+    .execute(&state.db)
+    .await;
+    let _ = sqlx::query(
+        "INSERT INTO tenant_settings (tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+    )
+    .bind(&tenant_id)
+    .bind(&ws_name)
+    .bind("#e4b84f")
+    .bind("#1f2230")
+    .bind("")
+    .bind("#")
+    .bind("bottom-right")
+    .bind("Hello! How can we help?")
+    .bind("")
+    .bind("")
+    .bind(&now)
+    .bind(&now)
+    .execute(&state.db)
+    .await;
+    let _ = sqlx::query(
+        "INSERT INTO agents (id, user_id, tenant_id, name, email, status, password_hash, role, avatar_url, team_ids, inbox_ids) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&user_id)
+    .bind(&tenant_id)
+    .bind(&full_name)
+    .bind(&email)
+    .bind("online")
+    .bind(&password_hash)
+    .bind("owner")
+    .bind("")
+    .bind("[]")
+    .bind("[]")
     .execute(&state.db)
     .await;
 
+    let Some((token, profile)) = issue_workspace_token(&state, &user_id, &tenant_id).await else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "failed to create auth token" })),
+        )
+            .into_response();
+    };
+    let workspaces = list_user_workspaces(&state, &user_id).await;
+    let active_workspace = workspaces
+        .iter()
+        .find(|w| w.id == tenant_id)
+        .cloned()
+        .unwrap_or(WorkspaceSummary {
+            id: tenant_id.clone(),
+            name: ws_name.clone(),
+            slug,
+            workspace_username,
+            role: "owner".to_string(),
+        });
     (
         StatusCode::CREATED,
         Json(json!({
             "token": token,
             "agent": profile,
-            "tenantId": tenant_id
+            "tenantId": tenant_id,
+            "activeWorkspace": active_workspace,
+            "workspaces": workspaces
+        })),
+    )
+        .into_response()
+}
+
+async fn signup_user(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SignupBody>,
+) -> impl IntoResponse {
+    let email = normalize_email(&body.email);
+    let full_name = body.full_name.trim().to_string();
+    if email.is_empty() || full_name.is_empty() || body.password.trim().len() < 6 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invalid signup payload" })),
+        )
+            .into_response();
+    }
+    let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM users WHERE email = $1")
+        .bind(&email)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0)
+        > 0;
+    if exists {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "email already registered" })),
+        )
+            .into_response();
+    }
+    let password_hash = match hash(body.password, DEFAULT_COST) {
+        Ok(v) => v,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "unable to hash password" })),
+            )
+                .into_response();
+        }
+    };
+    let user_id = Uuid::new_v4().to_string();
+    let now = now_iso();
+    let inserted = sqlx::query(
+        "INSERT INTO users (id, email, password_hash, full_name, created_at, updated_at, last_login_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+    )
+    .bind(&user_id)
+    .bind(&email)
+    .bind(&password_hash)
+    .bind(&full_name)
+    .bind(&now)
+    .bind(&now)
+    .bind("")
+    .execute(&state.db)
+    .await
+    .is_ok();
+    if !inserted {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "failed to create user" })),
+        )
+            .into_response();
+    }
+    let Some(login_ticket) = issue_login_ticket(&state, &user_id).await else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "failed to create login ticket" })),
+        )
+            .into_response();
+    };
+    (
+        StatusCode::CREATED,
+        Json(json!({
+            "userId": user_id,
+            "loginTicket": login_ticket,
+            "workspaces": []
         })),
     )
         .into_response()
@@ -4263,9 +4561,9 @@ async fn login_agent(
     State(state): State<Arc<AppState>>,
     Json(body): Json<LoginBody>,
 ) -> impl IntoResponse {
-    let email = body.email.trim().to_lowercase();
+    let email = normalize_email(&body.email);
     let row = sqlx::query(
-        "SELECT id, tenant_id, name, email, status, role, avatar_url, password_hash, team_ids, inbox_ids FROM agents WHERE email = $1",
+        "SELECT id, email, password_hash, full_name FROM users WHERE email = $1",
     )
     .bind(&email)
     .fetch_optional(&state.db)
@@ -4280,19 +4578,7 @@ async fn login_agent(
         )
             .into_response();
     };
-    let profile = AgentProfile {
-        id: row.get("id"),
-        name: row.get("name"),
-        email: row.get("email"),
-        status: row.get("status"),
-        role: row.get("role"),
-        avatar_url: row.get("avatar_url"),
-        team_ids: serde_json::from_str::<Vec<String>>(&row.get::<String, _>("team_ids"))
-            .unwrap_or_default(),
-        inbox_ids: serde_json::from_str::<Vec<String>>(&row.get::<String, _>("inbox_ids"))
-            .unwrap_or_default(),
-    };
-    let tenant_id: String = row.get("tenant_id");
+    let user_id: String = row.get("id");
     let password_hash: String = row.get("password_hash");
 
     let valid = verify(body.password, &password_hash).unwrap_or(false);
@@ -4304,26 +4590,135 @@ async fn login_agent(
             .into_response();
     }
 
-    let token = Uuid::new_v4().to_string();
-    let _ = sqlx::query(
-        "INSERT INTO auth_tokens (token, agent_id, tenant_id, created_at) VALUES ($1,$2,$3,$4)",
-    )
-    .bind(&token)
-    .bind(&profile.id)
-    .bind(&tenant_id)
-    .bind(now_iso())
-    .execute(&state.db)
-    .await;
+    let _ = sqlx::query("UPDATE users SET last_login_at = $1 WHERE id = $2")
+        .bind(now_iso())
+        .bind(&user_id)
+        .execute(&state.db)
+        .await;
 
+    let workspaces = list_user_workspaces(&state, &user_id).await;
+    if workspaces.len() == 1 {
+        let workspace = workspaces[0].clone();
+        let Some((token, profile)) = issue_workspace_token(&state, &user_id, &workspace.id).await
+        else {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "failed to create auth token" })),
+            )
+                .into_response();
+        };
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "token": token,
+                "agent": profile,
+                "tenantId": workspace.id,
+                "activeWorkspace": workspace,
+                "workspaces": workspaces
+            })),
+        )
+            .into_response();
+    }
+
+    let Some(login_ticket) = issue_login_ticket(&state, &user_id).await else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "failed to create login ticket" })),
+        )
+            .into_response();
+    };
+    (
+        StatusCode::OK,
+        Json(json!({
+            "workspaceSelectionRequired": true,
+            "loginTicket": login_ticket,
+            "workspaces": workspaces
+        })),
+    )
+        .into_response()
+}
+
+async fn select_workspace(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SelectWorkspaceBody>,
+) -> impl IntoResponse {
+    let ticket = body.login_ticket.trim().to_string();
+    let workspace_username = normalize_workspace_username(&body.workspace_username);
+    if ticket.is_empty() || workspace_username.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "login_ticket and workspace_username are required" })),
+        )
+            .into_response();
+    }
+    let Some(user_id) = consume_login_ticket(&state, &ticket).await else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "invalid or expired login ticket" })),
+        )
+            .into_response();
+    };
+    let tenant_row = sqlx::query(
+        "SELECT t.id, t.name, t.slug, t.workspace_username, a.role \
+         FROM agents a JOIN tenants t ON t.id = a.tenant_id \
+         WHERE a.user_id = $1 AND t.workspace_username = $2 LIMIT 1",
+    )
+    .bind(&user_id)
+    .bind(&workspace_username)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let Some(tenant_row) = tenant_row else {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "workspace not accessible" })),
+        )
+            .into_response();
+    };
+    let tenant_id: String = tenant_row.get("id");
+    let workspace = WorkspaceSummary {
+        id: tenant_id.clone(),
+        name: tenant_row.get("name"),
+        slug: tenant_row.get("slug"),
+        workspace_username: tenant_row.get("workspace_username"),
+        role: tenant_row.get("role"),
+    };
+    let Some((token, profile)) = issue_workspace_token(&state, &user_id, &tenant_id).await else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "failed to create auth token" })),
+        )
+            .into_response();
+    };
+    let workspaces = list_user_workspaces(&state, &user_id).await;
     (
         StatusCode::OK,
         Json(json!({
             "token": token,
             "agent": profile,
-            "tenantId": tenant_id
+            "tenantId": tenant_id,
+            "activeWorkspace": workspace,
+            "workspaces": workspaces
         })),
     )
         .into_response()
+}
+
+async fn auth_user_for_agent(state: &Arc<AppState>, agent_id: &str) -> Option<UserProfile> {
+    let row = sqlx::query(
+        "SELECT u.id, u.email, u.full_name FROM users u JOIN agents a ON a.user_id = u.id WHERE a.id = $1 LIMIT 1",
+    )
+    .bind(agent_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()?;
+    Some(UserProfile {
+        id: row.get("id"),
+        email: row.get("email"),
+        full_name: row.get("full_name"),
+    })
 }
 
 async fn get_me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
@@ -4332,11 +4727,32 @@ async fn get_me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl 
         Err(err) => return err.into_response(),
     };
     match auth_agent_from_headers(&state, &headers).await {
-        Ok(agent) => (
-            StatusCode::OK,
-            Json(json!({ "agent": agent, "tenantId": tenant_id })),
-        )
-            .into_response(),
+        Ok(agent) => {
+            let Some(user) = auth_user_for_agent(&state, &agent.id).await else {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({ "error": "missing user account" })),
+                )
+                    .into_response();
+            };
+            let workspaces = list_user_workspaces(&state, &user.id).await;
+            let active_workspace = workspaces
+                .iter()
+                .find(|w| w.id == tenant_id)
+                .cloned()
+                .or_else(|| workspaces.first().cloned());
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "user": user,
+                    "agent": agent,
+                    "tenantId": tenant_id,
+                    "activeWorkspace": active_workspace,
+                    "workspaces": workspaces
+                })),
+            )
+                .into_response()
+        }
         Err(err) => err.into_response(),
     }
 }
@@ -5542,25 +5958,36 @@ async fn list_channels(
 }
 
 async fn get_tenants(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
-    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
-        return err.into_response();
-    }
-    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
-        Ok(id) => id,
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(a) => a,
         Err(err) => return err.into_response(),
     };
-    let rows =
-        sqlx::query("SELECT id, name, slug, created_at, updated_at FROM tenants WHERE id = $1")
-            .bind(&tenant_id)
-            .fetch_all(&state.db)
-            .await
-            .unwrap_or_default();
+    let user = match auth_user_for_agent(&state, &agent.id).await {
+        Some(u) => u,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({ "error": "missing user account" })),
+            )
+                .into_response();
+        }
+    };
+    let rows = sqlx::query(
+        "SELECT t.id, t.name, t.slug, t.workspace_username, t.created_at, t.updated_at \
+         FROM tenants t JOIN agents a ON a.tenant_id = t.id \
+         WHERE a.user_id = $1 ORDER BY t.created_at ASC",
+    )
+    .bind(&user.id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
     let tenants = rows
         .into_iter()
         .map(|row| Tenant {
             id: row.get("id"),
             name: row.get("name"),
             slug: row.get("slug"),
+            workspace_username: row.get("workspace_username"),
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
         })
@@ -5577,6 +6004,16 @@ async fn create_tenant(
         Ok(agent) => agent,
         Err(err) => return err.into_response(),
     };
+    let user = match auth_user_for_agent(&state, &agent.id).await {
+        Some(u) => u,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({ "error": "missing user account" })),
+            )
+                .into_response();
+        }
+    };
     let name = body.name.trim().to_string();
     if name.is_empty() {
         return (
@@ -5586,21 +6023,55 @@ async fn create_tenant(
             .into_response();
     }
 
+    let default_workspace_username = slugify(&name);
+    let workspace_username_raw = body
+        .workspace_username
+        .as_deref()
+        .unwrap_or(&default_workspace_username)
+        .to_string();
+    let workspace_username = match validate_workspace_username(&workspace_username_raw) {
+        Ok(v) => v,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": err })),
+            )
+                .into_response();
+        }
+    };
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(1) FROM tenants WHERE workspace_username = $1",
+    )
+    .bind(&workspace_username)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0)
+        > 0;
+    if exists {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "workspace_username_taken" })),
+        )
+            .into_response();
+    }
+
     let now = now_iso();
     let tenant = Tenant {
         id: Uuid::new_v4().to_string(),
         name: name.clone(),
         slug: slugify(&name),
+        workspace_username: workspace_username.clone(),
         created_at: now.clone(),
         updated_at: now.clone(),
     };
 
     if sqlx::query(
-        "INSERT INTO tenants (id, name, slug, created_at, updated_at) VALUES ($1,$2,$3,$4,$5)",
+        "INSERT INTO tenants (id, name, slug, workspace_username, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6)",
     )
     .bind(&tenant.id)
     .bind(&tenant.name)
     .bind(&tenant.slug)
+    .bind(&tenant.workspace_username)
     .bind(&tenant.created_at)
     .bind(&tenant.updated_at)
     .execute(&state.db)
@@ -5646,25 +6117,192 @@ async fn create_tenant(
     .execute(&state.db)
     .await;
 
-    let token = Uuid::new_v4().to_string();
-    let _ = sqlx::query("UPDATE agents SET tenant_id = $1 WHERE id = $2")
-        .bind(&tenant.id)
-        .bind(&agent.id)
-        .execute(&state.db)
-        .await;
     let _ = sqlx::query(
-        "INSERT INTO auth_tokens (token, agent_id, tenant_id, created_at) VALUES ($1,$2,$3,$4)",
+        "INSERT INTO agents (id, user_id, tenant_id, name, email, status, password_hash, role, avatar_url, team_ids, inbox_ids) \
+         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11 \
+         WHERE NOT EXISTS (SELECT 1 FROM agents WHERE user_id = $2 AND tenant_id = $3)",
     )
-    .bind(&token)
-    .bind(&agent.id)
-    .bind(&tenant.id)
-    .bind(now_iso())
+    .bind(Uuid::new_v4().to_string())
+    .bind(&user.id)
+        .bind(&tenant.id)
+    .bind(&user.full_name)
+    .bind(&user.email)
+    .bind("online")
+    .bind(
+        sqlx::query_scalar::<_, String>("SELECT password_hash FROM users WHERE id = $1")
+            .bind(&user.id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default(),
+    )
+    .bind("owner")
+    .bind("")
+    .bind("[]")
+    .bind("[]")
     .execute(&state.db)
     .await;
 
+    let Some((token, _)) = issue_workspace_token(&state, &user.id, &tenant.id).await else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "failed to create workspace token" })),
+        )
+            .into_response();
+    };
+    let workspaces = list_user_workspaces(&state, &user.id).await;
     (
         StatusCode::CREATED,
-        Json(json!({ "tenant": tenant, "token": token })),
+        Json(json!({
+            "tenant": tenant,
+            "token": token,
+            "workspaces": workspaces,
+            "activeWorkspace": workspaces.iter().find(|w| w.id == tenant.id).cloned()
+        })),
+    )
+        .into_response()
+}
+
+async fn create_workspace_with_ticket(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<CreateTenantBody>,
+) -> impl IntoResponse {
+    let ticket = body.login_ticket.unwrap_or_default();
+    let Some(user_id) = consume_login_ticket(&state, &ticket).await else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "invalid or expired login ticket" })),
+        )
+            .into_response();
+    };
+    let name = body.name.trim().to_string();
+    if name.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "name required" })),
+        )
+            .into_response();
+    }
+    let default_workspace_username = slugify(&name);
+    let workspace_username_raw = body
+        .workspace_username
+        .as_deref()
+        .unwrap_or(&default_workspace_username)
+        .to_string();
+    let workspace_username = match validate_workspace_username(&workspace_username_raw) {
+        Ok(v) => v,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": err })),
+            )
+                .into_response();
+        }
+    };
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(1) FROM tenants WHERE workspace_username = $1",
+    )
+    .bind(&workspace_username)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0)
+        > 0;
+    if exists {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "workspace_username_taken" })),
+        )
+            .into_response();
+    }
+    let user_row = sqlx::query("SELECT email, full_name, password_hash FROM users WHERE id = $1")
+        .bind(&user_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+    let Some(user_row) = user_row else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "invalid user context" })),
+        )
+            .into_response();
+    };
+    let email: String = user_row.get("email");
+    let full_name: String = user_row.get("full_name");
+    let password_hash: String = user_row.get("password_hash");
+    let now = now_iso();
+    let tenant = Tenant {
+        id: Uuid::new_v4().to_string(),
+        name: name.clone(),
+        slug: slugify(&name),
+        workspace_username: workspace_username.clone(),
+        created_at: now.clone(),
+        updated_at: now.clone(),
+    };
+    let _ = sqlx::query(
+        "INSERT INTO tenants (id, name, slug, workspace_username, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6)",
+    )
+    .bind(&tenant.id)
+    .bind(&tenant.name)
+    .bind(&tenant.slug)
+    .bind(&tenant.workspace_username)
+    .bind(&tenant.created_at)
+    .bind(&tenant.updated_at)
+    .execute(&state.db)
+    .await;
+    let _ = sqlx::query(
+        "INSERT INTO tenant_settings (tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+    )
+    .bind(&tenant.id)
+    .bind(&tenant.name)
+    .bind("#e4b84f")
+    .bind("#1f2230")
+    .bind("")
+    .bind("#")
+    .bind("bottom-right")
+    .bind("Hello! How can we help?")
+    .bind("")
+    .bind("")
+    .bind(&now)
+    .bind(&now)
+    .execute(&state.db)
+    .await;
+    let _ = sqlx::query(
+        "INSERT INTO agents (id, user_id, tenant_id, name, email, status, password_hash, role, avatar_url, team_ids, inbox_ids) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&user_id)
+    .bind(&tenant.id)
+    .bind(&full_name)
+    .bind(&email)
+    .bind("online")
+    .bind(&password_hash)
+    .bind("owner")
+    .bind("")
+    .bind("[]")
+    .bind("[]")
+    .execute(&state.db)
+    .await;
+
+    let Some((token, profile)) = issue_workspace_token(&state, &user_id, &tenant.id).await else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "failed to create auth token" })),
+        )
+            .into_response();
+    };
+    let workspaces = list_user_workspaces(&state, &user_id).await;
+    (
+        StatusCode::CREATED,
+        Json(json!({
+            "tenant": tenant,
+            "token": token,
+            "agent": profile,
+            "tenantId": tenant.id,
+            "activeWorkspace": workspaces.iter().find(|w| w.id == tenant.id).cloned(),
+            "workspaces": workspaces
+        })),
     )
         .into_response()
 }
@@ -5678,7 +6316,20 @@ async fn switch_tenant(
         Ok(agent) => agent,
         Err(err) => return err.into_response(),
     };
-    let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM tenants WHERE id = $1")
+    let user = match auth_user_for_agent(&state, &agent.id).await {
+        Some(u) => u,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({ "error": "missing user account" })),
+            )
+                .into_response();
+        }
+    };
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(1) FROM agents WHERE user_id = $1 AND tenant_id = $2",
+    )
+        .bind(&user.id)
         .bind(&tenant_id)
         .fetch_one(&state.db)
         .await
@@ -5686,29 +6337,77 @@ async fn switch_tenant(
         > 0;
     if !exists {
         return (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "tenant not found" })),
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "tenant not accessible" })),
         )
             .into_response();
     }
-    let _ = sqlx::query("UPDATE agents SET tenant_id = $1 WHERE id = $2")
-        .bind(&tenant_id)
-        .bind(&agent.id)
-        .execute(&state.db)
-        .await;
-    let token = Uuid::new_v4().to_string();
-    let _ = sqlx::query(
-        "INSERT INTO auth_tokens (token, agent_id, tenant_id, created_at) VALUES ($1,$2,$3,$4)",
-    )
-    .bind(&token)
-    .bind(&agent.id)
-    .bind(&tenant_id)
-    .bind(now_iso())
-    .execute(&state.db)
-    .await;
+    let Some((token, _)) = issue_workspace_token(&state, &user.id, &tenant_id).await else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "failed to create auth token" })),
+        )
+            .into_response();
+    };
     (
         StatusCode::OK,
         Json(json!({ "tenantId": tenant_id, "token": token })),
+    )
+        .into_response()
+}
+
+async fn switch_workspace_by_username(
+    Path(workspace_username): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
+    let user = match auth_user_for_agent(&state, &agent.id).await {
+        Some(u) => u,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({ "error": "missing user account" })),
+            )
+                .into_response();
+        }
+    };
+    let tenant_id = sqlx::query_scalar::<_, String>(
+        "SELECT t.id FROM tenants t JOIN agents a ON a.tenant_id = t.id WHERE a.user_id = $1 AND t.workspace_username = $2 LIMIT 1",
+    )
+    .bind(&user.id)
+    .bind(normalize_workspace_username(&workspace_username))
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let Some(tenant_id) = tenant_id else {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "workspace not accessible" })),
+        )
+            .into_response();
+    };
+    let Some((token, profile)) = issue_workspace_token(&state, &user.id, &tenant_id).await else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "failed to create auth token" })),
+        )
+            .into_response();
+    };
+    let workspaces = list_user_workspaces(&state, &user.id).await;
+    (
+        StatusCode::OK,
+        Json(json!({
+            "tenantId": tenant_id,
+            "token": token,
+            "agent": profile,
+            "activeWorkspace": workspaces.iter().find(|w| w.id == tenant_id).cloned(),
+            "workspaces": workspaces
+        })),
     )
         .into_response()
 }
@@ -6009,7 +6708,8 @@ async fn get_invitation_info(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     let row = sqlx::query(
-        "SELECT i.id, i.tenant_id, i.email, i.role, i.status, t.name as tenant_name FROM tenant_invitations i JOIN tenants t ON t.id = i.tenant_id WHERE i.token = $1",
+        "SELECT i.id, i.tenant_id, i.email, i.role, i.status, t.name as tenant_name, t.workspace_username \
+         FROM tenant_invitations i JOIN tenants t ON t.id = i.tenant_id WHERE i.token = $1",
     )
     .bind(&inv_token)
     .fetch_optional(&state.db)
@@ -6027,6 +6727,7 @@ async fn get_invitation_info(
                     "role": row.get::<String, _>("role"),
                     "status": status,
                     "tenantName": row.get::<String, _>("tenant_name"),
+                    "workspaceUsername": row.get::<String, _>("workspace_username"),
                 })),
             )
                 .into_response()
@@ -6037,6 +6738,146 @@ async fn get_invitation_info(
         )
             .into_response(),
     }
+}
+
+async fn accept_invitation_with_ticket(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<AcceptInvitationBody>,
+) -> impl IntoResponse {
+    let invitation_token = body.invitation_token.trim().to_string();
+    if invitation_token.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invitation_token is required" })),
+        )
+            .into_response();
+    }
+    let user_id = if let Some(ticket) = body.login_ticket {
+        let Some(user_id) = consume_login_ticket(&state, ticket.trim()).await else {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({ "error": "invalid or expired login ticket" })),
+            )
+                .into_response();
+        };
+        user_id
+    } else {
+        let agent = match auth_agent_from_headers(&state, &headers).await {
+            Ok(a) => a,
+            Err(err) => return err.into_response(),
+        };
+        let Some(user) = auth_user_for_agent(&state, &agent.id).await else {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({ "error": "missing user account" })),
+            )
+                .into_response();
+        };
+        user.id
+    };
+
+    let user_row = sqlx::query("SELECT email, full_name, password_hash FROM users WHERE id = $1")
+        .bind(&user_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+    let Some(user_row) = user_row else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "invalid user context" })),
+        )
+            .into_response();
+    };
+    let email: String = user_row.get("email");
+    let full_name: String = user_row.get("full_name");
+    let password_hash: String = user_row.get("password_hash");
+
+    let invitation_row = sqlx::query(
+        "SELECT id, tenant_id, role, email, status FROM tenant_invitations WHERE token = $1",
+    )
+    .bind(&invitation_token)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let Some(invitation_row) = invitation_row else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "invitation not found" })),
+        )
+            .into_response();
+    };
+    let invitation_status: String = invitation_row.get("status");
+    if invitation_status != "pending" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invitation already used" })),
+        )
+            .into_response();
+    }
+    let invited_email: String = invitation_row.get("email");
+    if normalize_email(&invited_email) != normalize_email(&email) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invitation email mismatch" })),
+        )
+            .into_response();
+    }
+    let tenant_id: String = invitation_row.get("tenant_id");
+    let role: String = invitation_row.get("role");
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(1) FROM agents WHERE user_id = $1 AND tenant_id = $2",
+    )
+    .bind(&user_id)
+    .bind(&tenant_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0)
+        > 0;
+    if !exists {
+        let _ = sqlx::query(
+            "INSERT INTO agents (id, user_id, tenant_id, name, email, status, password_hash, role, avatar_url, team_ids, inbox_ids) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(&user_id)
+        .bind(&tenant_id)
+        .bind(&full_name)
+        .bind(&email)
+        .bind("online")
+        .bind(&password_hash)
+        .bind(&role)
+        .bind("")
+        .bind("[]")
+        .bind("[]")
+        .execute(&state.db)
+        .await;
+    }
+    let _ = sqlx::query("UPDATE tenant_invitations SET status = 'accepted' WHERE token = $1")
+        .bind(&invitation_token)
+        .execute(&state.db)
+        .await;
+
+    let Some((token, profile)) = issue_workspace_token(&state, &user_id, &tenant_id).await else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "failed to create auth token" })),
+        )
+            .into_response();
+    };
+    let workspaces = list_user_workspaces(&state, &user_id).await;
+    (
+        StatusCode::OK,
+        Json(json!({
+            "token": token,
+            "agent": profile,
+            "tenantId": tenant_id,
+            "activeWorkspace": workspaces.iter().find(|w| w.id == tenant_id).cloned(),
+            "workspaces": workspaces
+        })),
+    )
+        .into_response()
 }
 
 async fn get_tenant_settings(
@@ -7446,8 +8287,15 @@ pub async fn run() {
         .route("/health", get(health))
         .route("/api/widget/bootstrap", get(widget_bootstrap))
         .route("/api/auth/register", post(register_agent))
+        .route("/api/auth/signup", post(signup_user))
         .route("/api/auth/login", post(login_agent))
+        .route("/api/auth/select-workspace", post(select_workspace))
         .route("/api/auth/me", get(get_me))
+        .route("/api/workspaces", get(get_tenants).post(create_workspace_with_ticket))
+        .route(
+            "/api/workspaces/{workspace_username}/switch",
+            post(switch_workspace_by_username),
+        )
         .route("/api/tenants", get(get_tenants).post(create_tenant))
         .route("/api/tenants/{tenant_id}/switch", post(switch_tenant))
         .route("/api/tenant/members", get(get_tenant_members))
@@ -7468,6 +8316,7 @@ pub async fn run() {
             axum::routing::delete(revoke_invitation),
         )
         .route("/api/invitation/{inv_token}", get(get_invitation_info))
+        .route("/api/invitations/accept", post(accept_invitation_with_ticket))
         .route(
             "/api/tenant/settings",
             get(get_tenant_settings).patch(patch_tenant_settings),

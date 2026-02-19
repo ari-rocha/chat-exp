@@ -341,7 +341,9 @@ export default function CustomizationView({
                   <p className="text-sm font-medium text-slate-900">
                     {tenant.name}
                   </p>
-                  <p className="text-xs text-slate-500">{tenant.slug}</p>
+                  <p className="text-xs text-slate-500">
+                    @{tenant.workspaceUsername || tenant.slug}
+                  </p>
                 </div>
               ))}
             </div>

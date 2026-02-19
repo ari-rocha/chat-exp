@@ -219,10 +219,29 @@ pub struct FlowEdge {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UserProfile {
+    pub id: String,
+    pub email: String,
+    pub full_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSummary {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+    pub workspace_username: String,
+    pub role: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Tenant {
     pub id: String,
     pub name: String,
     pub slug: String,
+    pub workspace_username: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -348,6 +367,29 @@ pub struct RegisterBody {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SignupBody {
+    pub full_name: String,
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectWorkspaceBody {
+    pub login_ticket: String,
+    pub workspace_username: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcceptInvitationBody {
+    #[serde(default)]
+    pub login_ticket: Option<String>,
+    pub invitation_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InviteMemberBody {
     pub email: String,
     #[serde(default = "default_member_role")]
@@ -449,6 +491,10 @@ pub struct SessionHandoverBody {
 #[serde(rename_all = "camelCase")]
 pub struct CreateTenantBody {
     pub name: String,
+    #[serde(default)]
+    pub workspace_username: Option<String>,
+    #[serde(default)]
+    pub login_ticket: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

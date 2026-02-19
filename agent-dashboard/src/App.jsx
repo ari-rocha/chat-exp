@@ -254,14 +254,17 @@ export default function App() {
   );
 
   const [token, setToken] = useState(localStorage.getItem(TOKEN_KEY) || "");
-  const [authMode, setAuthMode] = useState("login");
+  const [authStage, setAuthStage] = useState("login");
   const [authForm, setAuthForm] = useState({
-    name: "",
+    fullName: "",
     email: "",
     password: "",
     workspaceName: "",
+    workspaceUsername: "",
     invitationToken: "",
+    loginTicket: "",
   });
+  const [workspaceChoices, setWorkspaceChoices] = useState([]);
   const [authError, setAuthError] = useState("");
 
   const [agent, setAgent] = useState(null);
@@ -736,35 +739,123 @@ export default function App() {
       .catch(() => setSessionContact(null));
   }, [activeSession?.contactId, token]);
 
-  const submitAuth = async (e) => {
+  const loginAuth = async (e) => {
     e.preventDefault();
     setAuthError("");
     try {
-      const path =
-        authMode === "register" ? "/api/auth/register" : "/api/auth/login";
-      const body =
-        authMode === "register"
-          ? {
-              name: authForm.name,
-              email: authForm.email,
-              password: authForm.password,
-              workspaceName: authForm.workspaceName || undefined,
-              invitationToken: authForm.invitationToken || undefined,
-            }
-          : { email: authForm.email, password: authForm.password };
-      const payload = await apiFetch(path, "", {
+      const payload = await apiFetch("/api/auth/login", "", {
         method: "POST",
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          email: authForm.email,
+          password: authForm.password,
+        }),
       });
-      localStorage.setItem(TOKEN_KEY, payload.token);
-      setToken(payload.token);
-      setAuthForm({
-        name: "",
-        email: "",
-        password: "",
-        workspaceName: "",
-        invitationToken: "",
+      if (payload.workspaceSelectionRequired) {
+        setWorkspaceChoices(payload.workspaces ?? []);
+        setAuthForm((prev) => ({
+          ...prev,
+          loginTicket: payload.loginTicket || "",
+        }));
+        setAuthStage("workspace-picker");
+        return;
+      }
+      if (payload.token) {
+        localStorage.setItem(TOKEN_KEY, payload.token);
+        setToken(payload.token);
+        setAuthForm({
+          fullName: "",
+          email: "",
+          password: "",
+          workspaceName: "",
+          workspaceUsername: "",
+          invitationToken: "",
+          loginTicket: "",
+        });
+        setWorkspaceChoices([]);
+        setAuthStage("login");
+      }
+    } catch (error) {
+      setAuthError(error.message);
+    }
+  };
+
+  const signupAccount = async (e) => {
+    e.preventDefault();
+    setAuthError("");
+    try {
+      const payload = await apiFetch("/api/auth/signup", "", {
+        method: "POST",
+        body: JSON.stringify({
+          fullName: authForm.fullName,
+          email: authForm.email,
+          password: authForm.password,
+        }),
       });
+      setAuthForm((prev) => ({
+        ...prev,
+        loginTicket: payload.loginTicket || "",
+      }));
+      setAuthStage("signup-choice");
+    } catch (error) {
+      setAuthError(error.message);
+    }
+  };
+
+  const createWorkspaceFromSignup = async (e) => {
+    e.preventDefault();
+    setAuthError("");
+    try {
+      const payload = await apiFetch("/api/workspaces", "", {
+        method: "POST",
+        body: JSON.stringify({
+          name: authForm.workspaceName,
+          workspaceUsername: authForm.workspaceUsername,
+          loginTicket: authForm.loginTicket,
+        }),
+      });
+      if (payload.token) {
+        localStorage.setItem(TOKEN_KEY, payload.token);
+        setToken(payload.token);
+      }
+    } catch (error) {
+      setAuthError(error.message);
+    }
+  };
+
+  const joinWorkspaceFromSignup = async (e) => {
+    e.preventDefault();
+    setAuthError("");
+    try {
+      const payload = await apiFetch("/api/invitations/accept", "", {
+        method: "POST",
+        body: JSON.stringify({
+          loginTicket: authForm.loginTicket,
+          invitationToken: authForm.invitationToken,
+        }),
+      });
+      if (payload.token) {
+        localStorage.setItem(TOKEN_KEY, payload.token);
+        setToken(payload.token);
+      }
+    } catch (error) {
+      setAuthError(error.message);
+    }
+  };
+
+  const pickWorkspaceAfterLogin = async (workspaceUsername) => {
+    setAuthError("");
+    try {
+      const payload = await apiFetch("/api/auth/select-workspace", "", {
+        method: "POST",
+        body: JSON.stringify({
+          loginTicket: authForm.loginTicket,
+          workspaceUsername,
+        }),
+      });
+      if (payload.token) {
+        localStorage.setItem(TOKEN_KEY, payload.token);
+        setToken(payload.token);
+      }
     } catch (error) {
       setAuthError(error.message);
     }
@@ -785,6 +876,8 @@ export default function App() {
     setSessionContact(null);
     setConversationAttrs([]);
     setContacts([]);
+    setAuthStage("login");
+    setWorkspaceChoices([]);
   };
 
   const sendMessage = (e) => {
@@ -1281,12 +1374,17 @@ export default function App() {
   if (!token) {
     return (
       <AuthView
-        authMode={authMode}
+        authStage={authStage}
         authForm={authForm}
         setAuthForm={setAuthForm}
+        workspaceChoices={workspaceChoices}
         authError={authError}
-        submitAuth={submitAuth}
-        setAuthMode={setAuthMode}
+        loginAuth={loginAuth}
+        signupAccount={signupAccount}
+        createWorkspaceFromSignup={createWorkspaceFromSignup}
+        joinWorkspaceFromSignup={joinWorkspaceFromSignup}
+        pickWorkspaceAfterLogin={pickWorkspaceAfterLogin}
+        setAuthStage={setAuthStage}
       />
     );
   }
