@@ -1,0 +1,5 @@
+ALTER TABLE tenant_settings
+ADD COLUMN IF NOT EXISTS bot_enabled_by_default BOOLEAN NOT NULL DEFAULT TRUE;
+
+ALTER TABLE tenant_settings
+ADD COLUMN IF NOT EXISTS bot_personality TEXT NOT NULL DEFAULT '';

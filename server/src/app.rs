@@ -1001,7 +1001,11 @@ async fn find_or_create_whatsapp_session(
 ) -> Option<String> {
     let existing = sqlx::query_scalar::<_, String>(
         "SELECT id FROM sessions \
-         WHERE tenant_id = $1 AND channel = 'whatsapp' AND visitor_id = $2 AND status = 'open' \
+         WHERE tenant_id = $1 \
+           AND channel = 'whatsapp' \
+           AND visitor_id = $2 \
+           AND status = 'open' \
+           AND handover_active = false \
          ORDER BY updated_at DESC LIMIT 1",
     )
     .bind(tenant_id)
@@ -1942,7 +1946,6 @@ async fn ensure_session(state: Arc<AppState>, session_id: &str, tenant_id: &str)
         created = true;
         let now = now_iso();
 
-        // Look up the first enabled flow for this tenant
         let default_flow_id: Option<String> = sqlx::query_scalar(
             "SELECT id FROM flows WHERE tenant_id = $1 AND enabled = true ORDER BY created_at ASC LIMIT 1",
         )
@@ -2482,6 +2485,32 @@ fn has_handover_intent(text: &str) -> bool {
         "speak with agent",
     ];
     terms.iter().any(|needle| lower.contains(needle))
+}
+
+async fn bot_config_for_session(state: &Arc<AppState>, session_id: &str) -> (bool, String) {
+    let tenant_id = tenant_for_session(state, session_id)
+        .await
+        .unwrap_or_default();
+    if tenant_id.is_empty() {
+        return (true, String::new());
+    }
+
+    let row = sqlx::query(
+        "SELECT bot_enabled_by_default, bot_personality FROM tenant_settings WHERE tenant_id = $1",
+    )
+    .bind(&tenant_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    if let Some(row) = row {
+        let enabled = row.get::<bool, _>("bot_enabled_by_default");
+        let personality = row.get::<String, _>("bot_personality");
+        return (enabled, personality);
+    }
+
+    (true, String::new())
 }
 
 #[derive(Debug, Clone)]
@@ -4886,6 +4915,11 @@ async fn run_flow_for_visitor_message(
         return;
     }
 
+    let (bot_enabled_by_default, bot_personality) = bot_config_for_session(&state, &session_id).await;
+    if !bot_enabled_by_default {
+        return;
+    }
+
     // ── Check for existing flow cursor (resume interactive node) ──
     if trigger_event == "visitor_message" {
         if let Some((cursor_flow_id, cursor_node_id, _cursor_node_type, cursor_vars)) =
@@ -5090,8 +5124,65 @@ async fn run_flow_for_visitor_message(
         return;
     }
 
-    if visitor_text.trim().eq_ignore_ascii_case("okay") {
-        send_flow_agent_message(state, &session_id, "Glad I could help!", 900, None, None).await;
+    if trigger_event == "visitor_message" {
+        let personality_prompt = if bot_personality.trim().is_empty() {
+            "You are the workspace support bot. Be concise, practical, and accurate. Ask one clarifying question when needed.".to_string()
+        } else {
+            format!(
+                "You are the workspace support bot. Follow this personality and behavior exactly:\n{}",
+                bot_personality.trim()
+            )
+        };
+        let decision =
+            generate_ai_reply(state.clone(), &session_id, &personality_prompt, &visitor_text).await;
+        let suggestions_opt = if decision.suggestions.is_empty() {
+            None
+        } else {
+            Some(decision.suggestions.clone())
+        };
+        send_flow_agent_message(
+            state.clone(),
+            &session_id,
+            &decision.reply,
+            650,
+            suggestions_opt,
+            None,
+        )
+        .await;
+        if decision.handover {
+            if let Some((summary, changed)) = set_session_handover(&state, &session_id, true).await {
+                emit_session_update(&state, summary).await;
+                if changed {
+                    let _ = add_message(
+                        state.clone(),
+                        &session_id,
+                        "system",
+                        "Conversation transferred to a human agent",
+                        None,
+                        None,
+                        None,
+                    )
+                    .await;
+                }
+            }
+        }
+        if decision.close_chat {
+            if let Some((summary, changed)) = set_session_status(&state, &session_id, "closed").await {
+                emit_session_update(&state, summary).await;
+                if changed {
+                    let _ = add_message(
+                        state.clone(),
+                        &session_id,
+                        "system",
+                        "Conversation closed by bot",
+                        None,
+                        None,
+                        None,
+                    )
+                    .await;
+                }
+            }
+        }
     }
 }
 
@@ -5739,7 +5830,7 @@ async fn register_agent(
     .execute(&state.db)
     .await;
     let _ = sqlx::query(
-        "INSERT INTO tenant_settings (tenant_id, brand_name, workspace_short_bio, workspace_description, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
+        "INSERT INTO tenant_settings (tenant_id, brand_name, workspace_short_bio, workspace_description, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, bot_enabled_by_default, bot_personality, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)",
     )
     .bind(&tenant_id)
     .bind(&ws_name)
@@ -5752,6 +5843,8 @@ async fn register_agent(
     .bind("bottom-right")
     .bind("Hello! How can we help?")
     .bind("")
+    .bind("")
+    .bind(true)
     .bind("")
     .bind(&now)
     .bind(&now)
@@ -7607,7 +7700,7 @@ async fn whatsapp_webhook_event(
                 .await;
 
                 resolve_contact_from_visitor_id(&state, &session_id, &visitor_id).await;
-                if add_message(
+                let persisted = add_message(
                     state.clone(),
                     &session_id,
                     "visitor",
@@ -7617,22 +7710,22 @@ async fn whatsapp_webhook_event(
                     None,
                 )
                 .await
-                .is_some()
-                {
+                .is_some();
+                if persisted {
                     processed += 1;
-                    let state_clone = state.clone();
-                    let session_clone = session_id.clone();
-                    let text_clone = text.clone();
-                    tokio::spawn(async move {
-                        run_flow_for_visitor_message(
-                            state_clone,
-                            session_clone,
-                            text_clone,
-                            "visitor_message",
-                        )
-                        .await;
-                    });
                 }
+                let state_clone = state.clone();
+                let session_clone = session_id.clone();
+                let text_clone = text.clone();
+                tokio::spawn(async move {
+                    run_flow_for_visitor_message(
+                        state_clone,
+                        session_clone,
+                        text_clone,
+                        "visitor_message",
+                    )
+                    .await;
+                });
             }
         }
     }
@@ -8220,11 +8313,13 @@ async fn create_tenant(
         welcome_text: "Hello! How can we help?".to_string(),
         bot_name: "".to_string(),
         bot_avatar_url: "".to_string(),
+        bot_enabled_by_default: true,
+        bot_personality: "".to_string(),
         created_at: now.clone(),
         updated_at: now.clone(),
     };
     let _ = sqlx::query(
-        "INSERT INTO tenant_settings (tenant_id, brand_name, workspace_short_bio, workspace_description, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
+        "INSERT INTO tenant_settings (tenant_id, brand_name, workspace_short_bio, workspace_description, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, bot_enabled_by_default, bot_personality, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)",
     )
     .bind(&settings.tenant_id)
     .bind(&settings.brand_name)
@@ -8238,6 +8333,8 @@ async fn create_tenant(
     .bind(&settings.welcome_text)
     .bind(&settings.bot_name)
     .bind(&settings.bot_avatar_url)
+    .bind(settings.bot_enabled_by_default)
+    .bind(&settings.bot_personality)
     .bind(&settings.created_at)
     .bind(&settings.updated_at)
     .execute(&state.db)
@@ -8373,7 +8470,7 @@ async fn create_workspace_with_ticket(
     .execute(&state.db)
     .await;
     let _ = sqlx::query(
-        "INSERT INTO tenant_settings (tenant_id, brand_name, workspace_short_bio, workspace_description, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
+        "INSERT INTO tenant_settings (tenant_id, brand_name, workspace_short_bio, workspace_description, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, bot_enabled_by_default, bot_personality, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)",
     )
     .bind(&tenant.id)
     .bind(&tenant.name)
@@ -8386,6 +8483,8 @@ async fn create_workspace_with_ticket(
     .bind("bottom-right")
     .bind("Hello! How can we help?")
     .bind("")
+    .bind("")
+    .bind(true)
     .bind("")
     .bind(&now)
     .bind(&now)
@@ -9015,7 +9114,7 @@ async fn get_tenant_settings(
         Err(err) => return err.into_response(),
     };
     let settings = sqlx::query(
-        "SELECT tenant_id, brand_name, workspace_short_bio, workspace_description, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
+        "SELECT tenant_id, brand_name, workspace_short_bio, workspace_description, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, bot_enabled_by_default, bot_personality, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
     )
     .bind(&tenant_id)
     .fetch_optional(&state.db)
@@ -9035,6 +9134,8 @@ async fn get_tenant_settings(
         welcome_text: row.get("welcome_text"),
         bot_name: row.get("bot_name"),
         bot_avatar_url: row.get("bot_avatar_url"),
+        bot_enabled_by_default: row.get("bot_enabled_by_default"),
+        bot_personality: row.get("bot_personality"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     });
@@ -9054,7 +9155,7 @@ async fn patch_tenant_settings(
         Err(err) => return err.into_response(),
     };
     let mut settings = sqlx::query(
-        "SELECT tenant_id, brand_name, workspace_short_bio, workspace_description, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
+        "SELECT tenant_id, brand_name, workspace_short_bio, workspace_description, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, bot_enabled_by_default, bot_personality, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
     )
     .bind(&tenant_id)
     .fetch_optional(&state.db)
@@ -9074,6 +9175,8 @@ async fn patch_tenant_settings(
         welcome_text: row.get("welcome_text"),
         bot_name: row.get("bot_name"),
         bot_avatar_url: row.get("bot_avatar_url"),
+        bot_enabled_by_default: row.get("bot_enabled_by_default"),
+        bot_personality: row.get("bot_personality"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     });
@@ -9117,9 +9220,15 @@ async fn patch_tenant_settings(
     if let Some(v) = body.bot_avatar_url {
         settings.bot_avatar_url = v;
     }
+    if let Some(v) = body.bot_enabled_by_default {
+        settings.bot_enabled_by_default = v;
+    }
+    if let Some(v) = body.bot_personality {
+        settings.bot_personality = v;
+    }
     settings.updated_at = now_iso();
     let _ = sqlx::query(
-        "UPDATE tenant_settings SET brand_name = $1, workspace_short_bio = $2, workspace_description = $3, primary_color = $4, accent_color = $5, logo_url = $6, privacy_url = $7, launcher_position = $8, welcome_text = $9, bot_name = $10, bot_avatar_url = $11, updated_at = $12 WHERE tenant_id = $13",
+        "UPDATE tenant_settings SET brand_name = $1, workspace_short_bio = $2, workspace_description = $3, primary_color = $4, accent_color = $5, logo_url = $6, privacy_url = $7, launcher_position = $8, welcome_text = $9, bot_name = $10, bot_avatar_url = $11, bot_enabled_by_default = $12, bot_personality = $13, updated_at = $14 WHERE tenant_id = $15",
     )
     .bind(&settings.brand_name)
     .bind(&settings.workspace_short_bio)
@@ -9132,6 +9241,8 @@ async fn patch_tenant_settings(
     .bind(&settings.welcome_text)
     .bind(&settings.bot_name)
     .bind(&settings.bot_avatar_url)
+    .bind(settings.bot_enabled_by_default)
+    .bind(&settings.bot_personality)
     .bind(&settings.updated_at)
     .bind(&tenant_id)
     .execute(&state.db)
@@ -10075,7 +10186,7 @@ async fn widget_bootstrap(
 
     // Fetch tenant settings
     let settings = sqlx::query(
-        "SELECT tenant_id, brand_name, workspace_short_bio, workspace_description, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
+        "SELECT tenant_id, brand_name, workspace_short_bio, workspace_description, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, bot_enabled_by_default, bot_personality, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
     )
     .bind(&tenant_id)
     .fetch_optional(&state.db)
@@ -10095,6 +10206,8 @@ async fn widget_bootstrap(
         welcome_text: row.get("welcome_text"),
         bot_name: row.get("bot_name"),
         bot_avatar_url: row.get("bot_avatar_url"),
+        bot_enabled_by_default: row.get("bot_enabled_by_default"),
+        bot_personality: row.get("bot_personality"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     });

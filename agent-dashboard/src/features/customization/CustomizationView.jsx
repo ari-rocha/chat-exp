@@ -11,6 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import {
   ArrowLeft,
+  Bot,
   ChevronRight,
   CircleUserRound,
   Globe,
@@ -35,6 +36,7 @@ const NAV_SECTIONS = [
     group: "Workspace",
     items: [
       { key: "general", label: "General", icon: Settings2 },
+      { key: "bot", label: "Bot", icon: Bot },
       { key: "channels", label: "Channels", icon: Globe },
       { key: "canned", label: "Canned Responses", icon: MessageSquareText },
       { key: "tags", label: "Tags", icon: Tag },
@@ -707,6 +709,117 @@ export default function CustomizationView({
     </div>
   );
 
+  /* ──────────── Bot ──────────── */
+  const renderBotPage = () => (
+    <div>
+      <h2 className="text-base font-semibold text-slate-900">Bot</h2>
+      <p className="mb-6 text-sm text-slate-500">
+        Workspace-wide bot behavior for web and WhatsApp conversations.
+      </p>
+
+      <div className="max-w-xl rounded-lg border border-slate-200 bg-white p-4 space-y-4">
+        <label className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2.5">
+          <div>
+            <p className="text-sm font-medium text-slate-800">
+              Enable bot by default
+            </p>
+            <p className="text-xs text-slate-500">
+              New conversations start with bot automation active.
+            </p>
+          </div>
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-blue-600"
+            checked={tenantSettings?.botEnabledByDefault !== false}
+            onChange={(e) =>
+              setTenantSettings((prev) => ({
+                ...(prev || {}),
+                botEnabledByDefault: e.target.checked,
+              }))
+            }
+          />
+        </label>
+
+        <div className="flex items-center gap-3 mb-1">
+          {tenantSettings?.botAvatarUrl ? (
+            <img
+              src={tenantSettings.botAvatarUrl}
+              alt="Bot"
+              className="h-10 w-10 rounded-full object-cover border-2 border-slate-200"
+            />
+          ) : (
+            <div className="h-10 w-10 rounded-full bg-gradient-to-br from-emerald-500 to-teal-500 text-white flex items-center justify-center text-sm font-bold">
+              {(tenantSettings?.botName || "B")[0].toUpperCase()}
+            </div>
+          )}
+          <span className="text-sm text-slate-700 font-medium">
+            {tenantSettings?.botName || "Bot"}
+          </span>
+        </div>
+
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-slate-700">
+            Bot display name
+          </label>
+          <Input
+            value={tenantSettings?.botName || ""}
+            onChange={(e) =>
+              setTenantSettings((prev) => ({
+                ...(prev || {}),
+                botName: e.target.value,
+              }))
+            }
+            placeholder="e.g. Agent, Support Bot"
+          />
+        </div>
+
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-slate-700">
+            Bot avatar URL
+          </label>
+          <Input
+            value={tenantSettings?.botAvatarUrl || ""}
+            onChange={(e) =>
+              setTenantSettings((prev) => ({
+                ...(prev || {}),
+                botAvatarUrl: e.target.value,
+              }))
+            }
+            placeholder="https://..."
+          />
+        </div>
+
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-slate-700">
+            Personality and behavior
+          </label>
+          <Textarea
+            value={tenantSettings?.botPersonality || ""}
+            onChange={(e) =>
+              setTenantSettings((prev) => ({
+                ...(prev || {}),
+                botPersonality: e.target.value,
+              }))
+            }
+            placeholder="Example: Be concise, friendly, and solution-first. Ask for order ID before troubleshooting refunds."
+            rows={5}
+          />
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-slate-200 pt-4">
+          <Button
+            type="button"
+            onClick={saveWorkspaceProfile}
+            disabled={workspaceSaving}
+            className={PRIMARY_BUTTON_CLASS}
+          >
+            {workspaceSaving ? "Saving…" : "Save Bot Settings"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+
   /* ──────────── Channels list ──────────── */
   const renderChannelsListPage = () => (
     <div>
@@ -1144,59 +1257,6 @@ export default function CustomizationView({
                     }
                     placeholder="Greeting shown when the widget opens"
                     rows={2}
-                  />
-                </div>
-              </fieldset>
-
-              {/* Bot Profile */}
-              <fieldset className="space-y-3 border-t border-slate-200 pt-5">
-                <legend className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
-                  Bot Profile
-                </legend>
-                <div className="flex items-center gap-3 mb-1">
-                  {tenantSettings?.botAvatarUrl ? (
-                    <img
-                      src={tenantSettings.botAvatarUrl}
-                      alt="Bot"
-                      className="h-10 w-10 rounded-full object-cover border-2 border-slate-200"
-                    />
-                  ) : (
-                    <div className="h-10 w-10 rounded-full bg-gradient-to-br from-emerald-500 to-teal-500 text-white flex items-center justify-center text-sm font-bold">
-                      {(tenantSettings?.botName || "B")[0].toUpperCase()}
-                    </div>
-                  )}
-                  <span className="text-sm text-slate-700 font-medium">
-                    {tenantSettings?.botName || "Bot"}
-                  </span>
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-slate-700">
-                    Bot display name
-                  </label>
-                  <Input
-                    value={tenantSettings?.botName || ""}
-                    onChange={(e) =>
-                      setTenantSettings((prev) => ({
-                        ...(prev || {}),
-                        botName: e.target.value,
-                      }))
-                    }
-                    placeholder="e.g. Agent, Support Bot"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-slate-700">
-                    Bot avatar URL
-                  </label>
-                  <Input
-                    value={tenantSettings?.botAvatarUrl || ""}
-                    onChange={(e) =>
-                      setTenantSettings((prev) => ({
-                        ...(prev || {}),
-                        botAvatarUrl: e.target.value,
-                      }))
-                    }
-                    placeholder="https://..."
                   />
                 </div>
               </fieldset>
@@ -1972,6 +2032,8 @@ export default function CustomizationView({
         return renderAccountPage();
       case "general":
         return renderGeneralPage();
+      case "bot":
+        return renderBotPage();
       case "channels":
         return renderChannelsListPage();
       case "canned":
