@@ -301,7 +301,7 @@ export default function App() {
   const [activeId, setActiveId] = useState("");
   const [text, setText] = useState("");
   const [conversationSearch, setConversationSearch] = useState("");
-  const [conversationFilter, setConversationFilter] = useState("all");
+  const [conversationFilter, setConversationFilter] = useState("active");
   const [inboxFilter, setInboxFilter] = useState("all");
   const [visitorDraftBySession, setVisitorDraftBySession] = useState({});
   const [cannedReplies, setCannedReplies] = useState([]);
@@ -395,6 +395,9 @@ export default function App() {
     const query = conversationSearch.trim().toLowerCase();
     const byStatus = sessions.filter((session) => {
       const status = session.status || "open";
+      if (conversationFilter === "active") {
+        return status !== "closed";
+      }
       if (conversationFilter === "all") return true;
       return status === conversationFilter;
     });

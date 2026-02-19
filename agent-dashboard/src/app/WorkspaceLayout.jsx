@@ -25,6 +25,7 @@ const NAV_ITEMS = [
 ];
 
 const STATUS_ITEMS = [
+  { id: "active", label: "Active" },
   { id: "all", label: "All" },
   { id: "open", label: "Agent" },
   { id: "awaiting", label: "Awaiting agent" },
@@ -106,6 +107,7 @@ export default function WorkspaceLayout({
   onOpenSettings,
 }) {
   const statusCount = {
+    active: openCount + waitingCount,
     all: sessions.length,
     open: openCount,
     awaiting: waitingCount,
@@ -302,9 +304,17 @@ export default function WorkspaceLayout({
                       Conversations
                     </p>
                   </div>
-                  <Badge variant="secondary" className="text-[10px]">
-                    Newest
-                  </Badge>
+                  <select
+                    className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700"
+                    value={conversationFilter}
+                    onChange={(e) => setConversationFilter(e.target.value)}
+                  >
+                    {STATUS_ITEMS.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <ScrollArea className="h-full p-2">
