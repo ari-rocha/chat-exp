@@ -210,8 +210,8 @@ export default function CustomizationView({
         });
         setChannelRecords((prev) =>
           prev.map((ch) =>
-            ch.id === editingChannel.id ? { ...ch, ...channelData } : ch
-          )
+            ch.id === editingChannel.id ? { ...ch, ...channelData } : ch,
+          ),
         );
       } else {
         const res = await apiFetch("/api/channels", token, {
@@ -248,7 +248,12 @@ export default function CustomizationView({
   };
 
   const deleteInbox = async (inboxId) => {
-    if (!confirm("Are you sure you want to delete this inbox? Agents will lose access.")) return;
+    if (
+      !confirm(
+        "Are you sure you want to delete this inbox? Agents will lose access.",
+      )
+    )
+      return;
     setRoutingError("");
     try {
       await apiFetch(`/api/inboxes/${inboxId}`, token, {
@@ -257,7 +262,9 @@ export default function CustomizationView({
       setInboxes((prev) => prev.filter((ib) => ib.id !== inboxId));
       // Also update channels to remove inbox reference
       setChannelRecords((prev) =>
-        prev.map((ch) => (ch.inboxId === inboxId ? { ...ch, inboxId: null } : ch))
+        prev.map((ch) =>
+          ch.inboxId === inboxId ? { ...ch, inboxId: null } : ch,
+        ),
       );
     } catch (err) {
       setRoutingError(err.message);
@@ -265,11 +272,18 @@ export default function CustomizationView({
   };
 
   const openChannelEditor = (channel) => {
-    setEditingChannel(channel || {
-      channelType: "web",
-      name: "",
-      config: { domain: "", widgetColor: "#2b7fff", welcomeTitle: "Hello!", welcomeBody: "Ask any question" },
-    });
+    setEditingChannel(
+      channel || {
+        channelType: "web",
+        name: "",
+        config: {
+          domain: "",
+          widgetColor: "#2b7fff",
+          welcomeTitle: "Hello!",
+          welcomeBody: "Ask any question",
+        },
+      },
+    );
   };
 
   const resetWizard = () => {
@@ -405,7 +419,9 @@ export default function CustomizationView({
           team.id === teamId
             ? {
                 ...team,
-                agentIds: Array.from(new Set([...(team.agentIds || []), agentId])),
+                agentIds: Array.from(
+                  new Set([...(team.agentIds || []), agentId]),
+                ),
               }
             : team,
         ),
@@ -428,7 +444,9 @@ export default function CustomizationView({
           inbox.id === inboxId
             ? {
                 ...inbox,
-                agentIds: Array.from(new Set([...(inbox.agentIds || []), agentId])),
+                agentIds: Array.from(
+                  new Set([...(inbox.agentIds || []), agentId]),
+                ),
               }
             : inbox,
         ),
@@ -554,7 +572,14 @@ export default function CustomizationView({
               ))}
             </div>
             <p className="mt-4 text-xs text-slate-400">
-              To configure the chat widget appearance, go to <button onClick={() => handleTabChange("routing")} className="text-blue-600 hover:underline font-medium">Routing</button> and edit your web channel.
+              To configure the chat widget appearance, go to{" "}
+              <button
+                onClick={() => handleTabChange("routing")}
+                className="text-blue-600 hover:underline font-medium"
+              >
+                Routing
+              </button>{" "}
+              and edit your web channel.
             </p>
           </section>
         </div>
@@ -566,8 +591,12 @@ export default function CustomizationView({
           <section className="rounded-xl border border-slate-200 bg-white">
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
               <div>
-                <h3 className="text-sm font-semibold text-slate-900">Inboxes</h3>
-                <p className="text-xs text-slate-500">Manage your conversation queues</p>
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Inboxes
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Manage your conversation queues
+                </p>
               </div>
               <Button
                 onClick={() => {
@@ -579,10 +608,12 @@ export default function CustomizationView({
                 Add Inbox
               </Button>
             </div>
-            
+
             {(inboxes || []).length === 0 ? (
               <div className="p-8 text-center">
-                <p className="text-sm text-slate-500 mb-4">No inboxes yet. Create one to start receiving conversations.</p>
+                <p className="text-sm text-slate-500 mb-4">
+                  No inboxes yet. Create one to start receiving conversations.
+                </p>
                 <Button
                   onClick={() => {
                     setEditingChannel(null);
@@ -596,15 +627,22 @@ export default function CustomizationView({
             ) : (
               <div className="divide-y divide-slate-100">
                 {(inboxes || []).map((inbox) => {
-                  const inboxChannels = (channelRecords || []).filter(ch => ch.inboxId === inbox.id);
-                  const assignedAgents = (agents || []).filter(a => (inbox.agentIds || []).includes(a.id));
+                  const inboxChannels = (channelRecords || []).filter(
+                    (ch) => ch.inboxId === inbox.id,
+                  );
+                  const assignedAgents = (agents || []).filter((a) =>
+                    (inbox.agentIds || []).includes(a.id),
+                  );
                   return (
                     <div key={inbox.id} className="p-5">
                       <div className="flex items-start justify-between">
                         <div>
-                          <h4 className="text-sm font-semibold text-slate-900">{inbox.name}</h4>
+                          <h4 className="text-sm font-semibold text-slate-900">
+                            {inbox.name}
+                          </h4>
                           <p className="text-xs text-slate-500 mt-1">
-                            {inboxChannels.length} channel(s) · {assignedAgents.length} agent(s)
+                            {inboxChannels.length} channel(s) ·{" "}
+                            {assignedAgents.length} agent(s)
                           </p>
                         </div>
                         <div className="flex gap-2">
@@ -616,7 +654,12 @@ export default function CustomizationView({
                                 channelType: "web",
                                 name: "",
                                 inboxId: inbox.id,
-                                config: { domain: "", widgetColor: "#2b7fff", welcomeTitle: "Hello!", welcomeBody: "Ask any question" },
+                                config: {
+                                  domain: "",
+                                  widgetColor: "#2b7fff",
+                                  welcomeTitle: "Hello!",
+                                  welcomeBody: "Ask any question",
+                                },
                               });
                             }}
                           >
@@ -632,7 +675,7 @@ export default function CustomizationView({
                           </Button>
                         </div>
                       </div>
-                      
+
                       {/* Channels for this inbox */}
                       {inboxChannels.length > 0 && (
                         <div className="mt-4 space-y-3">
@@ -642,14 +685,22 @@ export default function CustomizationView({
                               className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3"
                             >
                               <div className="flex items-center gap-3">
-                                <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${
-                                  channel.channelType === "web" ? "bg-blue-100 text-blue-600" : "bg-purple-100 text-purple-600"
-                                }`}>
+                                <div
+                                  className={`flex h-8 w-8 items-center justify-center rounded-lg ${
+                                    channel.channelType === "web"
+                                      ? "bg-blue-100 text-blue-600"
+                                      : "bg-purple-100 text-purple-600"
+                                  }`}
+                                >
                                   {channel.channelType === "web" ? "🌐" : "🔌"}
                                 </div>
                                 <div>
-                                  <p className="text-sm font-medium text-slate-900">{channel.name}</p>
-                                  <p className="text-xs text-slate-500 capitalize">{channel.channelType} channel</p>
+                                  <p className="text-sm font-medium text-slate-900">
+                                    {channel.name}
+                                  </p>
+                                  <p className="text-xs text-slate-500 capitalize">
+                                    {channel.channelType} channel
+                                  </p>
                                 </div>
                               </div>
                               <div className="flex items-center gap-2">
@@ -673,12 +724,15 @@ export default function CustomizationView({
                           ))}
                         </div>
                       )}
-                      
+
                       {/* Assigned agents */}
                       {assignedAgents.length > 0 && (
                         <div className="mt-3 flex flex-wrap gap-1">
                           {assignedAgents.map((a) => (
-                            <span key={a.id} className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                            <span
+                              key={a.id}
+                              className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600"
+                            >
                               {a.name}
                             </span>
                           ))}
@@ -696,7 +750,9 @@ export default function CustomizationView({
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="text-sm font-semibold text-slate-900">Teams</h3>
-                <p className="text-xs text-slate-500">Group agents for routing</p>
+                <p className="text-xs text-slate-500">
+                  Group agents for routing
+                </p>
               </div>
             </div>
             <form onSubmit={createTeam} className="mb-4 flex gap-2">
@@ -712,22 +768,31 @@ export default function CustomizationView({
             </form>
             <div className="space-y-2">
               {(teams || []).map((team) => {
-                const teamAgents = (agents || []).filter(a => (team.agentIds || []).includes(a.id));
+                const teamAgents = (agents || []).filter((a) =>
+                  (team.agentIds || []).includes(a.id),
+                );
                 return (
                   <div
                     key={team.id}
                     className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3"
                   >
                     <div>
-                      <p className="text-sm font-medium text-slate-900">{team.name}</p>
+                      <p className="text-sm font-medium text-slate-900">
+                        {team.name}
+                      </p>
                       <div className="mt-1 flex flex-wrap gap-1">
                         {teamAgents.map((a) => (
-                          <span key={a.id} className="inline-flex items-center rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-600">
+                          <span
+                            key={a.id}
+                            className="inline-flex items-center rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-600"
+                          >
                             {a.name}
                           </span>
                         ))}
                         {teamAgents.length === 0 && (
-                          <span className="text-xs text-slate-400">No agents</span>
+                          <span className="text-xs text-slate-400">
+                            No agents
+                          </span>
                         )}
                       </div>
                     </div>
@@ -739,16 +804,24 @@ export default function CustomizationView({
                       }}
                       className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700"
                     >
-                      <option value="" disabled>Add agent</option>
-                      {(agents || []).filter(a => !(team.agentIds || []).includes(a.id)).map((member) => (
-                        <option key={member.id} value={member.id}>{member.name}</option>
-                      ))}
+                      <option value="" disabled>
+                        Add agent
+                      </option>
+                      {(agents || [])
+                        .filter((a) => !(team.agentIds || []).includes(a.id))
+                        .map((member) => (
+                          <option key={member.id} value={member.id}>
+                            {member.name}
+                          </option>
+                        ))}
                     </select>
                   </div>
                 );
               })}
               {(teams || []).length === 0 && (
-                <p className="text-xs text-slate-400 py-4 text-center">No teams yet.</p>
+                <p className="text-xs text-slate-400 py-4 text-center">
+                  No teams yet.
+                </p>
               )}
             </div>
           </section>
@@ -760,54 +833,81 @@ export default function CustomizationView({
                 <h3 className="text-lg font-semibold text-white mb-4">
                   {editingChannel.id ? "Edit Channel" : "Add Channel"}
                 </h3>
-                
+
                 <div className="space-y-4">
                   <div>
-                    <label className="mb-1 block text-xs text-slate-400">Channel Type</label>
+                    <label className="mb-1 block text-xs text-slate-400">
+                      Channel Type
+                    </label>
                     <select
                       value={editingChannel.channelType || "web"}
-                      onChange={(e) => setEditingChannel({ ...editingChannel, channelType: e.target.value })}
+                      onChange={(e) =>
+                        setEditingChannel({
+                          ...editingChannel,
+                          channelType: e.target.value,
+                        })
+                      }
                       className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100"
                     >
                       <option value="web">Website Widget</option>
                       <option value="api">API</option>
                     </select>
                   </div>
-                  
+
                   <div>
-                    <label className="mb-1 block text-xs text-slate-400">Channel Name</label>
+                    <label className="mb-1 block text-xs text-slate-400">
+                      Channel Name
+                    </label>
                     <Input
                       value={editingChannel.name || ""}
-                      onChange={(e) => setEditingChannel({ ...editingChannel, name: e.target.value })}
+                      onChange={(e) =>
+                        setEditingChannel({
+                          ...editingChannel,
+                          name: e.target.value,
+                        })
+                      }
                       placeholder="e.g. My Website"
                       className="border-slate-700 bg-slate-900 text-slate-100"
                     />
                   </div>
-                  
+
                   {!editingChannel.id && (
                     <div>
-                      <label className="mb-1 block text-xs text-slate-400">Inbox</label>
+                      <label className="mb-1 block text-xs text-slate-400">
+                        Inbox
+                      </label>
                       <select
                         value={editingChannel.inboxId || ""}
-                        onChange={(e) => setEditingChannel({ ...editingChannel, inboxId: e.target.value })}
+                        onChange={(e) =>
+                          setEditingChannel({
+                            ...editingChannel,
+                            inboxId: e.target.value,
+                          })
+                        }
                         className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100"
                       >
                         <option value="">Select inbox...</option>
                         {(inboxes || []).map((ib) => (
-                          <option key={ib.id} value={ib.id}>{ib.name}</option>
+                          <option key={ib.id} value={ib.id}>
+                            {ib.name}
+                          </option>
                         ))}
                       </select>
                     </div>
                   )}
-                  
+
                   {editingChannel.channelType === "web" && (
                     <>
                       {/* ── Branding ── */}
                       <div className="border-t border-slate-700 pt-4 mt-2">
-                        <p className="text-xs font-semibold text-slate-300 uppercase tracking-wide mb-3">Branding</p>
+                        <p className="text-xs font-semibold text-slate-300 uppercase tracking-wide mb-3">
+                          Branding
+                        </p>
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs text-slate-400">Brand Name</label>
+                        <label className="mb-1 block text-xs text-slate-400">
+                          Brand Name
+                        </label>
                         <Input
                           value={tenantSettings?.brandName || ""}
                           onChange={(e) =>
@@ -822,7 +922,9 @@ export default function CustomizationView({
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="mb-1 block text-xs text-slate-400">Primary Color</label>
+                          <label className="mb-1 block text-xs text-slate-400">
+                            Primary Color
+                          </label>
                           <Input
                             value={tenantSettings?.primaryColor || ""}
                             onChange={(e) =>
@@ -836,7 +938,9 @@ export default function CustomizationView({
                           />
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs text-slate-400">Accent Color</label>
+                          <label className="mb-1 block text-xs text-slate-400">
+                            Accent Color
+                          </label>
                           <Input
                             value={tenantSettings?.accentColor || ""}
                             onChange={(e) =>
@@ -851,7 +955,9 @@ export default function CustomizationView({
                         </div>
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs text-slate-400">Logo URL</label>
+                        <label className="mb-1 block text-xs text-slate-400">
+                          Logo URL
+                        </label>
                         <Input
                           value={tenantSettings?.logoUrl || ""}
                           onChange={(e) =>
@@ -865,7 +971,9 @@ export default function CustomizationView({
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs text-slate-400">Privacy URL</label>
+                        <label className="mb-1 block text-xs text-slate-400">
+                          Privacy URL
+                        </label>
                         <Input
                           value={tenantSettings?.privacyUrl || ""}
                           onChange={(e) =>
@@ -881,70 +989,111 @@ export default function CustomizationView({
 
                       {/* ── Widget ── */}
                       <div className="border-t border-slate-700 pt-4 mt-2">
-                        <p className="text-xs font-semibold text-slate-300 uppercase tracking-wide mb-3">Widget</p>
+                        <p className="text-xs font-semibold text-slate-300 uppercase tracking-wide mb-3">
+                          Widget
+                        </p>
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs text-slate-400">Website Domain</label>
+                        <label className="mb-1 block text-xs text-slate-400">
+                          Website Domain
+                        </label>
                         <Input
                           value={editingChannel.config?.domain || ""}
-                          onChange={(e) => setEditingChannel({ 
-                            ...editingChannel, 
-                            config: { ...editingChannel.config, domain: e.target.value } 
-                          })}
+                          onChange={(e) =>
+                            setEditingChannel({
+                              ...editingChannel,
+                              config: {
+                                ...editingChannel.config,
+                                domain: e.target.value,
+                              },
+                            })
+                          }
                           placeholder="e.g. example.com"
                           className="border-slate-700 bg-slate-900 text-slate-100"
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs text-slate-400">Widget Color</label>
+                        <label className="mb-1 block text-xs text-slate-400">
+                          Widget Color
+                        </label>
                         <div className="flex gap-2">
                           <Input
                             type="color"
-                            value={editingChannel.config?.widgetColor || "#2b7fff"}
-                            onChange={(e) => setEditingChannel({ 
-                              ...editingChannel, 
-                              config: { ...editingChannel.config, widgetColor: e.target.value } 
-                            })}
+                            value={
+                              editingChannel.config?.widgetColor || "#2b7fff"
+                            }
+                            onChange={(e) =>
+                              setEditingChannel({
+                                ...editingChannel,
+                                config: {
+                                  ...editingChannel.config,
+                                  widgetColor: e.target.value,
+                                },
+                              })
+                            }
                             className="h-10 w-16 border-slate-700 bg-slate-900"
                           />
                           <Input
-                            value={editingChannel.config?.widgetColor || "#2b7fff"}
-                            onChange={(e) => setEditingChannel({ 
-                              ...editingChannel, 
-                              config: { ...editingChannel.config, widgetColor: e.target.value } 
-                            })}
+                            value={
+                              editingChannel.config?.widgetColor || "#2b7fff"
+                            }
+                            onChange={(e) =>
+                              setEditingChannel({
+                                ...editingChannel,
+                                config: {
+                                  ...editingChannel.config,
+                                  widgetColor: e.target.value,
+                                },
+                              })
+                            }
                             placeholder="#hex"
                             className="flex-1 border-slate-700 bg-slate-900 text-slate-100"
                           />
                         </div>
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs text-slate-400">Welcome Title</label>
+                        <label className="mb-1 block text-xs text-slate-400">
+                          Welcome Title
+                        </label>
                         <Input
                           value={editingChannel.config?.welcomeTitle || ""}
-                          onChange={(e) => setEditingChannel({ 
-                            ...editingChannel, 
-                            config: { ...editingChannel.config, welcomeTitle: e.target.value } 
-                          })}
+                          onChange={(e) =>
+                            setEditingChannel({
+                              ...editingChannel,
+                              config: {
+                                ...editingChannel.config,
+                                welcomeTitle: e.target.value,
+                              },
+                            })
+                          }
                           placeholder="Hello!"
                           className="border-slate-700 bg-slate-900 text-slate-100"
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs text-slate-400">Welcome Message</label>
+                        <label className="mb-1 block text-xs text-slate-400">
+                          Welcome Message
+                        </label>
                         <Textarea
                           value={editingChannel.config?.welcomeBody || ""}
-                          onChange={(e) => setEditingChannel({ 
-                            ...editingChannel, 
-                            config: { ...editingChannel.config, welcomeBody: e.target.value } 
-                          })}
+                          onChange={(e) =>
+                            setEditingChannel({
+                              ...editingChannel,
+                              config: {
+                                ...editingChannel.config,
+                                welcomeBody: e.target.value,
+                              },
+                            })
+                          }
                           placeholder="Ask any question..."
                           rows={2}
                           className="border-slate-700 bg-slate-900 text-slate-100"
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs text-slate-400">Welcome Text</label>
+                        <label className="mb-1 block text-xs text-slate-400">
+                          Welcome Text
+                        </label>
                         <Textarea
                           value={tenantSettings?.welcomeText || ""}
                           onChange={(e) =>
@@ -961,7 +1110,9 @@ export default function CustomizationView({
 
                       {/* ── Bot Profile ── */}
                       <div className="border-t border-slate-700 pt-4 mt-2">
-                        <p className="text-xs font-semibold text-slate-300 uppercase tracking-wide mb-3">Bot Profile</p>
+                        <p className="text-xs font-semibold text-slate-300 uppercase tracking-wide mb-3">
+                          Bot Profile
+                        </p>
                       </div>
                       <div className="flex items-center gap-3 mb-1">
                         {tenantSettings?.botAvatarUrl ? (
@@ -980,7 +1131,9 @@ export default function CustomizationView({
                         </span>
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs text-slate-400">Bot Display Name</label>
+                        <label className="mb-1 block text-xs text-slate-400">
+                          Bot Display Name
+                        </label>
                         <Input
                           value={tenantSettings?.botName || ""}
                           onChange={(e) =>
@@ -994,7 +1147,9 @@ export default function CustomizationView({
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs text-slate-400">Bot Avatar URL</label>
+                        <label className="mb-1 block text-xs text-slate-400">
+                          Bot Avatar URL
+                        </label>
                         <Input
                           value={tenantSettings?.botAvatarUrl || ""}
                           onChange={(e) =>
@@ -1007,44 +1162,52 @@ export default function CustomizationView({
                           className="border-slate-700 bg-slate-900 text-slate-100"
                         />
                       </div>
-                      
+
                       {/* Embed Code */}
                       <div>
-                        <label className="mb-1 block text-xs text-slate-400">Embed Code</label>
+                        <label className="mb-1 block text-xs text-slate-400">
+                          Embed Code
+                        </label>
                         <div className="rounded-lg bg-slate-900 p-3">
                           <code className="text-xs text-emerald-400 break-all">
                             {`<script>
   (function(d,t){
     var g=d.createElement(t),s=d.getElementsByTagName(t)[0];
-    g.src="https://${typeof window !== 'undefined' ? window.location.hostname : 'your-domain.com'}/widget.js";
-    g.setAttribute("data-tenant-id","${editingChannel.inboxId || '[INBOX-ID]'}");
-    g.setAttribute("data-channel-id","${editingChannel.id || '[CHANNEL-ID]'}");
+    g.src="https://${typeof window !== "undefined" ? window.location.hostname : "your-domain.com"}/widget.js";
+    g.setAttribute("data-tenant-id","${editingChannel.inboxId || "[INBOX-ID]"}");
+    g.setAttribute("data-channel-id","${editingChannel.id || "[CHANNEL-ID]"}");
     s.parentNode.insertBefore(g,s);
   }(document,"script"));
 </script>`}
                           </code>
                         </div>
                         <p className="mt-1 text-xs text-slate-500">
-                          Add this to your website's HTML before the closing body tag
+                          Add this to your website's HTML before the closing
+                          body tag
                         </p>
                       </div>
                     </>
                   )}
                 </div>
-                
+
                 {routingError && (
                   <p className="mt-3 text-xs text-red-400">{routingError}</p>
                 )}
-                
+
                 <div className="mt-6 flex justify-end gap-2">
-                  <Button variant="secondary" onClick={() => setEditingChannel(null)}>
+                  <Button
+                    variant="secondary"
+                    onClick={() => setEditingChannel(null)}
+                  >
                     Cancel
                   </Button>
                   <Button
                     onClick={async () => {
                       const payload = {
                         channelType: editingChannel.channelType,
-                        name: editingChannel.name || `${editingChannel.channelType} Channel`,
+                        name:
+                          editingChannel.name ||
+                          `${editingChannel.channelType} Channel`,
                         inboxId: editingChannel.inboxId,
                         config: editingChannel.config || {},
                       };
