@@ -26,6 +26,40 @@ import { useState as useStateReact } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+const API_BASE = API_URL.replace(/\/+$/, "");
+
+function resolveMediaUrl(url) {
+  const value = String(url || "").trim();
+  if (!value) return "";
+  if (
+    value.startsWith("http://") ||
+    value.startsWith("https://") ||
+    value.startsWith("data:") ||
+    value.startsWith("blob:")
+  ) {
+    return value;
+  }
+  if (value.startsWith("/")) return `${API_BASE}${value}`;
+  return `${API_BASE}/${value}`;
+}
+
+function isAttachmentPlaceholderText(text) {
+  const value = String(text || "").trim().toLowerCase();
+  if (!value) return true;
+  const known = new Set([
+    "sent an image",
+    "sent a video",
+    "sent a document",
+    "sent a sticker",
+    "sent a voice message",
+    "sent an audio file",
+    "sent an attachment",
+    "shared a location",
+  ]);
+  return known.has(value) || /^sent a [a-z]+ message$/.test(value);
+}
+
 function MessageAvatar({ message, tenantSettings }) {
   const [hover, setHover] = useStateReact(false);
   const isBot =
@@ -154,6 +188,8 @@ export default function ConversationsView({
   tenantSettings,
   onOpenSettings,
 }) {
+  const [lightbox, setLightbox] = useStateReact(null);
+
   const handleComposerKeyDown = (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
@@ -210,7 +246,8 @@ export default function ConversationsView({
   };
 
   return (
-    <WorkspaceLayout
+    <>
+      <WorkspaceLayout
       view={view}
       setView={setView}
       sessions={sessions}
@@ -303,6 +340,20 @@ export default function ConversationsView({
                       ? "right"
                       : "left"
                     : null;
+                const attachmentWidget =
+                  message?.widget?.type === "attachment" ? message.widget : null;
+                const attachmentType = String(
+                  attachmentWidget?.attachmentType || "",
+                ).toLowerCase();
+                const isAudioAttachment =
+                  attachmentType === "audio" || attachmentType === "voice";
+                const attachmentUrl = resolveMediaUrl(
+                  attachmentWidget?.url || attachmentWidget?.mapUrl || "",
+                );
+                const showMessageText = !(
+                  attachmentWidget &&
+                  isAttachmentPlaceholderText(message.text)
+                );
                 const isLastInSequence =
                   nextGroup !== senderGroup ||
                   ((isAgent || isTeam) &&
@@ -316,7 +367,9 @@ export default function ConversationsView({
                 return (
                   <article
                     key={message.id}
-                    className={`flex items-end gap-1.5 ${gapTop} ${isAgent || isTeam ? "ml-auto flex-row-reverse" : ""} w-fit max-w-[76%]`}
+                    className={`flex items-end gap-1.5 ${gapTop} ${isAgent || isTeam ? "ml-auto flex-row-reverse" : ""} ${
+                      isAudioAttachment ? "w-[min(76%,360px)]" : "w-fit max-w-[76%]"
+                    }`}
                   >
                     {(isAgent || isTeam) &&
                       (isLastInSequence ? (
@@ -328,27 +381,93 @@ export default function ConversationsView({
                         <span className="inline-block h-6 w-6 flex-shrink-0" />
                       ))}
                     <div
-                      className={`rounded-xl border px-3 py-2 text-sm shadow-sm ${
+                      className={`rounded-xl border text-sm shadow-sm ${
                         isAgent
                           ? "border-blue-600 bg-blue-600 text-white"
                           : isTeam
                             ? "border-amber-200 bg-amber-50 text-amber-900"
                             : "border-slate-200 bg-white text-slate-900"
-                      }`}
+                      } ${attachmentWidget && !showMessageText ? "px-1.5 py-1.5" : "px-3 py-2"}`}
                     >
                       {isTeam ? (
                         <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide">
                           Internal note
                         </p>
                       ) : null}
-                      <div
-                        className={`dashboard-md ${isAgent ? "dashboard-md-agent" : ""}`}
-                      >
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {String(message.text ?? "")}
-                        </ReactMarkdown>
-                      </div>
-                      {renderMessageWidget(message)}
+                      {showMessageText ? (
+                        <div
+                          className={`dashboard-md ${isAgent ? "dashboard-md-agent" : ""}`}
+                        >
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {String(message.text ?? "")}
+                          </ReactMarkdown>
+                        </div>
+                      ) : null}
+
+                      {attachmentWidget ? (
+                        <div className={showMessageText ? "mt-1.5" : ""}>
+                          {(attachmentType === "image" ||
+                            attachmentType === "sticker") &&
+                          attachmentUrl ? (
+                            <button
+                              type="button"
+                              className="block"
+                              onClick={() =>
+                                setLightbox({
+                                  url: attachmentUrl,
+                                  alt:
+                                    attachmentWidget?.filename ||
+                                    attachmentWidget?.title ||
+                                    "Image",
+                                })
+                              }
+                            >
+                              <img
+                                src={attachmentUrl}
+                                alt={
+                                  attachmentWidget?.filename ||
+                                  attachmentWidget?.title ||
+                                  "Image"
+                                }
+                                className="max-h-80 w-full rounded-lg object-cover"
+                                loading="lazy"
+                              />
+                            </button>
+                          ) : null}
+                          {(attachmentType === "audio" ||
+                            attachmentType === "voice") &&
+                          attachmentUrl ? (
+                            <audio
+                              controls
+                              preload="metadata"
+                              src={attachmentUrl}
+                              className="block w-full min-w-[280px] max-w-[360px]"
+                            />
+                          ) : null}
+                          {attachmentType === "video" && attachmentUrl ? (
+                            <video
+                              controls
+                              preload="metadata"
+                              src={attachmentUrl}
+                              className="max-h-80 w-full rounded-lg bg-black"
+                            />
+                          ) : null}
+                          {(attachmentType === "document" ||
+                            attachmentType === "location") &&
+                          attachmentUrl ? (
+                            <a
+                              href={attachmentUrl}
+                              target="_blank"
+                              rel="noreferrer noopener"
+                              className="text-xs underline"
+                            >
+                              {attachmentWidget?.filename || "Open attachment"}
+                            </a>
+                          ) : null}
+                        </div>
+                      ) : (
+                        renderMessageWidget(message)
+                      )}
                       <time
                         className={`mt-1 block text-right text-[10px] ${isAgent ? "text-blue-100" : "text-slate-400"}`}
                       >
@@ -968,6 +1087,27 @@ export default function ConversationsView({
           </ScrollArea>
         </aside>
       }
-    />
+      />
+      {lightbox?.url ? (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 p-5"
+          onClick={() => setLightbox(null)}
+        >
+          <button
+            type="button"
+            className="absolute right-4 top-4 rounded-md bg-black/55 p-2 text-white hover:bg-black/70"
+            onClick={() => setLightbox(null)}
+          >
+            <X size={18} />
+          </button>
+          <img
+            src={lightbox.url}
+            alt={lightbox.alt || "Image"}
+            className="max-h-[92vh] max-w-[92vw] rounded-lg object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      ) : null}
+    </>
   );
 }
