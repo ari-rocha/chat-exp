@@ -578,12 +578,12 @@ export default function App() {
       setActiveFlowId(nextFlows[0].id);
       loadFlowIntoEditor(nextFlows[0]);
     } else {
-      const defaultGraph = defaultFlowGraph();
-      setFlowNodes(defaultGraph.nodes);
-      setFlowEdges(defaultGraph.edges);
-      setFlowName("Untitled flow");
+      setFlowNodes([]);
+      setFlowEdges([]);
+      setFlowName("");
       setFlowDescription("");
       setFlowEnabled(true);
+      setActiveFlowId("");
     }
   };
 

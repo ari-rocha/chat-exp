@@ -3567,31 +3567,54 @@ export default function FlowsView({
             background: "linear-gradient(135deg, #f5f7fb 0%, #eef1f8 100%)",
           }}
         >
-          <ReactFlowProvider>
-            <AddNodePalette addFlowNode={addFlowNode} />
-            <ReactFlow
-              nodes={flowNodes}
-              edges={flowEdges}
-              nodeTypes={FLOW_NODE_TYPES}
-              onNodesChange={onFlowNodesChange}
-              onEdgesChange={onFlowEdgesChange}
-              onConnect={onFlowConnect}
-              onSelectionChange={({ nodes }) =>
-                setSelectedNodeId(nodes?.[0]?.id || "")
-              }
-              fitView
-              connectionLineType={ConnectionLineType.SmoothStep}
-              defaultEdgeOptions={{
-                animated: false,
-                type: "smoothstep",
-                style: { stroke: "#94a3b8", strokeWidth: 1.5 },
-              }}
-              proOptions={{ hideAttribution: true }}
-            >
-              <Controls className="!rounded-xl !border-slate-200 !shadow-sm" />
-              <Background gap={20} size={1} color="#dce0ea" variant="dots" />
-            </ReactFlow>
-          </ReactFlowProvider>
+          {!activeFlowId ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100">
+                <Zap size={24} className="text-slate-300" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-slate-500">
+                  No flow selected
+                </p>
+                <p className="mt-1 text-xs text-slate-400">
+                  Create a new flow to get started with the visual editor.
+                </p>
+              </div>
+              <Button
+                size="sm"
+                onClick={createFlow}
+                className="mt-2 rounded-lg bg-blue-500 px-4 text-xs text-white hover:bg-blue-600"
+              >
+                <Plus size={13} className="mr-1.5" /> Create Flow
+              </Button>
+            </div>
+          ) : (
+            <ReactFlowProvider>
+              <AddNodePalette addFlowNode={addFlowNode} />
+              <ReactFlow
+                nodes={flowNodes}
+                edges={flowEdges}
+                nodeTypes={FLOW_NODE_TYPES}
+                onNodesChange={onFlowNodesChange}
+                onEdgesChange={onFlowEdgesChange}
+                onConnect={onFlowConnect}
+                onSelectionChange={({ nodes }) =>
+                  setSelectedNodeId(nodes?.[0]?.id || "")
+                }
+                fitView
+                connectionLineType={ConnectionLineType.SmoothStep}
+                defaultEdgeOptions={{
+                  animated: false,
+                  type: "smoothstep",
+                  style: { stroke: "#94a3b8", strokeWidth: 1.5 },
+                }}
+                proOptions={{ hideAttribution: true }}
+              >
+                <Controls className="!rounded-xl !border-slate-200 !shadow-sm" />
+                <Background gap={20} size={1} color="#dce0ea" variant="dots" />
+              </ReactFlow>
+            </ReactFlowProvider>
+          )}
         </div>
       </section>
 
