@@ -423,11 +423,18 @@ export default function App() {
   );
   const channelCounts = useMemo(() => {
     const map = new Map();
+    // Seed with all registered channel types so they always appear
+    for (const rec of channelRecords) {
+      const key = rec.channelType || rec.channel_type;
+      if (key && !map.has(key)) map.set(key, 0);
+    }
     for (const session of sessions) {
-      map.set(session.channel, (map.get(session.channel) || 0) + 1);
+      if (session.channel) {
+        map.set(session.channel, (map.get(session.channel) || 0) + 1);
+      }
     }
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [sessions]);
+  }, [sessions, channelRecords]);
 
   const slashQuery = useMemo(() => {
     const trimmed = text.trimStart();

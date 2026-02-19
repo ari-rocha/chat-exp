@@ -353,7 +353,7 @@ export default function CustomizationView({
      ═══════════════════════════════════════════════════════════ */
 
   /* ──────────── Account ──────────── */
-  const AccountPage = () => (
+  const renderAccountPage = () => (
     <div>
       <h2 className="text-base font-semibold text-slate-900">Account</h2>
       <p className="mb-6 text-sm text-slate-500">
@@ -428,7 +428,7 @@ export default function CustomizationView({
   );
 
   /* ──────────── General ──────────── */
-  const GeneralPage = () => (
+  const renderGeneralPage = () => (
     <div>
       <h2 className="text-base font-semibold text-slate-900">General</h2>
       <p className="mb-6 text-sm text-slate-500">Your workspace identity.</p>
@@ -452,7 +452,7 @@ export default function CustomizationView({
   );
 
   /* ──────────── Channels list ──────────── */
-  const ChannelsListPage = () => (
+  const renderChannelsListPage = () => (
     <div>
       <h2 className="text-base font-semibold text-slate-900">Channels</h2>
       <p className="mb-6 text-sm text-slate-500">
@@ -622,7 +622,7 @@ export default function CustomizationView({
   );
 
   /* ──────────── Channel Editor (drill-down) ──────────── */
-  const ChannelEditorPage = () => {
+  const renderChannelEditorPage = () => {
     if (!editingChannel) return null;
 
     const isWeb = editingChannel.channelType === "web";
@@ -995,7 +995,7 @@ export default function CustomizationView({
   };
 
   /* ──────────── Teams ──────────── */
-  const TeamsPage = () => (
+  const renderTeamsPage = () => (
     <div>
       <h2 className="text-base font-semibold text-slate-900">Teams</h2>
       <p className="mb-6 text-sm text-slate-500">
@@ -1083,7 +1083,7 @@ export default function CustomizationView({
   );
 
   /* ──────────── Members ──────────── */
-  const MembersPage = () => (
+  const renderMembersPage = () => (
     <div>
       <h2 className="text-base font-semibold text-slate-900">Members</h2>
       <p className="mb-6 text-sm text-slate-500">
@@ -1239,20 +1239,20 @@ export default function CustomizationView({
 
   /* ──────────── Content Router ──────────── */
   const renderContent = () => {
-    if (editingChannel) return <ChannelEditorPage />;
+    if (editingChannel) return renderChannelEditorPage();
     switch (page) {
       case "account":
-        return <AccountPage />;
+        return renderAccountPage();
       case "general":
-        return <GeneralPage />;
+        return renderGeneralPage();
       case "channels":
-        return <ChannelsListPage />;
+        return renderChannelsListPage();
       case "teams":
-        return <TeamsPage />;
+        return renderTeamsPage();
       case "members":
-        return <MembersPage />;
+        return renderMembersPage();
       default:
-        return <AccountPage />;
+        return renderAccountPage();
     }
   };
 
