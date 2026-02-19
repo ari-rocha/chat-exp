@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 
+use crate::prompting::{render_system_prompt, SystemPromptContext};
 use crate::types::*;
 use axum::{
     body::Bytes,
@@ -2487,16 +2488,16 @@ fn has_handover_intent(text: &str) -> bool {
     terms.iter().any(|needle| lower.contains(needle))
 }
 
-async fn bot_config_for_session(state: &Arc<AppState>, session_id: &str) -> (bool, String) {
+async fn bot_enabled_for_session(state: &Arc<AppState>, session_id: &str) -> bool {
     let tenant_id = tenant_for_session(state, session_id)
         .await
         .unwrap_or_default();
     if tenant_id.is_empty() {
-        return (true, String::new());
+        return true;
     }
 
     let row = sqlx::query(
-        "SELECT bot_enabled_by_default, bot_personality FROM tenant_settings WHERE tenant_id = $1",
+        "SELECT bot_enabled_by_default FROM tenant_settings WHERE tenant_id = $1",
     )
     .bind(&tenant_id)
     .fetch_optional(&state.db)
@@ -2506,11 +2507,10 @@ async fn bot_config_for_session(state: &Arc<AppState>, session_id: &str) -> (boo
 
     if let Some(row) = row {
         let enabled = row.get::<bool, _>("bot_enabled_by_default");
-        let personality = row.get::<String, _>("bot_personality");
-        return (enabled, personality);
+        return enabled;
     }
 
-    (true, String::new())
+    true
 }
 
 #[derive(Debug, Clone)]
@@ -2695,6 +2695,31 @@ async fn generate_ai_reply(
     let tenant_id: String = tenant_for_session(&state, session_id)
         .await
         .unwrap_or_default();
+    let workspace_meta = sqlx::query(
+        "SELECT t.name AS workspace_name, \
+                COALESCE(ts.bot_name, '') AS bot_name, \
+                COALESCE(ts.bot_personality, '') AS bot_personality \
+         FROM tenants t \
+         LEFT JOIN tenant_settings ts ON ts.tenant_id = t.id \
+         WHERE t.id = $1",
+    )
+    .bind(&tenant_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let workspace_name = workspace_meta
+        .as_ref()
+        .map(|row| row.get::<String, _>("workspace_name"))
+        .unwrap_or_default();
+    let bot_name = workspace_meta
+        .as_ref()
+        .map(|row| row.get::<String, _>("bot_name"))
+        .unwrap_or_default();
+    let workspace_personality = workspace_meta
+        .as_ref()
+        .map(|row| row.get::<String, _>("bot_personality"))
+        .unwrap_or_default();
 
     // Fetch contact info linked to this session
     let mut contact_block = String::new();
@@ -2806,13 +2831,13 @@ async fn generate_ai_reply(
         tools_block.push_str("If the tool needs required parameters the user hasn't provided yet, ask for them in your reply WITHOUT triggering the flow. Only trigger when you have all required data.\n");
     }
 
-    let system_instruction = if prompt.trim().is_empty() {
-        format!("You are a support agent in a chat flow. Use prior conversation context and respond briefly and helpfully. \
-If user asks for a human, transfer, escalation, or representative, set handover=true. \
-If the conversation is clearly complete and resolved, set closeChat=true.{}", tools_block)
-    } else {
-        format!("{}{}", prompt.trim(), tools_block)
-    };
+    let system_instruction = render_system_prompt(&SystemPromptContext {
+        workspace_name: &workspace_name,
+        bot_name: &bot_name,
+        workspace_personality: &workspace_personality,
+        flow_prompt: prompt.trim(),
+        tools_block: &tools_block,
+    });
 
     let api_key = std::env::var("GROQ_API_KEY").unwrap_or_default();
     if api_key.trim().is_empty() {
@@ -4915,8 +4940,7 @@ async fn run_flow_for_visitor_message(
         return;
     }
 
-    let (bot_enabled_by_default, bot_personality) = bot_config_for_session(&state, &session_id).await;
-    if !bot_enabled_by_default {
+    if !bot_enabled_for_session(&state, &session_id).await {
         return;
     }
 
@@ -5125,16 +5149,7 @@ async fn run_flow_for_visitor_message(
     }
 
     if trigger_event == "visitor_message" {
-        let personality_prompt = if bot_personality.trim().is_empty() {
-            "You are the workspace support bot. Be concise, practical, and accurate. Ask one clarifying question when needed.".to_string()
-        } else {
-            format!(
-                "You are the workspace support bot. Follow this personality and behavior exactly:\n{}",
-                bot_personality.trim()
-            )
-        };
-        let decision =
-            generate_ai_reply(state.clone(), &session_id, &personality_prompt, &visitor_text).await;
+        let decision = generate_ai_reply(state.clone(), &session_id, "", &visitor_text).await;
         let suggestions_opt = if decision.suggestions.is_empty() {
             None
         } else {
