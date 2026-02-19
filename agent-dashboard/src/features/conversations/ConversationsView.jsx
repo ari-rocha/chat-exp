@@ -1,7 +1,6 @@
 import WorkspaceLayout, { sessionInitials } from "@/app/WorkspaceLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
@@ -15,7 +14,6 @@ import {
   MessageCircle,
   Paperclip,
   Phone,
-  Plus,
   Send,
   Smile,
   Tag,
@@ -163,7 +161,6 @@ export default function ConversationsView({
   teams,
   inboxes,
   channels,
-  flows,
   patchActiveSession,
   setHandover,
   noteText,
@@ -176,16 +173,9 @@ export default function ConversationsView({
   tags,
   sessionTags,
   sessionContact,
-  conversationAttrs,
   addSessionTag,
   removeSessionTag,
   patchSessionContact,
-  addConversationAttr,
-  deleteConversationAttr,
-  newConvAttrKey,
-  setNewConvAttrKey,
-  newConvAttrValue,
-  setNewConvAttrValue,
   tenantSettings,
   onOpenSettings,
 }) {
@@ -345,8 +335,10 @@ export default function ConversationsView({
                 <p className="text-sm font-semibold text-slate-900">
                   {getSessionTitle(activeSession)}
                 </p>
-                <p className="text-[11px] text-emerald-600">
-                  {activeSession ? "Online" : "No conversation selected"}
+                <p className="text-[11px] text-slate-500">
+                  {activeSession
+                    ? `Status: ${String(activeSession.status || "open")}`
+                    : "No conversation selected"}
                 </p>
               </div>
             </div>
@@ -845,6 +837,124 @@ export default function ConversationsView({
 
           <ScrollArea className="h-full p-4">
             <div className="space-y-4">
+              {/* ── Quick routing ─────────────────────────── */}
+              <div>
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  Quick Routing
+                </p>
+                <div className="space-y-2">
+                  <div>
+                    <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-400">
+                      Inbox
+                    </label>
+                    <select
+                      className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
+                      value={activeSession?.inboxId || ""}
+                      onChange={(e) =>
+                        patchActiveSession("inbox", {
+                          inboxId: e.target.value || null,
+                        })
+                      }
+                      disabled={!activeId}
+                    >
+                      <option value="">No inbox</option>
+                      {inboxes.map((inbox) => (
+                        <option key={inbox.id} value={inbox.id}>
+                          {inbox.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-400">
+                        Status
+                      </label>
+                      <select
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
+                        value={activeSession?.status || "open"}
+                        onChange={(e) =>
+                          patchSessionMeta({ status: e.target.value })
+                        }
+                        disabled={!activeId}
+                      >
+                        <option value="open">open</option>
+                        <option value="awaiting">awaiting</option>
+                        <option value="snoozed">snoozed</option>
+                        <option value="resolved">resolved</option>
+                        <option value="closed">closed</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-400">
+                        Priority
+                      </label>
+                      <select
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
+                        value={activeSession?.priority || "normal"}
+                        onChange={(e) =>
+                          patchSessionMeta({ priority: e.target.value })
+                        }
+                        disabled={!activeId}
+                      >
+                        <option value="low">low</option>
+                        <option value="normal">normal</option>
+                        <option value="high">high</option>
+                        <option value="urgent">urgent</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-400">
+                        Assignee
+                      </label>
+                      <select
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
+                        value={activeSession?.assigneeAgentId || ""}
+                        onChange={(e) =>
+                          patchActiveSession("assignee", {
+                            agentId: e.target.value || null,
+                          })
+                        }
+                        disabled={!activeId}
+                      >
+                        <option value="">Unassigned</option>
+                        {agents.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-400">
+                        Team
+                      </label>
+                      <select
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
+                        value={activeSession?.teamId || ""}
+                        onChange={(e) =>
+                          patchActiveSession("team", {
+                            teamId: e.target.value || null,
+                          })
+                        }
+                        disabled={!activeId}
+                      >
+                        <option value="">No team</option>
+                        {teams.map((team) => (
+                          <option key={team.id} value={team.id}>
+                            {team.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <Separator />
+
               {/* ── Contact info ──────────────────────────── */}
               <div>
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
@@ -1014,190 +1124,6 @@ export default function ConversationsView({
                       )?.name || "No inbox"}
                     </p>
                   </div>
-                </div>
-              </div>
-
-              <Separator />
-
-              <div className="space-y-2">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Status
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  <select
-                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
-                    value={activeSession?.status || "open"}
-                    onChange={(e) =>
-                      patchSessionMeta({ status: e.target.value })
-                    }
-                    disabled={!activeId}
-                  >
-                    <option value="open">open</option>
-                    <option value="awaiting">awaiting</option>
-                    <option value="snoozed">snoozed</option>
-                    <option value="resolved">resolved</option>
-                    <option value="closed">closed</option>
-                  </select>
-                  <select
-                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
-                    value={activeSession?.priority || "normal"}
-                    onChange={(e) =>
-                      patchSessionMeta({ priority: e.target.value })
-                    }
-                    disabled={!activeId}
-                  >
-                    <option value="low">low</option>
-                    <option value="normal">normal</option>
-                    <option value="high">high</option>
-                    <option value="urgent">urgent</option>
-                  </select>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <select
-                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
-                    value={activeSession?.assigneeAgentId || ""}
-                    onChange={(e) =>
-                      patchActiveSession("assignee", {
-                        agentId: e.target.value || null,
-                      })
-                    }
-                    disabled={!activeId}
-                  >
-                    <option value="">Unassigned</option>
-                    {agents.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
-                    value={activeSession?.teamId || ""}
-                    onChange={(e) =>
-                      patchActiveSession("team", {
-                        teamId: e.target.value || null,
-                      })
-                    }
-                    disabled={!activeId}
-                  >
-                    <option value="">No team</option>
-                    {teams.map((team) => (
-                      <option key={team.id} value={team.id}>
-                        {team.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <select
-                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
-                    value={activeSession?.channel || "web"}
-                    onChange={(e) =>
-                      patchActiveSession("channel", { channel: e.target.value })
-                    }
-                    disabled={!activeId}
-                  >
-                    {channels.map((channel) => (
-                      <option key={channel} value={channel}>
-                        {channel}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
-                    value={activeSession?.inboxId || ""}
-                    onChange={(e) =>
-                      patchActiveSession("inbox", {
-                        inboxId: e.target.value || null,
-                      })
-                    }
-                    disabled={!activeId}
-                  >
-                    <option value="">No inbox</option>
-                    {inboxes.map((inbox) => (
-                      <option key={inbox.id} value={inbox.id}>
-                        {inbox.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <select
-                  className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
-                  value={activeSession?.flowId || ""}
-                  onChange={(e) =>
-                    patchActiveSession("flow", {
-                      flowId: e.target.value || null,
-                    })
-                  }
-                  disabled={!activeId}
-                >
-                  <option value="">No flow</option>
-                  {flows.map((flow) => (
-                    <option key={flow.id} value={flow.id}>
-                      {flow.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <Separator />
-
-              {/* ── Conversation attributes ──────────────── */}
-              <div>
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Custom attributes
-                </p>
-                <div className="space-y-1.5">
-                  {(conversationAttrs || []).map((attr) => (
-                    <div
-                      key={attr.attributeKey}
-                      className="flex items-center gap-1.5 rounded border border-slate-200 bg-slate-50 px-2 py-1"
-                    >
-                      <span className="text-[10px] font-medium text-slate-600">
-                        {attr.attributeKey}
-                      </span>
-                      <span className="text-[10px] text-slate-400">=</span>
-                      <span className="flex-1 truncate text-[10px] text-slate-900">
-                        {attr.attributeValue}
-                      </span>
-                      <button
-                        onClick={() =>
-                          deleteConversationAttr(attr.attributeKey)
-                        }
-                        className="text-slate-400 hover:text-red-500"
-                      >
-                        <X size={11} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-2 flex items-center gap-1">
-                  <Input
-                    value={newConvAttrKey || ""}
-                    onChange={(e) => setNewConvAttrKey(e.target.value)}
-                    placeholder="key"
-                    className="h-7 flex-1 text-[10px]"
-                    disabled={!activeId}
-                  />
-                  <Input
-                    value={newConvAttrValue || ""}
-                    onChange={(e) => setNewConvAttrValue(e.target.value)}
-                    placeholder="value"
-                    className="h-7 flex-1 text-[10px]"
-                    disabled={!activeId}
-                  />
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 px-2"
-                    disabled={!activeId || !(newConvAttrKey || "").trim()}
-                    onClick={addConversationAttr}
-                  >
-                    <Plus size={12} />
-                  </Button>
                 </div>
               </div>
 
