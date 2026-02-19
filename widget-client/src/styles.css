@@ -190,6 +190,113 @@ body {
   cursor: default;
 }
 
+.disconnect-btn {
+  border: 1px solid rgba(94, 74, 22, 0.18);
+  background: rgba(255, 255, 255, 0.12);
+  color: #6a5318;
+  border-radius: 9px;
+  width: 34px;
+  height: 34px;
+  font-size: 17px;
+  cursor: pointer;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  transition: background-color 160ms ease;
+}
+.disconnect-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* ── Setup screen ── */
+.setup-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 32px 28px;
+  text-align: center;
+  gap: 6px;
+}
+
+.setup-icon {
+  width: 72px;
+  height: 72px;
+  margin-bottom: 8px;
+}
+
+.setup-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.setup-desc {
+  margin: 0 0 16px;
+  font-size: 14px;
+  color: #666;
+  line-height: 1.4;
+}
+
+.setup-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 280px;
+}
+
+.setup-input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1.5px solid #d0d0d0;
+  border-radius: 10px;
+  font-size: 14px;
+  font-family: inherit;
+  background: #fff;
+  color: var(--text);
+  outline: none;
+  transition: border-color 160ms ease;
+}
+.setup-input:focus {
+  border-color: var(--gold);
+}
+.setup-input::placeholder {
+  color: #aaa;
+}
+
+.setup-btn {
+  padding: 11px 20px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--gold);
+  color: #1a1200;
+  font-size: 15px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: filter 160ms ease, transform 160ms ease;
+  margin-top: 4px;
+}
+.setup-btn:hover {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+
+.setup-error {
+  margin: 0;
+  padding: 9px 14px;
+  border-radius: 8px;
+  background: #fee2e2;
+  color: #b91c1c;
+  font-size: 13px;
+  line-height: 1.35;
+  text-align: left;
+  width: 100%;
+}
+
 .header-btn:hover {
   background: rgba(0, 0, 0, 0.05);
   /* transform: translateY(-1px); */

@@ -4102,6 +4102,22 @@ async fn post_session(
         )
             .into_response();
     }
+
+    // Validate tenant exists
+    let tenant_exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM tenants WHERE id = $1")
+        .bind(tenant_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0)
+        > 0;
+    if !tenant_exists {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "tenant not found" })),
+        )
+            .into_response();
+    }
+
     let session_id = Uuid::new_v4().to_string();
     let _ = ensure_session(state.clone(), &session_id, tenant_id).await;
 
@@ -8305,6 +8321,21 @@ async fn widget_bootstrap(
                 .into_response();
         }
     };
+
+    // Validate tenant exists
+    let tenant_exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM tenants WHERE id = $1")
+        .bind(&tenant_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0)
+        > 0;
+    if !tenant_exists {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "tenant not found" })),
+        )
+            .into_response();
+    }
 
     let _channel_id = params.get("channel_id").cloned();
 

@@ -4,7 +4,23 @@ import remarkGfm from "remark-gfm";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:4000/ws";
-const TENANT_ID = import.meta.env.VITE_TENANT_ID ?? window.CHAT_TENANT_ID ?? "";
+
+function getInitialTenantId() {
+  return (
+    import.meta.env.VITE_TENANT_ID ||
+    window.CHAT_TENANT_ID ||
+    localStorage.getItem("chat_tenant_id") ||
+    ""
+  );
+}
+function getInitialChannelId() {
+  return (
+    import.meta.env.VITE_CHANNEL_ID ||
+    window.CHAT_CHANNEL_ID ||
+    localStorage.getItem("chat_channel_id") ||
+    ""
+  );
+}
 
 const icon = (
   <svg viewBox="0 0 48 48" aria-hidden="true">
@@ -28,6 +44,10 @@ function getOrCreateVisitorId() {
 export default function App() {
   const [open, setOpen] = useState(false);
   const visitorId = useRef(getOrCreateVisitorId());
+  const [tenantId, setTenantId] = useState(getInitialTenantId);
+  const [channelId, setChannelId] = useState(getInitialChannelId);
+  const [setupTenant, setSetupTenant] = useState("");
+  const [setupChannel, setSetupChannel] = useState("");
   const [sessionId, setSessionId] = useState(
     localStorage.getItem("chat_session_id") || "",
   );
@@ -45,6 +65,7 @@ export default function App() {
   const [csatHover, setCsatHover] = useState({});
   const [bootstrapAgents, setBootstrapAgents] = useState([]);
   const [brandSettings, setBrandSettings] = useState(null);
+  const [setupError, setSetupError] = useState("");
 
   const wsRef = useRef(null);
   const reconnectTimerRef = useRef(null);
@@ -110,13 +131,23 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (!tenantId) return;
     const boot = async () => {
       // Fetch widget bootstrap (settings + online agents)
       try {
-        const bRes = await fetch(
-          `${API_URL}/api/widget/bootstrap?tenant_id=${encodeURIComponent(TENANT_ID)}`,
-        );
+        const bootstrapUrl = channelId
+          ? `${API_URL}/api/widget/bootstrap?tenant_id=${encodeURIComponent(tenantId)}&channel_id=${encodeURIComponent(channelId)}`
+          : `${API_URL}/api/widget/bootstrap?tenant_id=${encodeURIComponent(tenantId)}`;
+        const bRes = await fetch(bootstrapUrl);
         const bData = await bRes.json();
+        if (!bRes.ok) {
+          setSetupError(bData?.error || `Bootstrap failed (${bRes.status})`);
+          localStorage.removeItem("chat_tenant_id");
+          localStorage.removeItem("chat_channel_id");
+          setTenantId("");
+          return;
+        }
+        setSetupError("");
         if (bData?.settings) {
           setBrandSettings(bData.settings);
           const root = document.documentElement;
@@ -128,7 +159,13 @@ export default function App() {
           }
         }
         if (Array.isArray(bData?.agents)) setBootstrapAgents(bData.agents);
-      } catch {}
+      } catch (err) {
+        setSetupError("Could not reach the server");
+        localStorage.removeItem("chat_tenant_id");
+        localStorage.removeItem("chat_channel_id");
+        setTenantId("");
+        return;
+      }
 
       if (sessionId) return;
       const res = await fetch(`${API_URL}/api/session`, {
@@ -136,16 +173,23 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           visitorId: visitorId.current,
-          tenantId: TENANT_ID,
+          tenantId: tenantId,
         }),
       });
       const data = await res.json();
+      if (!res.ok) {
+        setSetupError(data?.error || `Session creation failed (${res.status})`);
+        localStorage.removeItem("chat_tenant_id");
+        localStorage.removeItem("chat_channel_id");
+        setTenantId("");
+        return;
+      }
       setSessionId(data.sessionId);
       localStorage.setItem("chat_session_id", data.sessionId);
     };
 
     boot().catch((error) => console.error("session bootstrap failed", error));
-  }, [sessionId]);
+  }, [sessionId, tenantId, channelId]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -161,7 +205,7 @@ export default function App() {
         sendWsEvent("widget:join", {
           sessionId,
           visitorId: visitorId.current,
-          tenantId: TENANT_ID,
+          tenantId: tenantId,
         });
         if (openRef.current) {
           sendWsEvent("widget:opened", { sessionId });
@@ -415,7 +459,7 @@ export default function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         visitorId: visitorId.current,
-        tenantId: TENANT_ID,
+        tenantId: tenantId,
       }),
     });
     const data = await res.json();
@@ -447,673 +491,767 @@ export default function App() {
       </button>
 
       <section className={`panel ${open ? "panel-open" : "panel-closed"}`}>
-        <header className="panel-header">
-          <span className="header-brand">
-            {brandSettings?.brandName || "Support"}
-          </span>
-          <div className="right-actions">
-            <button
-              type="button"
-              className="end-chat-btn"
-              onClick={() =>
-                endCurrentChat().catch((error) =>
-                  console.error("failed to end chat", error),
-                )
-              }
-              disabled={!sessionId || chatClosed}
+        {!tenantId ? (
+          <div className="setup-screen">
+            <div className="setup-icon">{icon}</div>
+            <h2 className="setup-title">Widget Setup</h2>
+            <p className="setup-desc">
+              Enter your tenant and channel IDs to connect.
+            </p>
+            <form
+              className="setup-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const tid = setupTenant.trim();
+                if (!tid) return;
+                setSetupError("");
+                localStorage.setItem("chat_tenant_id", tid);
+                if (setupChannel.trim()) {
+                  localStorage.setItem("chat_channel_id", setupChannel.trim());
+                  setChannelId(setupChannel.trim());
+                }
+                setSessionId("");
+                localStorage.removeItem("chat_session_id");
+                setTenantId(tid);
+              }}
             >
-              End Chat
-            </button>
-            <button
-              type="button"
-              className="header-btn"
-              onClick={() => setOpen(false)}
-              aria-label="Minimize"
-            >
-              −
-            </button>
-            <button
-              type="button"
-              className="header-btn"
-              onClick={() => setOpen(false)}
-              aria-label="Close"
-            >
-              ×
-            </button>
+              {setupError && <p className="setup-error">{setupError}</p>}
+              <input
+                className="setup-input"
+                value={setupTenant}
+                onChange={(e) => setSetupTenant(e.target.value)}
+                placeholder="Tenant ID (required)"
+                required
+              />
+              <input
+                className="setup-input"
+                value={setupChannel}
+                onChange={(e) => setSetupChannel(e.target.value)}
+                placeholder="Channel ID (optional)"
+              />
+              <button type="submit" className="setup-btn">
+                Connect
+              </button>
+            </form>
           </div>
-        </header>
-
-        <main className="panel-body" ref={listRef} onScroll={onBodyScroll}>
-          <div className="messages-stack">
-            {ready && <p className="today today-open-animate">Today</p>}
-            {messages.map((m, index) => {
-              const prev = messages[index - 1];
-              const next = messages[index + 1];
-              const isAgent = m.sender === "agent";
-              const showAgentIcon =
-                isAgent &&
-                (!next ||
-                  next.sender !== "agent" ||
-                  next.agentId !== m.agentId);
-              const showAgentName =
-                isAgent &&
-                (m.agentName || brandSettings?.botName) &&
-                (!prev ||
-                  prev.sender !== "agent" ||
-                  prev.agentId !== m.agentId);
-              return (
-                <div
-                  key={m.id}
-                  className={`row row-${m.sender} row-open-animate`}
+        ) : (
+          <>
+            <header className="panel-header">
+              <span className="header-brand">
+                {brandSettings?.brandName || "Support"}
+              </span>
+              <div className="right-actions">
+                <button
+                  type="button"
+                  className="end-chat-btn"
+                  onClick={() =>
+                    endCurrentChat().catch((error) =>
+                      console.error("failed to end chat", error),
+                    )
+                  }
+                  disabled={!sessionId || chatClosed}
                 >
-                  {m.sender === "system" ? (
-                    <div className="system-pill">{String(m.text ?? "")}</div>
-                  ) : (
-                    <>
-                      {isAgent &&
-                        (showAgentIcon ? (
-                          renderAgentAvatar(m, 28)
-                        ) : (
-                          <span
-                            className="mini-icon-spacer"
-                            aria-hidden="true"
-                          />
-                        ))}
-                      <div className="message-stack">
-                        {showAgentName && (
-                          <span className="agent-name-label">
-                            {m.agentName || brandSettings?.botName}
-                          </span>
-                        )}
-                        <div className={`bubble bubble-${m.sender}`}>
-                          <div className="md-content">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                              {String(m.text ?? "")}
-                            </ReactMarkdown>
-                          </div>
+                  End Chat
+                </button>
+                <button
+                  type="button"
+                  className="disconnect-btn"
+                  title="Disconnect & reconfigure"
+                  onClick={() => {
+                    localStorage.removeItem("chat_tenant_id");
+                    localStorage.removeItem("chat_channel_id");
+                    localStorage.removeItem("chat_session_id");
+                    setTenantId("");
+                    setChannelId("");
+                    setSessionId("");
+                    setMessages([]);
+                    setReady(false);
+                  }}
+                >
+                  ⚙
+                </button>
+                <button
+                  type="button"
+                  className="header-btn"
+                  onClick={() => setOpen(false)}
+                  aria-label="Minimize"
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  className="header-btn"
+                  onClick={() => setOpen(false)}
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+            </header>
+
+            <main className="panel-body" ref={listRef} onScroll={onBodyScroll}>
+              <div className="messages-stack">
+                {ready && <p className="today today-open-animate">Today</p>}
+                {messages.map((m, index) => {
+                  const prev = messages[index - 1];
+                  const next = messages[index + 1];
+                  const isAgent = m.sender === "agent";
+                  const showAgentIcon =
+                    isAgent &&
+                    (!next ||
+                      next.sender !== "agent" ||
+                      next.agentId !== m.agentId);
+                  const showAgentName =
+                    isAgent &&
+                    (m.agentName || brandSettings?.botName) &&
+                    (!prev ||
+                      prev.sender !== "agent" ||
+                      prev.agentId !== m.agentId);
+                  return (
+                    <div
+                      key={m.id}
+                      className={`row row-${m.sender} row-open-animate`}
+                    >
+                      {m.sender === "system" ? (
+                        <div className="system-pill">
+                          {String(m.text ?? "")}
                         </div>
-                        {m.sender === "agent" &&
-                          m.widget?.type === "buttons" &&
-                          Array.isArray(m.widget?.buttons) && (
-                            <div className="message-widget buttons-widget">
-                              {submittedWidgets[m.id] ? (
-                                <span className="suggestion-chip submitted-chip">
-                                  {submittedWidgets[m.id]}
-                                </span>
-                              ) : (
-                                m.widget.buttons
-                                  .slice(0, 6)
-                                  .map((button, idx) => (
-                                    <button
-                                      key={`${m.id}-btn-${idx}`}
-                                      type="button"
-                                      className="suggestion-chip"
-                                      onClick={() => {
-                                        const val =
-                                          button?.value || button?.label || "";
-                                        markWidgetSubmitted(
-                                          m.id,
-                                          button?.label || val,
-                                        );
-                                        sendSuggestion(val);
-                                      }}
-                                    >
-                                      {button?.label || "Option"}
-                                    </button>
-                                  ))
-                              )}
-                            </div>
-                          )}
-                        {m.sender === "agent" &&
-                          m.widget?.type === "link_preview" && (
-                            <a
-                              className="message-widget link-preview-card"
-                              href={m.widget?.url || "#"}
-                              target="_blank"
-                              rel="noreferrer noopener"
-                            >
-                              {m.widget?.image ? (
-                                <img
-                                  src={m.widget.image}
-                                  alt={m.widget?.title || "Link preview"}
-                                  loading="lazy"
-                                />
-                              ) : null}
-                              <div className="link-preview-body">
-                                <p className="link-preview-site">
-                                  {m.widget?.siteName || "Link"}
-                                </p>
-                                <h4>
-                                  {m.widget?.title ||
-                                    m.widget?.url ||
-                                    "Open link"}
-                                </h4>
-                                {m.widget?.description ? (
-                                  <p>{m.widget.description}</p>
-                                ) : null}
-                                <span className="link-preview-url">
-                                  {m.widget?.url || ""}
-                                </span>
+                      ) : (
+                        <>
+                          {isAgent &&
+                            (showAgentIcon ? (
+                              renderAgentAvatar(m, 28)
+                            ) : (
+                              <span
+                                className="mini-icon-spacer"
+                                aria-hidden="true"
+                              />
+                            ))}
+                          <div className="message-stack">
+                            {showAgentName && (
+                              <span className="agent-name-label">
+                                {m.agentName || brandSettings?.botName}
+                              </span>
+                            )}
+                            <div className={`bubble bubble-${m.sender}`}>
+                              <div className="md-content">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                  {String(m.text ?? "")}
+                                </ReactMarkdown>
                               </div>
-                            </a>
-                          )}
-                        {m.sender === "agent" &&
-                          m.widget?.type === "select" &&
-                          Array.isArray(m.widget?.options) && (
-                            <div className="message-widget inline-form-widget">
-                              {submittedWidgets[m.id] ? (
-                                <span className="inline-submitted-value">
-                                  {submittedWidgets[m.id]}
-                                </span>
-                              ) : (
-                                <>
-                                  <select
-                                    className="carousel-select"
-                                    value={selectSelections[m.id] || ""}
-                                    onChange={(e) =>
-                                      setSelectSelections((prev) => ({
-                                        ...prev,
-                                        [m.id]: e.target.value,
-                                      }))
-                                    }
-                                  >
-                                    <option value="">
-                                      {m.widget?.placeholder || "Select one"}
-                                    </option>
-                                    {m.widget.options.map((opt, optIdx) => {
-                                      const label =
-                                        typeof opt === "string"
-                                          ? opt
-                                          : opt?.label ||
-                                            opt?.value ||
-                                            "Option";
-                                      const value =
-                                        typeof opt === "string"
-                                          ? opt
-                                          : opt?.value || label;
-                                      return (
-                                        <option
-                                          key={`${m.id}-select-${optIdx}`}
-                                          value={value}
+                            </div>
+                            {m.sender === "agent" &&
+                              m.widget?.type === "buttons" &&
+                              Array.isArray(m.widget?.buttons) && (
+                                <div className="message-widget buttons-widget">
+                                  {submittedWidgets[m.id] ? (
+                                    <span className="suggestion-chip submitted-chip">
+                                      {submittedWidgets[m.id]}
+                                    </span>
+                                  ) : (
+                                    m.widget.buttons
+                                      .slice(0, 6)
+                                      .map((button, idx) => (
+                                        <button
+                                          key={`${m.id}-btn-${idx}`}
+                                          type="button"
+                                          className="suggestion-chip"
+                                          onClick={() => {
+                                            const val =
+                                              button?.value ||
+                                              button?.label ||
+                                              "";
+                                            markWidgetSubmitted(
+                                              m.id,
+                                              button?.label || val,
+                                            );
+                                            sendSuggestion(val);
+                                          }}
                                         >
-                                          {label}
-                                        </option>
-                                      );
-                                    })}
-                                  </select>
-                                  <button
-                                    type="button"
-                                    className="inline-submit"
-                                    disabled={!selectSelections[m.id]}
-                                    onClick={() => {
-                                      const value = selectSelections[m.id];
-                                      if (!value) return;
-                                      markWidgetSubmitted(m.id, value);
-                                      sendSuggestion(value);
-                                    }}
-                                  >
-                                    {m.widget?.buttonLabel || "Send"}
-                                  </button>
-                                </>
+                                          {button?.label || "Option"}
+                                        </button>
+                                      ))
+                                  )}
+                                </div>
                               )}
-                            </div>
-                          )}
-                        {m.sender === "agent" &&
-                          m.widget?.type === "input_form" &&
-                          Array.isArray(m.widget?.fields) && (
-                            <div className="message-widget inline-form-widget">
-                              {submittedWidgets[m.id] ? (
-                                <span className="inline-submitted-value">
-                                  {submittedWidgets[m.id]}
-                                </span>
-                              ) : (
-                                <>
-                                  {m.widget.fields.map((field, fIdx) => (
-                                    <input
-                                      key={`${m.id}-field-${fIdx}`}
-                                      className="inline-input"
-                                      type={field?.type || "text"}
-                                      placeholder={
-                                        field?.placeholder ||
-                                        field?.label ||
-                                        field?.name ||
-                                        "Field"
-                                      }
-                                      value={
-                                        formInputs[formKey(m.id)]?.[
-                                          field?.name || `f${fIdx}`
-                                        ] || ""
-                                      }
-                                      onChange={(e) =>
-                                        setFormInputs((prev) => ({
-                                          ...prev,
-                                          [formKey(m.id)]: {
-                                            ...(prev[formKey(m.id)] || {}),
-                                            [field?.name || `f${fIdx}`]:
-                                              e.target.value,
-                                          },
-                                        }))
-                                      }
-                                    />
-                                  ))}
-                                  <button
-                                    type="button"
-                                    className="inline-submit"
-                                    onClick={() => {
-                                      const values =
-                                        formInputs[formKey(m.id)] || {};
-                                      const missing = m.widget.fields.some(
-                                        (field, fIdx) => {
-                                          if (field?.required === false)
-                                            return false;
-                                          const key = field?.name || `f${fIdx}`;
-                                          return !String(
-                                            values[key] || "",
-                                          ).trim();
-                                        },
-                                      );
-                                      if (missing) return;
-                                      const payload = m.widget.fields
-                                        .map((field, fIdx) => {
-                                          const key = field?.name || `f${fIdx}`;
-                                          const label = field?.label || key;
-                                          return `${label}: ${values[key] || ""}`;
-                                        })
-                                        .join(", ");
-                                      markWidgetSubmitted(m.id, payload);
-                                      sendSuggestion(payload);
-                                    }}
-                                  >
-                                    {m.widget?.submitLabel || "Submit"}
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          )}
-                        {m.sender === "agent" &&
-                          m.widget?.type === "quick_input" && (
-                            <div className="message-widget crisp-input-widget">
-                              {submittedWidgets[m.id] ? (
-                                <input
-                                  className="crisp-input"
-                                  type={m.widget?.inputType || "text"}
-                                  value={submittedWidgets[m.id]}
-                                  disabled
-                                />
-                              ) : (
-                                <>
-                                  <input
-                                    className="crisp-input"
-                                    type={m.widget?.inputType || "text"}
-                                    placeholder={
-                                      m.widget?.placeholder || "Type here..."
-                                    }
-                                    value={quickInputs[m.id] || ""}
-                                    onChange={(e) =>
-                                      setQuickInputs((prev) => ({
-                                        ...prev,
-                                        [m.id]: e.target.value,
-                                      }))
-                                    }
-                                  />
-                                  <button
-                                    type="button"
-                                    className="crisp-send"
-                                    disabled={
-                                      !String(quickInputs[m.id] || "").trim()
-                                    }
-                                    onClick={() => {
-                                      const value = String(
-                                        quickInputs[m.id] || "",
-                                      ).trim();
-                                      if (!value) return;
-                                      markWidgetSubmitted(m.id, value);
-                                      sendSuggestion(value);
-                                    }}
-                                  >
-                                    {m.widget?.buttonLabel || "Send"}
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          )}
-                        {m.sender === "agent" &&
-                          m.widget?.type === "carousel" &&
-                          Array.isArray(m.widget?.items) && (
-                            <div className="message-widget carousel-widget">
-                              {m.widget.items.slice(0, 8).map((item, idx) => (
-                                <article
-                                  key={`${m.id}-item-${idx}`}
-                                  className="carousel-card"
+                            {m.sender === "agent" &&
+                              m.widget?.type === "link_preview" && (
+                                <a
+                                  className="message-widget link-preview-card"
+                                  href={m.widget?.url || "#"}
+                                  target="_blank"
+                                  rel="noreferrer noopener"
                                 >
-                                  {item?.imageUrl ? (
+                                  {m.widget?.image ? (
                                     <img
-                                      src={item.imageUrl}
-                                      alt={item?.title || "Item"}
+                                      src={m.widget.image}
+                                      alt={m.widget?.title || "Link preview"}
                                       loading="lazy"
                                     />
                                   ) : null}
-                                  <h4>{item?.title || "Item"}</h4>
-                                  {item?.description ? (
-                                    <p>{item.description}</p>
-                                  ) : null}
-                                  {item?.price ? (
-                                    <strong>{item.price}</strong>
-                                  ) : null}
-                                  {(Array.isArray(item?.selectOptions) ||
-                                    Array.isArray(item?.options)) && (
-                                    <select
-                                      className="carousel-select"
-                                      value={
-                                        carouselSelections[
-                                          selectKey(m.id, idx)
-                                        ] || ""
-                                      }
-                                      onChange={(e) =>
-                                        setCarouselSelections((prev) => ({
-                                          ...prev,
-                                          [selectKey(m.id, idx)]:
-                                            e.target.value,
-                                        }))
-                                      }
-                                    >
-                                      <option value="">Select an option</option>
-                                      {(item.selectOptions || item.options).map(
-                                        (opt, optIdx) => {
-                                          if (typeof opt === "string") {
-                                            return (
-                                              <option
-                                                key={`${m.id}-item-${idx}-o-${optIdx}`}
-                                                value={opt}
-                                              >
-                                                {opt}
-                                              </option>
-                                            );
-                                          }
+                                  <div className="link-preview-body">
+                                    <p className="link-preview-site">
+                                      {m.widget?.siteName || "Link"}
+                                    </p>
+                                    <h4>
+                                      {m.widget?.title ||
+                                        m.widget?.url ||
+                                        "Open link"}
+                                    </h4>
+                                    {m.widget?.description ? (
+                                      <p>{m.widget.description}</p>
+                                    ) : null}
+                                    <span className="link-preview-url">
+                                      {m.widget?.url || ""}
+                                    </span>
+                                  </div>
+                                </a>
+                              )}
+                            {m.sender === "agent" &&
+                              m.widget?.type === "select" &&
+                              Array.isArray(m.widget?.options) && (
+                                <div className="message-widget inline-form-widget">
+                                  {submittedWidgets[m.id] ? (
+                                    <span className="inline-submitted-value">
+                                      {submittedWidgets[m.id]}
+                                    </span>
+                                  ) : (
+                                    <>
+                                      <select
+                                        className="carousel-select"
+                                        value={selectSelections[m.id] || ""}
+                                        onChange={(e) =>
+                                          setSelectSelections((prev) => ({
+                                            ...prev,
+                                            [m.id]: e.target.value,
+                                          }))
+                                        }
+                                      >
+                                        <option value="">
+                                          {m.widget?.placeholder ||
+                                            "Select one"}
+                                        </option>
+                                        {m.widget.options.map((opt, optIdx) => {
                                           const label =
-                                            opt?.label ||
-                                            opt?.value ||
-                                            `Option ${optIdx + 1}`;
-                                          const value = opt?.value || label;
+                                            typeof opt === "string"
+                                              ? opt
+                                              : opt?.label ||
+                                                opt?.value ||
+                                                "Option";
+                                          const value =
+                                            typeof opt === "string"
+                                              ? opt
+                                              : opt?.value || label;
                                           return (
                                             <option
-                                              key={`${m.id}-item-${idx}-o-${optIdx}`}
+                                              key={`${m.id}-select-${optIdx}`}
                                               value={value}
                                             >
                                               {label}
                                             </option>
                                           );
-                                        },
-                                      )}
-                                    </select>
-                                  )}
-                                  <div className="carousel-actions">
-                                    {Array.isArray(item?.buttons) &&
-                                    item.buttons.length > 0 ? (
-                                      item.buttons
-                                        .slice(0, 2)
-                                        .map((button, bIdx) => (
-                                          <button
-                                            key={`${m.id}-item-${idx}-b-${bIdx}`}
-                                            type="button"
-                                            className="carousel-action"
-                                            onClick={() => {
-                                              const picked =
-                                                carouselSelections[
-                                                  selectKey(m.id, idx)
-                                                ];
-                                              sendSuggestion(
-                                                picked ||
-                                                  button?.value ||
-                                                  button?.label ||
-                                                  item?.title ||
-                                                  "",
-                                              );
-                                            }}
-                                          >
-                                            {button?.label || "View"}
-                                          </button>
-                                        ))
-                                    ) : (
+                                        })}
+                                      </select>
                                       <button
                                         type="button"
-                                        className="carousel-action"
+                                        className="inline-submit"
+                                        disabled={!selectSelections[m.id]}
                                         onClick={() => {
-                                          const picked =
-                                            carouselSelections[
-                                              selectKey(m.id, idx)
-                                            ];
-                                          sendSuggestion(
-                                            picked || item?.title || "",
-                                          );
+                                          const value = selectSelections[m.id];
+                                          if (!value) return;
+                                          markWidgetSubmitted(m.id, value);
+                                          sendSuggestion(value);
                                         }}
                                       >
-                                        View
+                                        {m.widget?.buttonLabel || "Send"}
                                       </button>
-                                    )}
-                                  </div>
-                                </article>
-                              ))}
-                            </div>
-                          )}
-                        {m.sender === "agent" && m.widget?.type === "csat" && (
-                          <div className="message-widget csat-widget">
-                            {submittedWidgets[m.id] ? (
-                              <div className="csat-submitted">
-                                <span className="csat-submitted-label">
-                                  {m.widget?.ratingType === "stars"
-                                    ? "★".repeat(
-                                        Number(submittedWidgets[m.id]) || 0,
-                                      ) +
-                                      "☆".repeat(
-                                        5 -
-                                          (Number(submittedWidgets[m.id]) || 0),
-                                      )
-                                    : ["😡", "😟", "😐", "😊", "😍"][
-                                        Number(submittedWidgets[m.id]) - 1
-                                      ] || "✓"}
-                                </span>
-                                <span className="csat-thanks">
-                                  Thank you for your feedback!
-                                </span>
-                              </div>
-                            ) : m.widget?.ratingType === "stars" ? (
-                              <div className="csat-stars">
-                                {[1, 2, 3, 4, 5].map((star) => (
-                                  <button
-                                    key={`${m.id}-star-${star}`}
-                                    type="button"
-                                    className={`csat-star ${
-                                      (csatHover[m.id] || 0) >= star
-                                        ? "csat-star-active"
-                                        : ""
-                                    }`}
-                                    onMouseEnter={() =>
-                                      setCsatHover((prev) => ({
-                                        ...prev,
-                                        [m.id]: star,
-                                      }))
-                                    }
-                                    onMouseLeave={() =>
-                                      setCsatHover((prev) => ({
-                                        ...prev,
-                                        [m.id]: 0,
-                                      }))
-                                    }
-                                    onClick={() => {
-                                      markWidgetSubmitted(m.id, String(star));
-                                      fetch(
-                                        `${API_URL}/api/session/${sessionId}/csat`,
-                                        {
-                                          method: "POST",
-                                          headers: {
-                                            "Content-Type": "application/json",
-                                          },
-                                          body: JSON.stringify({ score: star }),
-                                        },
-                                      ).catch(() => {});
-                                    }}
-                                  >
-                                    ★
-                                  </button>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="csat-emojis">
-                                {["😡", "😟", "😐", "😊", "😍"].map(
-                                  (emoji, idx) => (
-                                    <button
-                                      key={`${m.id}-emoji-${idx}`}
-                                      type="button"
-                                      className="csat-emoji"
-                                      onClick={() => {
-                                        const score = idx + 1;
-                                        markWidgetSubmitted(
-                                          m.id,
-                                          String(score),
-                                        );
-                                        fetch(
-                                          `${API_URL}/api/session/${sessionId}/csat`,
-                                          {
-                                            method: "POST",
-                                            headers: {
-                                              "Content-Type":
-                                                "application/json",
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                            {m.sender === "agent" &&
+                              m.widget?.type === "input_form" &&
+                              Array.isArray(m.widget?.fields) && (
+                                <div className="message-widget inline-form-widget">
+                                  {submittedWidgets[m.id] ? (
+                                    <span className="inline-submitted-value">
+                                      {submittedWidgets[m.id]}
+                                    </span>
+                                  ) : (
+                                    <>
+                                      {m.widget.fields.map((field, fIdx) => (
+                                        <input
+                                          key={`${m.id}-field-${fIdx}`}
+                                          className="inline-input"
+                                          type={field?.type || "text"}
+                                          placeholder={
+                                            field?.placeholder ||
+                                            field?.label ||
+                                            field?.name ||
+                                            "Field"
+                                          }
+                                          value={
+                                            formInputs[formKey(m.id)]?.[
+                                              field?.name || `f${fIdx}`
+                                            ] || ""
+                                          }
+                                          onChange={(e) =>
+                                            setFormInputs((prev) => ({
+                                              ...prev,
+                                              [formKey(m.id)]: {
+                                                ...(prev[formKey(m.id)] || {}),
+                                                [field?.name || `f${fIdx}`]:
+                                                  e.target.value,
+                                              },
+                                            }))
+                                          }
+                                        />
+                                      ))}
+                                      <button
+                                        type="button"
+                                        className="inline-submit"
+                                        onClick={() => {
+                                          const values =
+                                            formInputs[formKey(m.id)] || {};
+                                          const missing = m.widget.fields.some(
+                                            (field, fIdx) => {
+                                              if (field?.required === false)
+                                                return false;
+                                              const key =
+                                                field?.name || `f${fIdx}`;
+                                              return !String(
+                                                values[key] || "",
+                                              ).trim();
                                             },
-                                            body: JSON.stringify({ score }),
-                                          },
-                                        ).catch(() => {});
-                                      }}
-                                    >
-                                      {emoji}
-                                    </button>
-                                  ),
-                                )}
-                              </div>
-                            )}
+                                          );
+                                          if (missing) return;
+                                          const payload = m.widget.fields
+                                            .map((field, fIdx) => {
+                                              const key =
+                                                field?.name || `f${fIdx}`;
+                                              const label = field?.label || key;
+                                              return `${label}: ${values[key] || ""}`;
+                                            })
+                                            .join(", ");
+                                          markWidgetSubmitted(m.id, payload);
+                                          sendSuggestion(payload);
+                                        }}
+                                      >
+                                        {m.widget?.submitLabel || "Submit"}
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                            {m.sender === "agent" &&
+                              m.widget?.type === "quick_input" && (
+                                <div className="message-widget crisp-input-widget">
+                                  {submittedWidgets[m.id] ? (
+                                    <input
+                                      className="crisp-input"
+                                      type={m.widget?.inputType || "text"}
+                                      value={submittedWidgets[m.id]}
+                                      disabled
+                                    />
+                                  ) : (
+                                    <>
+                                      <input
+                                        className="crisp-input"
+                                        type={m.widget?.inputType || "text"}
+                                        placeholder={
+                                          m.widget?.placeholder ||
+                                          "Type here..."
+                                        }
+                                        value={quickInputs[m.id] || ""}
+                                        onChange={(e) =>
+                                          setQuickInputs((prev) => ({
+                                            ...prev,
+                                            [m.id]: e.target.value,
+                                          }))
+                                        }
+                                      />
+                                      <button
+                                        type="button"
+                                        className="crisp-send"
+                                        disabled={
+                                          !String(
+                                            quickInputs[m.id] || "",
+                                          ).trim()
+                                        }
+                                        onClick={() => {
+                                          const value = String(
+                                            quickInputs[m.id] || "",
+                                          ).trim();
+                                          if (!value) return;
+                                          markWidgetSubmitted(m.id, value);
+                                          sendSuggestion(value);
+                                        }}
+                                      >
+                                        {m.widget?.buttonLabel || "Send"}
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                            {m.sender === "agent" &&
+                              m.widget?.type === "carousel" &&
+                              Array.isArray(m.widget?.items) && (
+                                <div className="message-widget carousel-widget">
+                                  {m.widget.items
+                                    .slice(0, 8)
+                                    .map((item, idx) => (
+                                      <article
+                                        key={`${m.id}-item-${idx}`}
+                                        className="carousel-card"
+                                      >
+                                        {item?.imageUrl ? (
+                                          <img
+                                            src={item.imageUrl}
+                                            alt={item?.title || "Item"}
+                                            loading="lazy"
+                                          />
+                                        ) : null}
+                                        <h4>{item?.title || "Item"}</h4>
+                                        {item?.description ? (
+                                          <p>{item.description}</p>
+                                        ) : null}
+                                        {item?.price ? (
+                                          <strong>{item.price}</strong>
+                                        ) : null}
+                                        {(Array.isArray(item?.selectOptions) ||
+                                          Array.isArray(item?.options)) && (
+                                          <select
+                                            className="carousel-select"
+                                            value={
+                                              carouselSelections[
+                                                selectKey(m.id, idx)
+                                              ] || ""
+                                            }
+                                            onChange={(e) =>
+                                              setCarouselSelections((prev) => ({
+                                                ...prev,
+                                                [selectKey(m.id, idx)]:
+                                                  e.target.value,
+                                              }))
+                                            }
+                                          >
+                                            <option value="">
+                                              Select an option
+                                            </option>
+                                            {(
+                                              item.selectOptions || item.options
+                                            ).map((opt, optIdx) => {
+                                              if (typeof opt === "string") {
+                                                return (
+                                                  <option
+                                                    key={`${m.id}-item-${idx}-o-${optIdx}`}
+                                                    value={opt}
+                                                  >
+                                                    {opt}
+                                                  </option>
+                                                );
+                                              }
+                                              const label =
+                                                opt?.label ||
+                                                opt?.value ||
+                                                `Option ${optIdx + 1}`;
+                                              const value = opt?.value || label;
+                                              return (
+                                                <option
+                                                  key={`${m.id}-item-${idx}-o-${optIdx}`}
+                                                  value={value}
+                                                >
+                                                  {label}
+                                                </option>
+                                              );
+                                            })}
+                                          </select>
+                                        )}
+                                        <div className="carousel-actions">
+                                          {Array.isArray(item?.buttons) &&
+                                          item.buttons.length > 0 ? (
+                                            item.buttons
+                                              .slice(0, 2)
+                                              .map((button, bIdx) => (
+                                                <button
+                                                  key={`${m.id}-item-${idx}-b-${bIdx}`}
+                                                  type="button"
+                                                  className="carousel-action"
+                                                  onClick={() => {
+                                                    const picked =
+                                                      carouselSelections[
+                                                        selectKey(m.id, idx)
+                                                      ];
+                                                    sendSuggestion(
+                                                      picked ||
+                                                        button?.value ||
+                                                        button?.label ||
+                                                        item?.title ||
+                                                        "",
+                                                    );
+                                                  }}
+                                                >
+                                                  {button?.label || "View"}
+                                                </button>
+                                              ))
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              className="carousel-action"
+                                              onClick={() => {
+                                                const picked =
+                                                  carouselSelections[
+                                                    selectKey(m.id, idx)
+                                                  ];
+                                                sendSuggestion(
+                                                  picked || item?.title || "",
+                                                );
+                                              }}
+                                            >
+                                              View
+                                            </button>
+                                          )}
+                                        </div>
+                                      </article>
+                                    ))}
+                                </div>
+                              )}
+                            {m.sender === "agent" &&
+                              m.widget?.type === "csat" && (
+                                <div className="message-widget csat-widget">
+                                  {submittedWidgets[m.id] ? (
+                                    <div className="csat-submitted">
+                                      <span className="csat-submitted-label">
+                                        {m.widget?.ratingType === "stars"
+                                          ? "★".repeat(
+                                              Number(submittedWidgets[m.id]) ||
+                                                0,
+                                            ) +
+                                            "☆".repeat(
+                                              5 -
+                                                (Number(
+                                                  submittedWidgets[m.id],
+                                                ) || 0),
+                                            )
+                                          : ["😡", "😟", "😐", "😊", "😍"][
+                                              Number(submittedWidgets[m.id]) - 1
+                                            ] || "✓"}
+                                      </span>
+                                      <span className="csat-thanks">
+                                        Thank you for your feedback!
+                                      </span>
+                                    </div>
+                                  ) : m.widget?.ratingType === "stars" ? (
+                                    <div className="csat-stars">
+                                      {[1, 2, 3, 4, 5].map((star) => (
+                                        <button
+                                          key={`${m.id}-star-${star}`}
+                                          type="button"
+                                          className={`csat-star ${
+                                            (csatHover[m.id] || 0) >= star
+                                              ? "csat-star-active"
+                                              : ""
+                                          }`}
+                                          onMouseEnter={() =>
+                                            setCsatHover((prev) => ({
+                                              ...prev,
+                                              [m.id]: star,
+                                            }))
+                                          }
+                                          onMouseLeave={() =>
+                                            setCsatHover((prev) => ({
+                                              ...prev,
+                                              [m.id]: 0,
+                                            }))
+                                          }
+                                          onClick={() => {
+                                            markWidgetSubmitted(
+                                              m.id,
+                                              String(star),
+                                            );
+                                            fetch(
+                                              `${API_URL}/api/session/${sessionId}/csat`,
+                                              {
+                                                method: "POST",
+                                                headers: {
+                                                  "Content-Type":
+                                                    "application/json",
+                                                },
+                                                body: JSON.stringify({
+                                                  score: star,
+                                                }),
+                                              },
+                                            ).catch(() => {});
+                                          }}
+                                        >
+                                          ★
+                                        </button>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <div className="csat-emojis">
+                                      {["😡", "😟", "😐", "😊", "😍"].map(
+                                        (emoji, idx) => (
+                                          <button
+                                            key={`${m.id}-emoji-${idx}`}
+                                            type="button"
+                                            className="csat-emoji"
+                                            onClick={() => {
+                                              const score = idx + 1;
+                                              markWidgetSubmitted(
+                                                m.id,
+                                                String(score),
+                                              );
+                                              fetch(
+                                                `${API_URL}/api/session/${sessionId}/csat`,
+                                                {
+                                                  method: "POST",
+                                                  headers: {
+                                                    "Content-Type":
+                                                      "application/json",
+                                                  },
+                                                  body: JSON.stringify({
+                                                    score,
+                                                  }),
+                                                },
+                                              ).catch(() => {});
+                                            }}
+                                          >
+                                            {emoji}
+                                          </button>
+                                        ),
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                           </div>
-                        )}
-                      </div>
-                    </>
-                  )}
-                </div>
-              );
-            })}
-            {agentTyping && (
-              <div className="row row-agent row-typing row-open-animate">
-                {typingAgent ? (
-                  renderAgentAvatar(typingAgent, 28)
-                ) : brandSettings?.botAvatarUrl ? (
-                  <img
-                    className="agent-avatar"
-                    src={brandSettings.botAvatarUrl}
-                    alt={brandSettings.botName || "Bot"}
-                    style={{ width: 28, height: 28 }}
-                  />
-                ) : (
-                  <span
-                    className="agent-avatar agent-avatar-initial"
-                    style={{ width: 28, height: 28, fontSize: 13 }}
-                  >
-                    {brandSettings?.botName
-                      ? agentInitial(brandSettings.botName)
-                      : bootstrapAgents.length > 0
-                        ? agentInitial(bootstrapAgents[0].name)
-                        : "A"}
-                  </span>
-                )}
-                <div
-                  className="bubble bubble-agent typing-bubble"
-                  aria-label="Agent is typing"
-                >
-                  <span className="typing-dot" />
-                  <span className="typing-dot" />
-                  <span className="typing-dot" />
-                </div>
-              </div>
-            )}
-            {latestSuggestionSource &&
-              latestSuggestionSource.id !== dismissedSuggestionsFor && (
-                <div className="row row-suggestions row-open-animate">
-                  <div className="suggestion-row">
-                    {latestSuggestionSource.suggestions
-                      .slice(0, 4)
-                      .map((item, idx) => (
-                        <button
-                          key={`${latestSuggestionSource.id}-s-${idx}`}
-                          type="button"
-                          className="suggestion-chip"
-                          onClick={() => sendSuggestion(item)}
-                        >
-                          {item}
-                        </button>
-                      ))}
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+                {agentTyping && (
+                  <div className="row row-agent row-typing row-open-animate">
+                    {typingAgent ? (
+                      renderAgentAvatar(typingAgent, 28)
+                    ) : brandSettings?.botAvatarUrl ? (
+                      <img
+                        className="agent-avatar"
+                        src={brandSettings.botAvatarUrl}
+                        alt={brandSettings.botName || "Bot"}
+                        style={{ width: 28, height: 28 }}
+                      />
+                    ) : (
+                      <span
+                        className="agent-avatar agent-avatar-initial"
+                        style={{ width: 28, height: 28, fontSize: 13 }}
+                      >
+                        {brandSettings?.botName
+                          ? agentInitial(brandSettings.botName)
+                          : bootstrapAgents.length > 0
+                            ? agentInitial(bootstrapAgents[0].name)
+                            : "A"}
+                      </span>
+                    )}
+                    <div
+                      className="bubble bubble-agent typing-bubble"
+                      aria-label="Agent is typing"
+                    >
+                      <span className="typing-dot" />
+                      <span className="typing-dot" />
+                      <span className="typing-dot" />
+                    </div>
                   </div>
-                </div>
-              )}
-          </div>
-        </main>
+                )}
+                {latestSuggestionSource &&
+                  latestSuggestionSource.id !== dismissedSuggestionsFor && (
+                    <div className="row row-suggestions row-open-animate">
+                      <div className="suggestion-row">
+                        {latestSuggestionSource.suggestions
+                          .slice(0, 4)
+                          .map((item, idx) => (
+                            <button
+                              key={`${latestSuggestionSource.id}-s-${idx}`}
+                              type="button"
+                              className="suggestion-chip"
+                              onClick={() => sendSuggestion(item)}
+                            >
+                              {item}
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+              </div>
+            </main>
 
-        {chatClosed ? (
-          <div className="composer composer-closed">
-            <button
-              type="button"
-              className="new-chat-btn"
-              onClick={() =>
-                startNewChat().catch((error) =>
-                  console.error("failed to start chat", error),
-                )
-              }
-            >
-              Start new chat
-            </button>
-          </div>
-        ) : composerDisabled ? (
-          <div className="composer composer-disabled">
-            <span className="composer-disabled-hint">
-              Use the input above to respond
-            </span>
-          </div>
-        ) : (
-          <form className="composer" onSubmit={send}>
-            <input
-              value={text}
-              onChange={(e) => {
-                const next = e.target.value;
-                setText(next);
-                sendVisitorTyping(next);
-                if (visitorTypingIdleTimerRef.current) {
-                  clearTimeout(visitorTypingIdleTimerRef.current);
-                }
-                visitorTypingIdleTimerRef.current = setTimeout(() => {
-                  sendVisitorTyping(next, false);
-                }, 1200);
-              }}
-              onBlur={() => sendVisitorTyping("", false)}
-              placeholder="Message..."
-              aria-label="Message input"
-            />
-            <button
-              type="submit"
-              aria-label="Send"
-              disabled={!canSend}
-              className={canSend ? "send-active" : ""}
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true" className="send-icon">
-                <path
-                  d="M12 18V7.5M12 7.5L7.5 12M12 7.5L16.5 12"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.1"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+            {chatClosed ? (
+              <div className="composer composer-closed">
+                <button
+                  type="button"
+                  className="new-chat-btn"
+                  onClick={() =>
+                    startNewChat().catch((error) =>
+                      console.error("failed to start chat", error),
+                    )
+                  }
+                >
+                  Start new chat
+                </button>
+              </div>
+            ) : composerDisabled ? (
+              <div className="composer composer-disabled">
+                <span className="composer-disabled-hint">
+                  Use the input above to respond
+                </span>
+              </div>
+            ) : (
+              <form className="composer" onSubmit={send}>
+                <input
+                  value={text}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setText(next);
+                    sendVisitorTyping(next);
+                    if (visitorTypingIdleTimerRef.current) {
+                      clearTimeout(visitorTypingIdleTimerRef.current);
+                    }
+                    visitorTypingIdleTimerRef.current = setTimeout(() => {
+                      sendVisitorTyping(next, false);
+                    }, 1200);
+                  }}
+                  onBlur={() => sendVisitorTyping("", false)}
+                  placeholder="Message..."
+                  aria-label="Message input"
                 />
-              </svg>
-            </button>
-          </form>
-        )}
+                <button
+                  type="submit"
+                  aria-label="Send"
+                  disabled={!canSend}
+                  className={canSend ? "send-active" : ""}
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                    className="send-icon"
+                  >
+                    <path
+                      d="M12 18V7.5M12 7.5L7.5 12M12 7.5L16.5 12"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.1"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              </form>
+            )}
 
-        <footer className="privacy">Privacy</footer>
+            <footer className="privacy">Privacy</footer>
+          </>
+        )}
       </section>
     </div>
   );

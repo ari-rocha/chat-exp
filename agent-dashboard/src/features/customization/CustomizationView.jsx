@@ -931,7 +931,7 @@ export default function CustomizationView({
   (function(d,t){
     var g=d.createElement(t),s=d.getElementsByTagName(t)[0];
     g.src="https://${typeof window !== "undefined" ? window.location.hostname : "your-domain.com"}/widget.js";
-    g.setAttribute("data-tenant-id","${editingChannel.inboxId || "[INBOX-ID]"}");
+    g.setAttribute("data-tenant-id","${editingChannel.tenantId || "[TENANT-ID]"}");
     g.setAttribute("data-channel-id","${editingChannel.id || "[CHANNEL-ID]"}");
     s.parentNode.insertBefore(g,s);
   }(document,"script"));
