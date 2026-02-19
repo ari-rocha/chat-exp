@@ -274,6 +274,7 @@ export default function App() {
   const [text, setText] = useState("");
   const [conversationSearch, setConversationSearch] = useState("");
   const [conversationFilter, setConversationFilter] = useState("all");
+  const [inboxFilter, setInboxFilter] = useState("all");
   const [visitorDraftBySession, setVisitorDraftBySession] = useState({});
   const [cannedReplies, setCannedReplies] = useState([]);
   const [cannedPanelOpen, setCannedPanelOpen] = useState(false);
@@ -369,8 +370,11 @@ export default function App() {
       if (conversationFilter === "all") return true;
       return status === conversationFilter;
     });
-    if (!query) return byStatus;
-    return byStatus.filter((session) => {
+    const byInbox = inboxFilter === "all" 
+      ? byStatus 
+      : byStatus.filter((session) => session.inboxId === inboxFilter);
+    if (!query) return byInbox;
+    return byInbox.filter((session) => {
       const draft = visitorDraftBySession[session.id];
       const preview = (
         draft
@@ -380,7 +384,7 @@ export default function App() {
       const id = session.id.toLowerCase();
       return id.includes(query) || preview.includes(query);
     });
-  }, [sessions, conversationSearch, conversationFilter, visitorDraftBySession]);
+  }, [sessions, conversationSearch, conversationFilter, inboxFilter, visitorDraftBySession]);
 
   const openCount = useMemo(
     () =>
@@ -1409,6 +1413,8 @@ export default function App() {
           closedCount={closedCount}
           conversationFilter={conversationFilter}
           setConversationFilter={setConversationFilter}
+          inboxFilter={inboxFilter}
+          setInboxFilter={setInboxFilter}
           agent={agent}
           updateAgentStatus={updateAgentStatus}
           channelCounts={channelCounts}
@@ -1573,6 +1579,9 @@ export default function App() {
         closedCount={closedCount}
         conversationFilter={conversationFilter}
         setConversationFilter={setConversationFilter}
+        inboxFilter={inboxFilter}
+        setInboxFilter={setInboxFilter}
+        inboxes={inboxes}
         agent={agent}
         updateAgentStatus={updateAgentStatus}
         channelCounts={channelCounts}

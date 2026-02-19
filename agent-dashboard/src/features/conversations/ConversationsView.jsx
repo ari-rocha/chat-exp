@@ -92,6 +92,8 @@ export default function ConversationsView({
   closedCount,
   conversationFilter,
   setConversationFilter,
+  inboxFilter,
+  setInboxFilter,
   agent,
   updateAgentStatus,
   channelCounts,
@@ -218,6 +220,9 @@ export default function ConversationsView({
       closedCount={closedCount}
       conversationFilter={conversationFilter}
       setConversationFilter={setConversationFilter}
+      inboxFilter={inboxFilter}
+      setInboxFilter={setInboxFilter}
+      inboxes={inboxes}
       agent={agent}
       updateAgentStatus={updateAgentStatus}
       channelCounts={channelCounts}

@@ -137,6 +137,13 @@ pub struct Inbox {
     pub agent_ids: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateInboxBody {
+    pub name: Option<String>,
+    pub channel_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Channel {
@@ -462,6 +469,15 @@ pub struct CreateChannelBody {
     pub inbox_id: Option<String>,
     #[serde(default)]
     pub config: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateChannelBody {
+    pub name: Option<String>,
+    #[serde(default)]
+    pub config: Option<Value>,
+    pub enabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

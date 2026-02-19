@@ -70,6 +70,9 @@ export default function WorkspaceLayout({
   closedCount,
   conversationFilter,
   setConversationFilter,
+  inboxFilter,
+  setInboxFilter,
+  inboxes,
   agent,
   updateAgentStatus,
   channelCounts,
@@ -150,6 +153,46 @@ export default function WorkspaceLayout({
           <div className="space-y-4 p-4">
             <div>
               <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Inbox</p>
+              <div className="space-y-1.5">
+                <button
+                  type="button"
+                  onClick={() => setInboxFilter("all")}
+                  className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-left text-xs ${
+                    inboxFilter === "all"
+                      ? "border-blue-200 bg-blue-50 text-blue-700"
+                      : "border-slate-200 bg-white text-slate-600"
+                  }`}
+                >
+                  <span>All Inboxes</span>
+                  <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
+                    {sessions.length}
+                  </span>
+                </button>
+                {(inboxes || []).map((inbox) => {
+                  const count = sessions.filter(s => s.inboxId === inbox.id).length;
+                  return (
+                    <button
+                      key={inbox.id}
+                      type="button"
+                      onClick={() => setInboxFilter(inbox.id)}
+                      className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-left text-xs ${
+                        inboxFilter === inbox.id
+                          ? "border-blue-200 bg-blue-50 text-blue-700"
+                          : "border-slate-200 bg-white text-slate-600"
+                      }`}
+                    >
+                      <span>{inbox.name}</span>
+                      <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Status</p>
               <div className="space-y-1.5">
                 {STATUS_ITEMS.map((item) => (
                   <button

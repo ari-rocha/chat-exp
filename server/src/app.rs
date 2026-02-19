@@ -921,9 +921,20 @@ async fn ensure_session(state: Arc<AppState>, session_id: &str, tenant_id: &str)
     } else {
         created = true;
         let now = now_iso();
+        
         // Look up the first enabled flow for this tenant
         let default_flow_id: Option<String> = sqlx::query_scalar(
             "SELECT id FROM flows WHERE tenant_id = $1 AND enabled = true ORDER BY created_at ASC LIMIT 1",
+        )
+        .bind(tenant_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+
+        // Auto-assign inbox based on channel
+        let default_inbox_id: Option<String> = sqlx::query_scalar(
+            "SELECT inbox_id FROM channels WHERE tenant_id = $1 AND channel_type = 'web' AND enabled = true LIMIT 1",
         )
         .bind(tenant_id)
         .fetch_optional(&state.db)
@@ -939,7 +950,7 @@ async fn ensure_session(state: Arc<AppState>, session_id: &str, tenant_id: &str)
             messages: vec![],
             channel: "web".to_string(),
             assignee_agent_id: None,
-            inbox_id: None,
+            inbox_id: default_inbox_id,
             team_id: None,
             flow_id: default_flow_id,
             contact_id: None,
@@ -4100,15 +4111,38 @@ async fn post_session(
 }
 
 async fn get_sessions(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
     let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
         Ok(tid) => tid,
         Err(err) => return err.into_response(),
     };
-    let rows = sqlx::query("SELECT id FROM sessions WHERE tenant_id = $1 ORDER BY updated_at DESC")
-        .bind(&tenant_id)
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
+    
+    let rows = if agent.role == "owner" || agent.role == "admin" {
+        sqlx::query("SELECT id FROM sessions WHERE tenant_id = $1 ORDER BY updated_at DESC")
+            .bind(&tenant_id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default()
+    } else {
+        let inbox_ids = agent.inbox_ids;
+        if inbox_ids.is_empty() {
+            vec![]
+        } else {
+            let placeholders: Vec<String> = inbox_ids.iter().enumerate().map(|(i, _)| format!("${}", i + 2)).collect();
+            let query = format!(
+                "SELECT id FROM sessions WHERE tenant_id = $1 AND inbox_id = ANY(ARRAY[{}]) ORDER BY updated_at DESC",
+                placeholders.join(", ")
+            );
+            let mut q = sqlx::query(&query).bind(&tenant_id);
+            for id in &inbox_ids {
+                q = q.bind(id);
+            }
+            q.fetch_all(&state.db).await.unwrap_or_default()
+        }
+    };
     let mut list = Vec::with_capacity(rows.len());
     for row in rows {
         let session_id: String = row.get("id");
@@ -4821,18 +4855,29 @@ async fn patch_agent_profile(
 }
 
 async fn get_teams(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
-    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
-        return err.into_response();
-    }
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
     let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
         Ok(id) => id,
         Err(err) => return err.into_response(),
     };
-    let rows = sqlx::query("SELECT id, tenant_id, name, agent_ids FROM teams WHERE tenant_id = $1")
-        .bind(&tenant_id)
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
+    
+    let rows = if agent.role == "owner" || agent.role == "admin" {
+        sqlx::query("SELECT id, tenant_id, name, agent_ids FROM teams WHERE tenant_id = $1")
+            .bind(&tenant_id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default()
+    } else {
+        sqlx::query("SELECT id, tenant_id, name, agent_ids FROM teams WHERE tenant_id = $1 AND $2 = ANY(jsonb_array_elements_text(agent_ids))")
+            .bind(&tenant_id)
+            .bind(&agent.id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default()
+    };
     let teams = rows
         .into_iter()
         .map(|row| Team {
@@ -4851,8 +4896,16 @@ async fn create_team(
     headers: HeaderMap,
     Json(body): Json<CreateTeamBody>,
 ) -> impl IntoResponse {
-    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
-        return err.into_response();
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
+    if agent.role != "owner" && agent.role != "admin" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "only admin or owner can create teams" })),
+        )
+            .into_response();
     }
     let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
         Ok(id) => id,
@@ -4888,8 +4941,16 @@ async fn add_member_to_team(
     headers: HeaderMap,
     Json(body): Json<AssignBody>,
 ) -> impl IntoResponse {
-    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
-        return err.into_response();
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
+    if agent.role != "owner" && agent.role != "admin" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "only admin or owner can add members to teams" })),
+        )
+            .into_response();
     }
     let agent_id = body.agent_id.trim().to_string();
     let team_row = sqlx::query("SELECT agent_ids FROM teams WHERE id = $1")
@@ -4940,20 +5001,33 @@ async fn add_member_to_team(
 }
 
 async fn get_inboxes(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
-    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
-        return err.into_response();
-    }
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
     let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
         Ok(id) => id,
         Err(err) => return err.into_response(),
     };
-    let rows = sqlx::query(
-        "SELECT id, tenant_id, name, channels, agent_ids FROM inboxes WHERE tenant_id = $1",
-    )
-    .bind(&tenant_id)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    
+    let rows = if agent.role == "owner" || agent.role == "admin" {
+        sqlx::query(
+            "SELECT id, tenant_id, name, channels, agent_ids FROM inboxes WHERE tenant_id = $1",
+        )
+        .bind(&tenant_id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+    } else {
+        sqlx::query(
+            "SELECT id, tenant_id, name, channels, agent_ids FROM inboxes WHERE tenant_id = $1 AND $2 = ANY(jsonb_array_elements_text(agent_ids))",
+        )
+        .bind(&tenant_id)
+        .bind(&agent.id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+    };
     let inboxes = rows
         .into_iter()
         .map(|row| Inbox {
@@ -5005,8 +5079,16 @@ async fn create_inbox(
     headers: HeaderMap,
     Json(body): Json<CreateInboxBody>,
 ) -> impl IntoResponse {
-    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
-        return err.into_response();
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
+    if agent.role != "owner" && agent.role != "admin" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "only admin or owner can create inboxes" })),
+        )
+            .into_response();
     }
     let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
         Ok(id) => id,
@@ -5037,38 +5119,134 @@ async fn create_inbox(
     .bind("[]")
     .execute(&state.db)
     .await;
-    for channel_type in &inbox.channels {
-        let channel_type = channel_type.trim().to_ascii_lowercase();
-        if channel_type.is_empty() {
-            continue;
-        }
-        let _ = sqlx::query(
-            "INSERT INTO channels (id, tenant_id, inbox_id, channel_type, name, config, enabled, created_at, updated_at) \
-             SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9 \
-             WHERE NOT EXISTS (SELECT 1 FROM channels WHERE tenant_id = $2 AND inbox_id = $3 AND channel_type = $4)",
+    (StatusCode::CREATED, Json(json!({ "inbox": inbox }))).into_response()
+}
+
+async fn update_inbox(
+    Path(inbox_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateInboxBody>,
+) -> impl IntoResponse {
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
+    if agent.role != "owner" && agent.role != "admin" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "only admin or owner can update inboxes" })),
         )
-        .bind(Uuid::new_v4().to_string())
-        .bind(&inbox.tenant_id)
-        .bind(&inbox.id)
-        .bind(&channel_type)
-        .bind(format!(
-            "{} Channel",
-            channel_type
-                .chars()
-                .next()
-                .map(|c| c.to_ascii_uppercase())
-                .unwrap_or('C')
-                .to_string()
-                + &channel_type.chars().skip(1).collect::<String>()
-        ))
-        .bind("{}")
-        .bind(true)
-        .bind(now_iso())
-        .bind(now_iso())
+            .into_response();
+    }
+    
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    
+    let inbox_row = sqlx::query("SELECT id, tenant_id, name, channels, agent_ids FROM inboxes WHERE id = $1 AND tenant_id = $2")
+        .bind(&inbox_id)
+        .bind(&tenant_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+    let Some(inbox_row) = inbox_row else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "inbox not found" })),
+        )
+            .into_response();
+    };
+    
+    let name = body.name.unwrap_or_else(|| inbox_row.get("name"));
+    let mut channels: Vec<String> = serde_json::from_str(&inbox_row.get::<String, _>("channels"))
+        .unwrap_or_default();
+    
+    // If channel_id is provided, link it to this inbox
+    if let Some(channel_id) = body.channel_id {
+        if !channel_id.is_empty() && !channels.contains(&channel_id) {
+            channels.push(channel_id.clone());
+            // Update the channel to point to this inbox
+            let _ = sqlx::query("UPDATE channels SET inbox_id = $1 WHERE id = $2")
+                .bind(&inbox_id)
+                .bind(&channel_id)
+                .execute(&state.db)
+                .await;
+        }
+    }
+    
+    let _ = sqlx::query("UPDATE inboxes SET name = $1, channels = $2 WHERE id = $3")
+        .bind(&name)
+        .bind(serde_json::to_string(&channels).unwrap_or_else(|_| "[]".to_string()))
+        .bind(&inbox_id)
         .execute(&state.db)
         .await;
+    
+    let updated = Inbox {
+        tenant_id: inbox_row.get("tenant_id"),
+        id: inbox_id,
+        name,
+        channels,
+        agent_ids: serde_json::from_str(&inbox_row.get::<String, _>("agent_ids"))
+            .unwrap_or_default(),
+    };
+    
+    (StatusCode::OK, Json(json!({ "inbox": updated }))).into_response()
+}
+
+async fn delete_inbox(
+    Path(inbox_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
+    if agent.role != "owner" && agent.role != "admin" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "only admin or owner can delete inboxes" })),
+        )
+            .into_response();
     }
-    (StatusCode::CREATED, Json(json!({ "inbox": inbox }))).into_response()
+    
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    
+    // Check if inbox exists
+    let inbox_row = sqlx::query("SELECT id FROM inboxes WHERE id = $1 AND tenant_id = $2")
+        .bind(&inbox_id)
+        .bind(&tenant_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+    if inbox_row.is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "inbox not found" })),
+        )
+            .into_response();
+    }
+    
+    // Unlink channels from this inbox
+    let _ = sqlx::query("UPDATE channels SET inbox_id = NULL WHERE inbox_id = $1")
+        .bind(&inbox_id)
+        .execute(&state.db)
+        .await;
+    
+    // Delete the inbox
+    let _ = sqlx::query("DELETE FROM inboxes WHERE id = $1")
+        .bind(&inbox_id)
+        .execute(&state.db)
+        .await;
+    
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
 }
 
 async fn assign_agent_to_inbox(
@@ -5077,8 +5255,16 @@ async fn assign_agent_to_inbox(
     headers: HeaderMap,
     Json(body): Json<AssignBody>,
 ) -> impl IntoResponse {
-    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
-        return err.into_response();
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
+    if agent.role != "owner" && agent.role != "admin" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "only admin or owner can assign agents to inboxes" })),
+        )
+            .into_response();
     }
     let agent_id = body.agent_id.trim().to_string();
     let inbox_row = sqlx::query("SELECT agent_ids FROM inboxes WHERE id = $1")
@@ -6025,6 +6211,7 @@ async fn list_channels(
         .iter()
         .map(|c| c.channel_type.clone())
         .collect::<Vec<_>>();
+    unique_types.extend(["web".to_string(), "api".to_string()]);
     unique_types.sort();
     unique_types.dedup();
     (
@@ -6032,7 +6219,7 @@ async fn list_channels(
         Json(json!({
             "channels": unique_types,
             "channelRecords": channel_records,
-            "availableTypes": ["web", "whatsapp", "sms", "instagram", "email"]
+            "availableTypes": ["web", "api"]
         })),
     )
         .into_response()
@@ -6043,8 +6230,16 @@ async fn create_channel(
     headers: HeaderMap,
     Json(body): Json<CreateChannelBody>,
 ) -> impl IntoResponse {
-    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
-        return err.into_response();
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
+    if agent.role != "owner" && agent.role != "admin" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "only admin or owner can create channels" })),
+        )
+            .into_response();
     }
     let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
         Ok(id) => id,
@@ -6058,6 +6253,27 @@ async fn create_channel(
         )
             .into_response();
     }
+    
+    // Validate inbox_id if provided (optional - channels can exist without inbox)
+    let inbox_id = body.inbox_id.clone();
+    if let Some(ref inbox_id_val) = inbox_id {
+        if !inbox_id_val.is_empty() {
+            let inbox_row = sqlx::query("SELECT id FROM inboxes WHERE id = $1 AND tenant_id = $2")
+                .bind(inbox_id_val)
+                .bind(&tenant_id)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten();
+            if inbox_row.is_none() {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({ "error": "inbox not found" })),
+                )
+                    .into_response();
+            }
+        }
+    }
     let name = body
         .name
         .unwrap_or_else(|| format!("{} Channel", channel_type))
@@ -6070,29 +6286,19 @@ async fn create_channel(
         )
             .into_response();
     }
-    if let Some(inbox_id) = body.inbox_id.as_deref() {
-        let exists = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(1) FROM inboxes WHERE id = $1 AND tenant_id = $2",
+    if channel_type != "web" && channel_type != "api" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "channel_type must be web or api" })),
         )
-        .bind(inbox_id)
-        .bind(&tenant_id)
-        .fetch_one(&state.db)
-        .await
-        .unwrap_or(0)
-            > 0;
-        if !exists {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({ "error": "inbox not found" })),
-            )
-                .into_response();
-        }
+            .into_response();
     }
     let now = now_iso();
+    let final_inbox_id = inbox_id.filter(|s| !s.is_empty());
     let channel = Channel {
         id: Uuid::new_v4().to_string(),
         tenant_id: tenant_id.clone(),
-        inbox_id: body.inbox_id.clone(),
+        inbox_id: final_inbox_id.clone(),
         channel_type: channel_type.clone(),
         name: name.clone(),
         config: body.config.unwrap_or_else(|| json!({})),
@@ -6105,7 +6311,7 @@ async fn create_channel(
     )
     .bind(&channel.id)
     .bind(&channel.tenant_id)
-    .bind(&channel.inbox_id)
+    .bind(&final_inbox_id)
     .bind(&channel.channel_type)
     .bind(&channel.name)
     .bind(json_text(&channel.config))
@@ -6115,26 +6321,114 @@ async fn create_channel(
     .execute(&state.db)
     .await;
 
-    if let Some(inbox_id) = &channel.inbox_id {
-        let inbox_channels_raw = sqlx::query_scalar::<_, String>("SELECT channels FROM inboxes WHERE id = $1")
-            .bind(inbox_id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "[]".to_string());
-        let mut channels = serde_json::from_str::<Vec<String>>(&inbox_channels_raw).unwrap_or_default();
-        if !channels.iter().any(|c| c == &channel.channel_type) {
-            channels.push(channel.channel_type.clone());
-            let _ = sqlx::query("UPDATE inboxes SET channels = $1 WHERE id = $2")
-                .bind(serde_json::to_string(&channels).unwrap_or_else(|_| "[]".to_string()))
-                .bind(inbox_id)
-                .execute(&state.db)
-                .await;
-        }
-    }
-
     (StatusCode::CREATED, Json(json!({ "channel": channel }))).into_response()
+}
+
+async fn update_channel(
+    Path(channel_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateChannelBody>,
+) -> impl IntoResponse {
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
+    if agent.role != "owner" && agent.role != "admin" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "only admin or owner can update channels" })),
+        )
+            .into_response();
+    }
+    
+    let channel_row = sqlx::query("SELECT id, tenant_id, name, channel_type, config, enabled, created_at FROM channels WHERE id = $1")
+        .bind(&channel_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+    let Some(channel_row) = channel_row else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "channel not found" })),
+        )
+            .into_response();
+    };
+    
+    let name = body.name.unwrap_or_else(|| channel_row.get("name"));
+    let config = body.config.unwrap_or_else(|| parse_json_text(&channel_row.get::<String, _>("config")));
+    let enabled = body.enabled.unwrap_or(channel_row.get("enabled"));
+    let now = now_iso();
+    
+    let _ = sqlx::query("UPDATE channels SET name = $1, config = $2, enabled = $3, updated_at = $4 WHERE id = $5")
+        .bind(&name)
+        .bind(json_text(&config))
+        .bind(enabled)
+        .bind(&now)
+        .bind(&channel_id)
+        .execute(&state.db)
+        .await;
+    
+    let updated = Channel {
+        id: channel_id,
+        tenant_id: channel_row.get("tenant_id"),
+        inbox_id: None,
+        channel_type: channel_row.get("channel_type"),
+        name,
+        config,
+        enabled,
+        created_at: channel_row.get("created_at"),
+        updated_at: now,
+    };
+    
+    (StatusCode::OK, Json(json!({ "channel": updated }))).into_response()
+}
+
+async fn delete_channel(
+    Path(channel_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
+    if agent.role != "owner" && agent.role != "admin" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "only admin or owner can delete channels" })),
+        )
+            .into_response();
+    }
+    
+    let channel_row = sqlx::query("SELECT id FROM channels WHERE id = $1")
+        .bind(&channel_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+    if channel_row.is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "channel not found" })),
+        )
+            .into_response();
+    }
+    
+    // Unlink from inbox but don't delete the inbox
+    let _ = sqlx::query("UPDATE channels SET inbox_id = NULL WHERE id = $1")
+        .bind(&channel_id)
+        .execute(&state.db)
+        .await;
+    
+    // Delete the channel
+    let _ = sqlx::query("DELETE FROM channels WHERE id = $1")
+        .bind(&channel_id)
+        .execute(&state.db)
+        .await;
+    
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
 }
 
 async fn get_tenants(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
@@ -8008,6 +8302,28 @@ async fn widget_bootstrap(
                 .into_response();
         }
     };
+    
+    let channel_id = params.get("channel_id").cloned();
+    
+    // If channel_id provided, fetch channel config
+    let channel_config = if let Some(ref ch_id) = channel_id {
+        sqlx::query("SELECT config, channel_type FROM channels WHERE id = $1 AND tenant_id = $2")
+            .bind(ch_id)
+            .bind(&tenant_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .map(|row| {
+                let config_str: String = row.get("config");
+                let channel_type: String = row.get("channel_type");
+                (parse_json_text(&config_str), channel_type)
+            })
+    } else {
+        None
+    };
+    
+    // Fetch tenant settings
     let settings = sqlx::query(
         "SELECT tenant_id, brand_name, primary_color, accent_color, logo_url, privacy_url, launcher_position, welcome_text, bot_name, bot_avatar_url, created_at, updated_at FROM tenant_settings WHERE tenant_id = $1",
     )
@@ -8051,9 +8367,24 @@ async fn widget_bootstrap(
         })
         .collect();
 
+    // Override settings with channel config if provided
+    let mut response_settings = settings;
+    if let Some((config, _channel_type)) = channel_config {
+        if let Some(ref mut s) = response_settings {
+            if let Some(primary) = config.get("widgetColor").and_then(|v| v.as_str()) {
+                s.primary_color = primary.to_string();
+            }
+            // welcome_text is stored as a string
+            if let Some(welcome_title) = config.get("welcomeTitle").and_then(|v| v.as_str()) {
+                let welcome_body = config.get("welcomeBody").and_then(|v| v.as_str()).unwrap_or("");
+                s.welcome_text = format!("{}\n{}", welcome_title, welcome_body);
+            }
+        }
+    }
+
     (
         StatusCode::OK,
-        Json(json!({ "settings": settings, "agents": agents })),
+        Json(json!({ "settings": response_settings, "agents": agents })),
     )
         .into_response()
 }
@@ -8558,11 +8889,13 @@ pub async fn run() {
         .route("/api/teams", get(get_teams).post(create_team))
         .route("/api/teams/{team_id}/members", post(add_member_to_team))
         .route("/api/inboxes", get(get_inboxes).post(create_inbox))
+        .route("/api/inboxes/{inbox_id}", patch(update_inbox).delete(delete_inbox))
         .route(
             "/api/inboxes/{inbox_id}/assign",
             post(assign_agent_to_inbox),
         )
         .route("/api/channels", get(list_channels).post(create_channel))
+        .route("/api/channels/{channel_id}", patch(update_channel).delete(delete_channel))
         .route("/api/agents", get(get_agents))
         .route(
             "/api/canned-replies",
