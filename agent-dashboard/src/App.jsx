@@ -290,6 +290,7 @@ export default function App() {
   const [teams, setTeams] = useState([]);
   const [inboxes, setInboxes] = useState([]);
   const [channels, setChannels] = useState([]);
+  const [channelRecords, setChannelRecords] = useState([]);
   const [notes, setNotes] = useState([]);
   const [noteText, setNoteText] = useState("");
   const [tenants, setTenants] = useState([]);
@@ -536,6 +537,7 @@ export default function App() {
     setTeams(teamsRes.teams ?? []);
     setInboxes(inboxesRes.inboxes ?? []);
     setChannels(channelsRes.channels ?? []);
+    setChannelRecords(channelsRes.channelRecords ?? []);
     setAgents(agentsRes.agents ?? []);
     setCannedReplies(cannedRes.cannedReplies ?? []);
     setTenants(tenantsRes.tenants ?? []);
@@ -876,6 +878,7 @@ export default function App() {
     setSessionContact(null);
     setConversationAttrs([]);
     setContacts([]);
+    setChannelRecords([]);
     setAuthStage("login");
     setWorkspaceChoices([]);
   };
@@ -1536,6 +1539,15 @@ export default function App() {
           saveTenantSettings={saveTenantSettings}
           tenants={tenants}
           agent={agent}
+          agents={agents}
+          teams={teams}
+          setTeams={setTeams}
+          inboxes={inboxes}
+          setInboxes={setInboxes}
+          channels={channels}
+          setChannels={setChannels}
+          channelRecords={channelRecords}
+          setChannelRecords={setChannelRecords}
           apiFetch={apiFetch}
           token={token}
         />

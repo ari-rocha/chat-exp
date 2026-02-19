@@ -5037,6 +5037,37 @@ async fn create_inbox(
     .bind("[]")
     .execute(&state.db)
     .await;
+    for channel_type in &inbox.channels {
+        let channel_type = channel_type.trim().to_ascii_lowercase();
+        if channel_type.is_empty() {
+            continue;
+        }
+        let _ = sqlx::query(
+            "INSERT INTO channels (id, tenant_id, inbox_id, channel_type, name, config, enabled, created_at, updated_at) \
+             SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9 \
+             WHERE NOT EXISTS (SELECT 1 FROM channels WHERE tenant_id = $2 AND inbox_id = $3 AND channel_type = $4)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(&inbox.tenant_id)
+        .bind(&inbox.id)
+        .bind(&channel_type)
+        .bind(format!(
+            "{} Channel",
+            channel_type
+                .chars()
+                .next()
+                .map(|c| c.to_ascii_uppercase())
+                .unwrap_or('C')
+                .to_string()
+                + &channel_type.chars().skip(1).collect::<String>()
+        ))
+        .bind("{}")
+        .bind(true)
+        .bind(now_iso())
+        .bind(now_iso())
+        .execute(&state.db)
+        .await;
+    }
     (StatusCode::CREATED, Json(json!({ "inbox": inbox }))).into_response()
 }
 
@@ -5964,13 +5995,146 @@ async fn list_channels(
     if let Err(err) = auth_agent_from_headers(&state, &headers).await {
         return err.into_response();
     }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let rows = sqlx::query(
+        "SELECT id, tenant_id, inbox_id, channel_type, name, config, enabled, created_at, updated_at \
+         FROM channels WHERE tenant_id = $1 ORDER BY created_at ASC",
+    )
+    .bind(&tenant_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let channel_records = rows
+        .into_iter()
+        .map(|row| Channel {
+            id: row.get("id"),
+            tenant_id: row.get("tenant_id"),
+            inbox_id: row.get("inbox_id"),
+            channel_type: row.get("channel_type"),
+            name: row.get("name"),
+            config: parse_json_text(&row.get::<String, _>("config")),
+            enabled: row.get("enabled"),
+            created_at: row.get("created_at"),
+            updated_at: row.get("updated_at"),
+        })
+        .collect::<Vec<_>>();
+    let mut unique_types = channel_records
+        .iter()
+        .map(|c| c.channel_type.clone())
+        .collect::<Vec<_>>();
+    unique_types.sort();
+    unique_types.dedup();
     (
         StatusCode::OK,
         Json(json!({
-            "channels": ["web", "whatsapp", "sms", "instagram", "email"]
+            "channels": unique_types,
+            "channelRecords": channel_records,
+            "availableTypes": ["web", "whatsapp", "sms", "instagram", "email"]
         })),
     )
         .into_response()
+}
+
+async fn create_channel(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<CreateChannelBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let channel_type = body.channel_type.trim().to_ascii_lowercase();
+    if channel_type.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "channel_type required" })),
+        )
+            .into_response();
+    }
+    let name = body
+        .name
+        .unwrap_or_else(|| format!("{} Channel", channel_type))
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "name required" })),
+        )
+            .into_response();
+    }
+    if let Some(inbox_id) = body.inbox_id.as_deref() {
+        let exists = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(1) FROM inboxes WHERE id = $1 AND tenant_id = $2",
+        )
+        .bind(inbox_id)
+        .bind(&tenant_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0)
+            > 0;
+        if !exists {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "inbox not found" })),
+            )
+                .into_response();
+        }
+    }
+    let now = now_iso();
+    let channel = Channel {
+        id: Uuid::new_v4().to_string(),
+        tenant_id: tenant_id.clone(),
+        inbox_id: body.inbox_id.clone(),
+        channel_type: channel_type.clone(),
+        name: name.clone(),
+        config: body.config.unwrap_or_else(|| json!({})),
+        enabled: true,
+        created_at: now.clone(),
+        updated_at: now.clone(),
+    };
+    let _ = sqlx::query(
+        "INSERT INTO channels (id, tenant_id, inbox_id, channel_type, name, config, enabled, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+    )
+    .bind(&channel.id)
+    .bind(&channel.tenant_id)
+    .bind(&channel.inbox_id)
+    .bind(&channel.channel_type)
+    .bind(&channel.name)
+    .bind(json_text(&channel.config))
+    .bind(channel.enabled)
+    .bind(&channel.created_at)
+    .bind(&channel.updated_at)
+    .execute(&state.db)
+    .await;
+
+    if let Some(inbox_id) = &channel.inbox_id {
+        let inbox_channels_raw = sqlx::query_scalar::<_, String>("SELECT channels FROM inboxes WHERE id = $1")
+            .bind(inbox_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "[]".to_string());
+        let mut channels = serde_json::from_str::<Vec<String>>(&inbox_channels_raw).unwrap_or_default();
+        if !channels.iter().any(|c| c == &channel.channel_type) {
+            channels.push(channel.channel_type.clone());
+            let _ = sqlx::query("UPDATE inboxes SET channels = $1 WHERE id = $2")
+                .bind(serde_json::to_string(&channels).unwrap_or_else(|_| "[]".to_string()))
+                .bind(inbox_id)
+                .execute(&state.db)
+                .await;
+        }
+    }
+
+    (StatusCode::CREATED, Json(json!({ "channel": channel }))).into_response()
 }
 
 async fn get_tenants(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
@@ -8398,7 +8562,7 @@ pub async fn run() {
             "/api/inboxes/{inbox_id}/assign",
             post(assign_agent_to_inbox),
         )
-        .route("/api/channels", get(list_channels))
+        .route("/api/channels", get(list_channels).post(create_channel))
         .route("/api/agents", get(get_agents))
         .route(
             "/api/canned-replies",

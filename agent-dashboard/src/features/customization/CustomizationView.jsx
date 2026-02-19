@@ -6,6 +6,7 @@ import { useState } from "react";
 
 const TABS = [
   { key: "general", label: "General" },
+  { key: "routing", label: "Routing" },
   { key: "profile", label: "My Profile" },
   { key: "members", label: "Members" },
 ];
@@ -23,6 +24,15 @@ export default function CustomizationView({
   saveTenantSettings,
   tenants,
   agent,
+  agents,
+  teams,
+  setTeams,
+  inboxes,
+  setInboxes,
+  channels,
+  setChannels,
+  channelRecords,
+  setChannelRecords,
   apiFetch,
   token,
 }) {
@@ -38,6 +48,14 @@ export default function CustomizationView({
   const [profileAvatar, setProfileAvatar] = useState(agent?.avatarUrl || "");
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileSaved, setProfileSaved] = useState(false);
+  const [teamName, setTeamName] = useState("");
+  const [inboxName, setInboxName] = useState("");
+  const [inboxChannels, setInboxChannels] = useState("web");
+  const [channelType, setChannelType] = useState("web");
+  const [channelName, setChannelName] = useState("");
+  const [channelInboxId, setChannelInboxId] = useState("");
+  const [routingError, setRoutingError] = useState("");
+  const [routingSaving, setRoutingSaving] = useState(false);
 
   const isOwner = agent?.role === "owner";
   const isAdmin = agent?.role === "admin";
@@ -64,6 +82,146 @@ export default function CustomizationView({
     setTab(key);
     if (key === "members" && !membersLoaded) {
       loadMembers();
+    }
+  };
+
+  const createTeam = async (e) => {
+    e.preventDefault();
+    if (!teamName.trim()) return;
+    setRoutingError("");
+    setRoutingSaving(true);
+    try {
+      const res = await apiFetch("/api/teams", token, {
+        method: "POST",
+        body: JSON.stringify({ name: teamName.trim() }),
+      });
+      if (res.team) {
+        setTeams((prev) => [...prev, res.team]);
+      }
+      setTeamName("");
+    } catch (err) {
+      setRoutingError(err.message);
+    } finally {
+      setRoutingSaving(false);
+    }
+  };
+
+  const createInbox = async (e) => {
+    e.preventDefault();
+    if (!inboxName.trim()) return;
+    setRoutingError("");
+    setRoutingSaving(true);
+    try {
+      const nextChannels = inboxChannels
+        .split(",")
+        .map((item) => item.trim().toLowerCase())
+        .filter(Boolean);
+      const res = await apiFetch("/api/inboxes", token, {
+        method: "POST",
+        body: JSON.stringify({
+          name: inboxName.trim(),
+          channels: nextChannels.length ? nextChannels : [],
+        }),
+      });
+      if (res.inbox) {
+        setInboxes((prev) => [...prev, res.inbox]);
+      }
+      setInboxName("");
+      setInboxChannels("");
+    } catch (err) {
+      setRoutingError(err.message);
+    } finally {
+      setRoutingSaving(false);
+    }
+  };
+
+  const createChannel = async (e) => {
+    e.preventDefault();
+    setRoutingError("");
+    setRoutingSaving(true);
+    try {
+      const res = await apiFetch("/api/channels", token, {
+        method: "POST",
+        body: JSON.stringify({
+          channelType,
+          name: channelName.trim() || undefined,
+          inboxId: channelInboxId || undefined,
+        }),
+      });
+      if (res.channel) {
+        const record = res.channel;
+        setChannelRecords((prev) => [...prev, record]);
+        setChannels((prev) => {
+          if (prev.includes(record.channelType)) return prev;
+          return [...prev, record.channelType].sort();
+        });
+        if (record.inboxId) {
+          setInboxes((prev) =>
+            prev.map((inbox) =>
+              inbox.id === record.inboxId
+                ? {
+                    ...inbox,
+                    channels: Array.from(
+                      new Set([...(inbox.channels || []), record.channelType]),
+                    ),
+                  }
+                : inbox,
+            ),
+          );
+        }
+      }
+      setChannelName("");
+      setChannelInboxId("");
+    } catch (err) {
+      setRoutingError(err.message);
+    } finally {
+      setRoutingSaving(false);
+    }
+  };
+
+  const assignAgentToTeam = async (teamId, agentId) => {
+    if (!teamId || !agentId) return;
+    setRoutingError("");
+    try {
+      await apiFetch(`/api/teams/${teamId}/members`, token, {
+        method: "POST",
+        body: JSON.stringify({ agentId }),
+      });
+      setTeams((prev) =>
+        prev.map((team) =>
+          team.id === teamId
+            ? {
+                ...team,
+                agentIds: Array.from(new Set([...(team.agentIds || []), agentId])),
+              }
+            : team,
+        ),
+      );
+    } catch (err) {
+      setRoutingError(err.message);
+    }
+  };
+
+  const assignAgentToInbox = async (inboxId, agentId) => {
+    if (!inboxId || !agentId) return;
+    setRoutingError("");
+    try {
+      await apiFetch(`/api/inboxes/${inboxId}/assign`, token, {
+        method: "POST",
+        body: JSON.stringify({ agentId }),
+      });
+      setInboxes((prev) =>
+        prev.map((inbox) =>
+          inbox.id === inboxId
+            ? {
+                ...inbox,
+                agentIds: Array.from(new Set([...(inbox.agentIds || []), agentId])),
+              }
+            : inbox,
+        ),
+      );
+    } catch (err) {
+      setRoutingError(err.message);
     }
   };
 
@@ -348,6 +506,186 @@ export default function CustomizationView({
               ))}
             </div>
           </aside>
+        </div>
+      )}
+
+      {tab === "routing" && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <section className="rounded-xl border border-slate-200 bg-white p-5">
+            <h3 className="text-sm font-semibold text-slate-900">Teams</h3>
+            <p className="mb-3 text-xs text-slate-500">
+              Create teams and assign agents.
+            </p>
+            <form onSubmit={createTeam} className="mb-3 flex gap-2">
+              <Input
+                value={teamName}
+                onChange={(e) => setTeamName(e.target.value)}
+                placeholder="e.g. Sales, Support"
+              />
+              <Button type="submit" disabled={routingSaving}>
+                Add team
+              </Button>
+            </form>
+            <div className="space-y-2">
+              {(teams || []).map((team) => (
+                <div
+                  key={team.id}
+                  className="rounded-lg border border-slate-200 bg-slate-50 p-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-medium text-slate-900">{team.name}</p>
+                    <select
+                      defaultValue=""
+                      onChange={(e) => {
+                        assignAgentToTeam(team.id, e.target.value);
+                        e.target.value = "";
+                      }}
+                      className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700"
+                    >
+                      <option value="" disabled>
+                        Add agent
+                      </option>
+                      {(agents || []).map((member) => (
+                        <option key={member.id} value={member.id}>
+                          {member.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {(team.agentIds || []).length} assigned
+                  </p>
+                </div>
+              ))}
+              {(teams || []).length === 0 && (
+                <p className="text-xs text-slate-400">No teams yet.</p>
+              )}
+            </div>
+          </section>
+
+          <section className="rounded-xl border border-slate-200 bg-white p-5">
+            <h3 className="text-sm font-semibold text-slate-900">Inboxes</h3>
+            <p className="mb-3 text-xs text-slate-500">
+              Create inboxes, then attach dedicated channel records.
+            </p>
+            <form onSubmit={createInbox} className="mb-2 grid gap-2">
+              <Input
+                value={inboxName}
+                onChange={(e) => setInboxName(e.target.value)}
+                placeholder="Inbox name"
+              />
+              <Input
+                value={inboxChannels}
+                onChange={(e) => setInboxChannels(e.target.value)}
+                placeholder="Optional initial channel types: web,whatsapp,email"
+              />
+              <Button type="submit" disabled={routingSaving}>
+                Add inbox
+              </Button>
+            </form>
+            <div className="space-y-2">
+              {(inboxes || []).map((inbox) => (
+                <div
+                  key={inbox.id}
+                  className="rounded-lg border border-slate-200 bg-slate-50 p-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-slate-900">{inbox.name}</p>
+                      <p className="text-xs text-slate-500">
+                        {(inbox.channels || []).join(", ") || "web"}
+                      </p>
+                    </div>
+                    <select
+                      defaultValue=""
+                      onChange={(e) => {
+                        assignAgentToInbox(inbox.id, e.target.value);
+                        e.target.value = "";
+                      }}
+                      className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700"
+                    >
+                      <option value="" disabled>
+                        Assign agent
+                      </option>
+                      {(agents || []).map((member) => (
+                        <option key={member.id} value={member.id}>
+                          {member.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {(inbox.agentIds || []).length} assigned
+                  </p>
+                </div>
+              ))}
+              {(inboxes || []).length === 0 && (
+                <p className="text-xs text-slate-400">No inboxes yet.</p>
+              )}
+            </div>
+          </section>
+
+          <section className="rounded-xl border border-slate-200 bg-white p-5">
+            <h3 className="text-sm font-semibold text-slate-900">Channels</h3>
+            <p className="mb-3 text-xs text-slate-500">
+              Dedicated channel entities (Chatwoot-style), optionally bound to an inbox.
+            </p>
+            <form onSubmit={createChannel} className="mb-3 grid gap-2">
+              <select
+                value={channelType}
+                onChange={(e) => setChannelType(e.target.value)}
+                className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+              >
+                {["web", "whatsapp", "sms", "instagram", "email"].map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+              <Input
+                value={channelName}
+                onChange={(e) => setChannelName(e.target.value)}
+                placeholder="Channel name (optional)"
+              />
+              <select
+                value={channelInboxId}
+                onChange={(e) => setChannelInboxId(e.target.value)}
+                className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+              >
+                <option value="">No inbox</option>
+                {(inboxes || []).map((inbox) => (
+                  <option key={inbox.id} value={inbox.id}>
+                    {inbox.name}
+                  </option>
+                ))}
+              </select>
+              <Button type="submit" disabled={routingSaving}>
+                Add channel
+              </Button>
+            </form>
+            <div className="space-y-2">
+              {(channelRecords || []).map((channel) => (
+                <div
+                  key={channel.id}
+                  className="rounded-lg border border-slate-200 bg-slate-50 p-3"
+                >
+                  <p className="text-sm font-medium text-slate-900">{channel.name}</p>
+                  <p className="text-xs text-slate-500">
+                    {channel.channelType}
+                    {channel.inboxId
+                      ? ` · ${inboxes.find((i) => i.id === channel.inboxId)?.name || "Inbox"}`
+                      : " · Unassigned"}
+                  </p>
+                </div>
+              ))}
+              {(channelRecords || []).length === 0 && (
+                <p className="text-xs text-slate-400">No channels yet.</p>
+              )}
+            </div>
+            {routingError ? (
+              <p className="mt-3 text-xs text-red-600">{routingError}</p>
+            ) : null}
+          </section>
         </div>
       )}
 
