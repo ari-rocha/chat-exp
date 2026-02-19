@@ -5,7 +5,6 @@ const VIEWS = [
   ["conversations", "Conversations"],
   ["flows", "Flow Builder"],
   ["contacts", "Contacts"],
-  ["customization", "Settings"],
   ["csat", "CSAT"],
 ];
 
@@ -16,6 +15,7 @@ export default function TopBar({
   theme,
   setTheme,
   logout,
+  onOpenSettings,
 }) {
   return (
     <header className="agent-topbar flex items-center justify-between border-b px-4">
@@ -33,6 +33,9 @@ export default function TopBar({
             {label}
           </Button>
         ))}
+        <Button variant="outline" size="sm" onClick={() => onOpenSettings?.()}>
+          Settings
+        </Button>
       </div>
 
       <div className="flex items-center gap-2">

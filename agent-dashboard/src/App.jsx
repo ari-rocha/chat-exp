@@ -248,10 +248,20 @@ function normalizeEdge(edge, index = 0) {
 }
 
 export default function App() {
-  const [view, setView] = useState("conversations");
+  const [view, setViewRaw] = useState("conversations");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [theme, setTheme] = useState(
     localStorage.getItem("agent_dashboard_theme") || "dark",
   );
+
+  // Intercept "customization" view to open settings dialog instead
+  const setView = (v) => {
+    if (v === "customization") {
+      setSettingsOpen(true);
+      return;
+    }
+    setViewRaw(v);
+  };
 
   const [token, setToken] = useState(localStorage.getItem(TOKEN_KEY) || "");
   const [authStage, setAuthStage] = useState("login");
@@ -370,9 +380,10 @@ export default function App() {
       if (conversationFilter === "all") return true;
       return status === conversationFilter;
     });
-    const byInbox = inboxFilter === "all" 
-      ? byStatus 
-      : byStatus.filter((session) => session.inboxId === inboxFilter);
+    const byInbox =
+      inboxFilter === "all"
+        ? byStatus
+        : byStatus.filter((session) => session.inboxId === inboxFilter);
     if (!query) return byInbox;
     return byInbox.filter((session) => {
       const draft = visitorDraftBySession[session.id];
@@ -384,7 +395,13 @@ export default function App() {
       const id = session.id.toLowerCase();
       return id.includes(query) || preview.includes(query);
     });
-  }, [sessions, conversationSearch, conversationFilter, inboxFilter, visitorDraftBySession]);
+  }, [
+    sessions,
+    conversationSearch,
+    conversationFilter,
+    inboxFilter,
+    visitorDraftBySession,
+  ]);
 
   const openCount = useMemo(
     () =>
@@ -1537,27 +1554,6 @@ export default function App() {
           formatTime={formatTime}
         />
       </section>
-    ) : view === "customization" ? (
-      <section className="crm-main h-full min-h-0 bg-[#f8f9fb]">
-        <CustomizationView
-          tenantSettings={tenantSettings}
-          setTenantSettings={setTenantSettings}
-          saveTenantSettings={saveTenantSettings}
-          tenants={tenants}
-          agent={agent}
-          agents={agents}
-          teams={teams}
-          setTeams={setTeams}
-          inboxes={inboxes}
-          setInboxes={setInboxes}
-          channels={channels}
-          setChannels={setChannels}
-          channelRecords={channelRecords}
-          setChannelRecords={setChannelRecords}
-          apiFetch={apiFetch}
-          token={token}
-        />
-      </section>
     ) : view === "csat" ? (
       <section className="crm-main h-full min-h-0 bg-[#f8f9fb]">
         <CsatView csatReport={csatReport} />
@@ -1592,6 +1588,28 @@ export default function App() {
         sessionPreview={sessionPreview}
         mainPanel={mainPanel}
         showConversationPanels={false}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
+
+      <CustomizationView
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        tenantSettings={tenantSettings}
+        setTenantSettings={setTenantSettings}
+        saveTenantSettings={saveTenantSettings}
+        tenants={tenants}
+        agent={agent}
+        agents={agents}
+        teams={teams}
+        setTeams={setTeams}
+        inboxes={inboxes}
+        setInboxes={setInboxes}
+        channels={channels}
+        setChannels={setChannels}
+        channelRecords={channelRecords}
+        setChannelRecords={setChannelRecords}
+        apiFetch={apiFetch}
+        token={token}
       />
     </div>
   );
