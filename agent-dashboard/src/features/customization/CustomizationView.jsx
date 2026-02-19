@@ -343,9 +343,6 @@ export default function CustomizationView({
         name: "",
         config: {
           domain: "",
-          widgetColor: "#2b7fff",
-          welcomeTitle: "Hello!",
-          welcomeBody: "Ask any question",
         },
       },
     );
@@ -554,9 +551,6 @@ export default function CustomizationView({
                           inboxId: inbox.id,
                           config: {
                             domain: "",
-                            widgetColor: "#2b7fff",
-                            welcomeTitle: "Hello!",
-                            welcomeBody: "Ask any question",
                           },
                         })
                       }
@@ -851,54 +845,9 @@ export default function CustomizationView({
                     onChange={(e) => updateConfig("domain", e.target.value)}
                     placeholder="e.g. example.com"
                   />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-slate-700">
-                    Widget color
-                  </label>
-                  <div className="flex gap-2">
-                    <Input
-                      type="color"
-                      value={editingChannel.config?.widgetColor || "#2b7fff"}
-                      onChange={(e) =>
-                        updateConfig("widgetColor", e.target.value)
-                      }
-                      className="h-9 w-12 p-0.5 cursor-pointer"
-                    />
-                    <Input
-                      value={editingChannel.config?.widgetColor || "#2b7fff"}
-                      onChange={(e) =>
-                        updateConfig("widgetColor", e.target.value)
-                      }
-                      placeholder="#hex"
-                      className="flex-1"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-slate-700">
-                    Welcome title
-                  </label>
-                  <Input
-                    value={editingChannel.config?.welcomeTitle || ""}
-                    onChange={(e) =>
-                      updateConfig("welcomeTitle", e.target.value)
-                    }
-                    placeholder="Hello!"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-slate-700">
-                    Welcome message
-                  </label>
-                  <Textarea
-                    value={editingChannel.config?.welcomeBody || ""}
-                    onChange={(e) =>
-                      updateConfig("welcomeBody", e.target.value)
-                    }
-                    placeholder="Ask any question…"
-                    rows={2}
-                  />
+                  <p className="mt-1 text-xs text-slate-400">
+                    The domain where this widget will be embedded.
+                  </p>
                 </div>
                 <div>
                   <label className="mb-1.5 block text-xs font-medium text-slate-700">
@@ -912,7 +861,7 @@ export default function CustomizationView({
                         welcomeText: e.target.value,
                       }))
                     }
-                    placeholder="Longer welcome text shown in the widget"
+                    placeholder="Greeting shown when the widget opens"
                     rows={2}
                   />
                 </div>

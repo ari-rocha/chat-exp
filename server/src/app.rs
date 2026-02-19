@@ -8303,10 +8303,10 @@ async fn widget_bootstrap(
         }
     };
     
-    let channel_id = params.get("channel_id").cloned();
+    let _channel_id = params.get("channel_id").cloned();
     
-    // If channel_id provided, fetch channel config
-    let channel_config = if let Some(ref ch_id) = channel_id {
+    // Channel config is available for future per-channel overrides
+    let _channel_config = if let Some(ref ch_id) = _channel_id {
         sqlx::query("SELECT config, channel_type FROM channels WHERE id = $1 AND tenant_id = $2")
             .bind(ch_id)
             .bind(&tenant_id)
@@ -8367,24 +8367,9 @@ async fn widget_bootstrap(
         })
         .collect();
 
-    // Override settings with channel config if provided
-    let mut response_settings = settings;
-    if let Some((config, _channel_type)) = channel_config {
-        if let Some(ref mut s) = response_settings {
-            if let Some(primary) = config.get("widgetColor").and_then(|v| v.as_str()) {
-                s.primary_color = primary.to_string();
-            }
-            // welcome_text is stored as a string
-            if let Some(welcome_title) = config.get("welcomeTitle").and_then(|v| v.as_str()) {
-                let welcome_body = config.get("welcomeBody").and_then(|v| v.as_str()).unwrap_or("");
-                s.welcome_text = format!("{}\n{}", welcome_title, welcome_body);
-            }
-        }
-    }
-
     (
         StatusCode::OK,
-        Json(json!({ "settings": response_settings, "agents": agents })),
+        Json(json!({ "settings": settings, "agents": agents })),
     )
         .into_response()
 }
