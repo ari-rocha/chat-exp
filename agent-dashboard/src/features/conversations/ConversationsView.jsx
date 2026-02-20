@@ -9,11 +9,12 @@ import {
   AtSign,
   Building2,
   Check,
-  CheckCircle2,
   ChevronDown,
-  ChevronsUpDown,
   ChevronRight,
+  ChevronsUpDown,
+  CircleDashed,
   ClipboardList,
+  Clock3,
   Mail,
   MapPin,
   MessageCircle,
@@ -23,9 +24,7 @@ import {
   Plus,
   Send,
   Smile,
-  Clock3,
   Tag,
-  Users,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState as useStateReact } from "react";
@@ -51,7 +50,9 @@ function resolveMediaUrl(url) {
 }
 
 function isAttachmentPlaceholderText(text) {
-  const value = String(text || "").trim().toLowerCase();
+  const value = String(text || "")
+    .trim()
+    .toLowerCase();
   if (!value) return true;
   const known = new Set([
     "sent an image",
@@ -418,7 +419,10 @@ export default function ConversationsView({
         setSnoozeMenuOpen(false);
         setCustomSnoozeOpen(false);
       }
-      if (snoozeMenuRef.current && !snoozeMenuRef.current.contains(event.target)) {
+      if (
+        snoozeMenuRef.current &&
+        !snoozeMenuRef.current.contains(event.target)
+      ) {
         setSnoozeMenuOpen(false);
         setCustomSnoozeOpen(false);
       }
@@ -439,12 +443,12 @@ export default function ConversationsView({
   const botAssigneeId = "__bot__";
   const botName = String(tenantSettings?.botName || "").trim() || "Bot";
   const botAvatarUrl = String(tenantSettings?.botAvatarUrl || "").trim();
-  const isBotAssigned = Boolean(activeSession) && (
-    activeSession?.assigneeAgentId === botAssigneeId ||
-    ((!activeSession?.assigneeAgentId ||
-      !String(activeSession.assigneeAgentId).trim()) &&
-      !Boolean(activeSession?.handoverActive))
-  );
+  const isBotAssigned =
+    Boolean(activeSession) &&
+    (activeSession?.assigneeAgentId === botAssigneeId ||
+      ((!activeSession?.assigneeAgentId ||
+        !String(activeSession.assigneeAgentId).trim()) &&
+        !Boolean(activeSession?.handoverActive)));
   const isUserReplyBlockedByBot = isBotAssigned && messageAudience === "user";
   const assigneeAgent = agents.find(
     (item) => item.id === activeSession?.assigneeAgentId,
@@ -467,7 +471,9 @@ export default function ConversationsView({
       value: item.id,
       label: item.name,
       avatarUrl: item.avatarUrl || "",
-      fallback: String(item.name || "A").slice(0, 1).toUpperCase(),
+      fallback: String(item.name || "A")
+        .slice(0, 1)
+        .toUpperCase(),
     })),
   ];
   const teamOptions = [
@@ -475,7 +481,9 @@ export default function ConversationsView({
     ...teams.map((team) => ({
       value: team.id,
       label: team.name,
-      fallback: String(team.name || "T").slice(0, 1).toUpperCase(),
+      fallback: String(team.name || "T")
+        .slice(0, 1)
+        .toUpperCase(),
     })),
   ];
   const statusOptions = [
@@ -498,21 +506,17 @@ export default function ConversationsView({
       color: t.color || "#94a3b8",
     }));
   const activeStatus = String(activeSession?.status || "open").toLowerCase();
-  const statusMenuOptions = [
-    { value: "open", label: "Open" },
-    { value: "awaiting", label: "Pending" },
-    { value: "snoozed", label: "Snoozed" },
-    { value: "resolved", label: "Resolve" },
-  ].filter((option) => option.value !== activeStatus);
   const quickAction =
     activeStatus === "closed" || activeStatus === "resolved"
       ? { value: "open", label: "Reopen" }
       : activeStatus === "snoozed"
         ? { value: "open", label: "Unsnooze" }
-      : { value: "resolved", label: "Resolve" };
+        : { value: "resolved", label: "Resolve" };
   const isWhatsappConversation = activeSession?.channel === "whatsapp";
   const mentionHandleForAgent = (item) => {
-    const email = String(item?.email || "").trim().toLowerCase();
+    const email = String(item?.email || "")
+      .trim()
+      .toLowerCase();
     const emailLocal = email.includes("@") ? email.split("@")[0] : "";
     const candidate = emailLocal || String(item?.name || "").toLowerCase();
     const normalized = candidate.replace(/[^a-z0-9._-]/g, "");
@@ -867,7 +871,7 @@ export default function ConversationsView({
   };
 
   const canUseTemplates =
-                  activeSession?.channel === "whatsapp" && messageAudience === "user";
+    activeSession?.channel === "whatsapp" && messageAudience === "user";
   const filteredWaTemplates = waTemplates.filter((tpl) => {
     const q = waTemplateQuery.trim().toLowerCase();
     if (!q) return true;
@@ -906,737 +910,743 @@ export default function ConversationsView({
   return (
     <>
       <WorkspaceLayout
-      view={view}
-      setView={setView}
-      sessions={sessions}
-      conversationSearch={conversationSearch}
-      setConversationSearch={setConversationSearch}
-      openCount={openCount}
-      waitingCount={waitingCount}
-      closedCount={closedCount}
-      conversationFilter={conversationFilter}
-      setConversationFilter={setConversationFilter}
-      inboxScope={inboxScope}
-      setInboxScope={setInboxScope}
-      inboxCounts={inboxCounts}
-      teamScope={teamScope}
-      setTeamScope={setTeamScope}
-      teamCounts={teamCounts}
-      channelScope={channelScope}
-      setChannelScope={setChannelScope}
-      channelFilters={channelFilters}
-      tagScope={tagScope}
-      setTagScope={setTagScope}
-      tagFilters={tagFilters}
-      teams={teams}
-      agent={agent}
-      updateAgentStatus={updateAgentStatus}
-      filteredSessions={filteredSessions}
-      activeId={activeId}
-      setActiveId={setActiveId}
-      formatTime={formatTime}
-      sessionPreview={sessionPreview}
-      onOpenSettings={onOpenSettings}
-      unreadNotificationsCount={unreadNotificationsCount}
-      mainPanel={
-        <section className="crm-main grid h-full min-h-0 overflow-hidden grid-rows-[56px_minmax(0,1fr)_auto] bg-[#f8f9fb]">
-          <header className="flex items-center justify-between border-b border-slate-200 bg-white px-3 py-2">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setActiveId("")}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 min-[1025px]:hidden"
-                aria-label="Back to conversation list"
-              >
-                <ArrowLeft size={14} />
-              </button>
-              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-fuchsia-100 text-[10px] font-semibold text-fuchsia-700">
-                {sessionInitials(activeSession, sessionContact)}
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <p className="truncate text-sm font-semibold text-slate-900">
-                    {getSessionTitle(activeSession, sessionContact)}
-                  </p>
-                  {activeSession ? (
-                    <span className="rounded-full border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium capitalize text-slate-600">
-                      {String(activeSession.status || "open")}
-                    </span>
-                  ) : null}
+        view={view}
+        setView={setView}
+        sessions={sessions}
+        conversationSearch={conversationSearch}
+        setConversationSearch={setConversationSearch}
+        openCount={openCount}
+        waitingCount={waitingCount}
+        closedCount={closedCount}
+        conversationFilter={conversationFilter}
+        setConversationFilter={setConversationFilter}
+        inboxScope={inboxScope}
+        setInboxScope={setInboxScope}
+        inboxCounts={inboxCounts}
+        teamScope={teamScope}
+        setTeamScope={setTeamScope}
+        teamCounts={teamCounts}
+        channelScope={channelScope}
+        setChannelScope={setChannelScope}
+        channelFilters={channelFilters}
+        tagScope={tagScope}
+        setTagScope={setTagScope}
+        tagFilters={tagFilters}
+        teams={teams}
+        agent={agent}
+        updateAgentStatus={updateAgentStatus}
+        filteredSessions={filteredSessions}
+        activeId={activeId}
+        setActiveId={setActiveId}
+        formatTime={formatTime}
+        sessionPreview={sessionPreview}
+        onOpenSettings={onOpenSettings}
+        unreadNotificationsCount={unreadNotificationsCount}
+        mainPanel={
+          <section className="crm-main grid h-full min-h-0 overflow-hidden grid-rows-[56px_minmax(0,1fr)_auto] bg-[#f8f9fb]">
+            <header className="flex items-center justify-between border-b border-slate-200 bg-white px-3 py-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveId("")}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 min-[1025px]:hidden"
+                  aria-label="Back to conversation list"
+                >
+                  <ArrowLeft size={14} />
+                </button>
+                <div className="flex h-7 w-7 items-center justify-center rounded-full bg-fuchsia-100 text-[10px] font-semibold text-fuchsia-700">
+                  {sessionInitials(activeSession, sessionContact)}
                 </div>
-                <p className="truncate text-[11px] text-slate-500 capitalize">
-                  {String(activeSession?.channel || "conversation")}
-                </p>
-              </div>
-            </div>
-
-            {activeId ? (
-              <div className="flex items-center gap-1.5">
-                <div className="relative" ref={statusMenuRef}>
-                  <div className="inline-flex items-center overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
-                    <button
-                      type="button"
-                      className="inline-flex h-8 items-center px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                      onClick={() => patchSessionMeta({ status: quickAction.value })}
-                    >
-                      {quickAction.label}
-                    </button>
-                    <button
-                      type="button"
-                      className="inline-flex h-8 w-8 items-center justify-center border-l border-slate-200 text-slate-500 hover:bg-slate-50"
-                      onClick={() => {
-                        setStatusMenuOpen((prev) => !prev);
-                        setSnoozeMenuOpen(false);
-                        setCustomSnoozeOpen(false);
-                        setMoreMenuOpen(false);
-                      }}
-                      aria-label="More status actions"
-                    >
-                      <ChevronDown size={13} />
-                    </button>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <p className="truncate text-sm font-semibold text-slate-900">
+                      {getSessionTitle(activeSession, sessionContact)}
+                    </p>
+                    {activeSession ? (
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium capitalize text-slate-600">
+                        {String(activeSession.status || "open")}
+                      </span>
+                    ) : null}
                   </div>
-                  {statusMenuOpen ? (
-                    <div className="absolute right-0 z-40 mt-1 w-52 rounded-md border border-slate-200 bg-white p-1 shadow-lg">
-                      <p className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-400">
-                        Status actions
-                      </p>
-                      {statusMenuOptions.map((option) => (
+                  <p className="truncate text-[11px] text-slate-500 capitalize">
+                    {String(activeSession?.channel || "conversation")}
+                  </p>
+                </div>
+              </div>
+
+              {activeId ? (
+                <div className="flex items-center gap-1.5">
+                  <div className="relative" ref={statusMenuRef}>
+                    <div className="inline-flex items-center overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
+                      <button
+                        type="button"
+                        className="inline-flex h-8 items-center px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                        onClick={() =>
+                          patchSessionMeta({ status: quickAction.value })
+                        }
+                      >
+                        {quickAction.label}
+                      </button>
+                      <button
+                        type="button"
+                        className="inline-flex h-8 w-8 items-center justify-center border-l border-slate-200 text-slate-500 hover:bg-slate-50"
+                        onClick={() => {
+                          setStatusMenuOpen((prev) => !prev);
+                          setSnoozeMenuOpen(false);
+                          setCustomSnoozeOpen(false);
+                          setMoreMenuOpen(false);
+                        }}
+                        aria-label="More status actions"
+                      >
+                        <ChevronDown size={13} />
+                      </button>
+                    </div>
+                    {statusMenuOpen ? (
+                      <div className="absolute right-0 z-40 mt-1 w-52 rounded-md border border-slate-200 bg-white p-1 shadow-lg">
+                        <div className="relative" ref={snoozeMenuRef}>
+                          <button
+                            type="button"
+                            className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                            onClick={() => {
+                              setCustomSnoozeOpen(false);
+                              setSnoozeMenuOpen((prev) => !prev);
+                            }}
+                          >
+                            <span className="inline-flex items-center gap-2">
+                              <Clock3 size={13} className="text-slate-500" />
+                              Snooze
+                            </span>
+                            <ChevronRight size={13} />
+                          </button>
+                          {snoozeMenuOpen ? (
+                            <div className="absolute left-full top-0 z-50 ml-1 w-56 rounded-md border border-slate-200 bg-white p-1 shadow-xl">
+                              <p className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-400">
+                                Snooze until
+                              </p>
+                              <button
+                                type="button"
+                                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                                onClick={() =>
+                                  void handleSnoozePreset("until_reply")
+                                }
+                              >
+                                <Clock3 size={13} />
+                                Until next reply
+                              </button>
+                              <button
+                                type="button"
+                                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                                onClick={() => void handleSnoozePreset("in_1h")}
+                              >
+                                <Clock3 size={13} />
+                                In one hour
+                              </button>
+                              <button
+                                type="button"
+                                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                                onClick={() =>
+                                  void handleSnoozePreset("tomorrow")
+                                }
+                              >
+                                <Clock3 size={13} />
+                                Until tomorrow
+                              </button>
+                              <button
+                                type="button"
+                                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                                onClick={() =>
+                                  void handleSnoozePreset("next_week")
+                                }
+                              >
+                                <Clock3 size={13} />
+                                Until next week
+                              </button>
+                              <button
+                                type="button"
+                                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                                onClick={() =>
+                                  void handleSnoozePreset("next_month")
+                                }
+                              >
+                                <Clock3 size={13} />
+                                Until next month
+                              </button>
+                              <button
+                                type="button"
+                                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                                onClick={() =>
+                                  void handleSnoozePreset("custom")
+                                }
+                              >
+                                <Clock3 size={13} />
+                                Custom...
+                              </button>
+                              {customSnoozeOpen ? (
+                                <div className="mt-1 rounded-md border border-slate-200 bg-slate-50 p-2">
+                                  <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
+                                    Date and time
+                                  </label>
+                                  <Input
+                                    type="datetime-local"
+                                    value={customSnoozeAt}
+                                    onChange={(e) =>
+                                      setCustomSnoozeAt(e.target.value)
+                                    }
+                                    className="h-8 text-xs"
+                                  />
+                                  <div className="mt-2 flex justify-end gap-1.5">
+                                    <button
+                                      type="button"
+                                      className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700"
+                                      onClick={() => setCustomSnoozeOpen(false)}
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="rounded-md bg-slate-900 px-2 py-1 text-[11px] text-white"
+                                      onClick={() =>
+                                        void handleApplyCustomSnooze()
+                                      }
+                                    >
+                                      Apply
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
                         <button
-                          key={option.value}
                           type="button"
                           className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
                           onClick={() => {
-                            patchSessionMeta({ status: option.value });
+                            patchSessionMeta({ status: "awaiting" });
                             setStatusMenuOpen(false);
                             setSnoozeMenuOpen(false);
                             setCustomSnoozeOpen(false);
                           }}
                         >
-                          {option.value === "resolved" ? (
-                            <CheckCircle2 size={13} className="text-slate-500" />
-                          ) : (
-                            <span className="inline-block h-1.5 w-1.5 rounded-full bg-slate-400" />
-                          )}
-                          {option.label}
+                          <CircleDashed size={13} className="text-slate-500" />
+                          Mark as pending
                         </button>
-                      ))}
-                      <div className="my-1 border-t border-slate-100" />
-                      <div className="relative" ref={snoozeMenuRef}>
-                        <button
-                          type="button"
-                          className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
-                          onClick={() => {
-                            setSnoozeMenuOpen((prev) => !prev);
-                            setCustomSnoozeOpen(false);
-                          }}
-                        >
-                          <span className="inline-flex items-center gap-2">
-                            <Clock3 size={13} />
-                            Snooze conversation
-                          </span>
-                          <ChevronRight size={13} />
-                        </button>
-                        {snoozeMenuOpen ? (
-                          <div className="absolute right-full top-0 z-50 mr-1 w-56 rounded-md border border-slate-200 bg-white p-1 shadow-xl">
-                            <p className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-400">
-                              Snooze until
-                            </p>
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
-                              onClick={() => void handleSnoozePreset("until_reply")}
-                            >
-                              <Clock3 size={13} />
-                              Until next reply
-                            </button>
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
-                              onClick={() => void handleSnoozePreset("in_1h")}
-                            >
-                              <Clock3 size={13} />
-                              In one hour
-                            </button>
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
-                              onClick={() => void handleSnoozePreset("tomorrow")}
-                            >
-                              <Clock3 size={13} />
-                              Until tomorrow
-                            </button>
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
-                              onClick={() => void handleSnoozePreset("next_week")}
-                            >
-                              <Clock3 size={13} />
-                              Until next week
-                            </button>
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
-                              onClick={() => void handleSnoozePreset("next_month")}
-                            >
-                              <Clock3 size={13} />
-                              Until next month
-                            </button>
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
-                              onClick={() => void handleSnoozePreset("custom")}
-                            >
-                              <Clock3 size={13} />
-                              Custom...
-                            </button>
-                            {customSnoozeOpen ? (
-                              <div className="mt-1 rounded-md border border-slate-200 bg-slate-50 p-2">
-                                <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
-                                  Date and time
-                                </label>
-                                <Input
-                                  type="datetime-local"
-                                  value={customSnoozeAt}
-                                  onChange={(e) => setCustomSnoozeAt(e.target.value)}
-                                  className="h-8 text-xs"
-                                />
-                                <div className="mt-2 flex justify-end gap-1.5">
-                                  <button
-                                    type="button"
-                                    className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700"
-                                    onClick={() => setCustomSnoozeOpen(false)}
-                                  >
-                                    Cancel
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="rounded-md bg-slate-900 px-2 py-1 text-[11px] text-white"
-                                    onClick={() => void handleApplyCustomSnooze()}
-                                  >
-                                    Apply
-                                  </button>
-                                </div>
-                              </div>
-                            ) : null}
-                          </div>
-                        ) : null}
                       </div>
-                    </div>
-                  ) : null}
-                </div>
-                <div className="relative" ref={moreMenuRef}>
-                  <button
-                    type="button"
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                    onClick={() => {
-                      const nextOpen = !moreMenuOpen;
-                      setMoreMenuOpen(nextOpen);
-                      setStatusMenuOpen(false);
-                      setSnoozeMenuOpen(false);
-                      setCustomSnoozeOpen(false);
-                      if (
-                        nextOpen &&
-                        isWhatsappConversation &&
-                        activeId &&
-                        getWhatsappBlockStatus
-                      ) {
-                        setWaBlockLoading(true);
-                        getWhatsappBlockStatus(activeId)
-                          .then((payload) => {
-                            setWaBlocked(Boolean(payload?.blocked));
-                          })
-                          .catch(() => {})
-                          .finally(() => setWaBlockLoading(false));
-                      }
-                    }}
-                    aria-label="More conversation options"
-                  >
-                    <MoreVertical size={14} />
-                  </button>
-                  {moreMenuOpen ? (
-                    <div className="absolute right-0 z-40 mt-1 w-56 rounded-md border border-slate-200 bg-white p-1 shadow-lg">
-                      <p className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-400">
-                        More options
-                      </p>
-                      {isWhatsappConversation ? (
+                    ) : null}
+                  </div>
+                  <div className="relative" ref={moreMenuRef}>
+                    <button
+                      type="button"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      onClick={() => {
+                        const nextOpen = !moreMenuOpen;
+                        setMoreMenuOpen(nextOpen);
+                        setStatusMenuOpen(false);
+                        setSnoozeMenuOpen(false);
+                        setCustomSnoozeOpen(false);
+                        if (
+                          nextOpen &&
+                          isWhatsappConversation &&
+                          activeId &&
+                          getWhatsappBlockStatus
+                        ) {
+                          setWaBlockLoading(true);
+                          getWhatsappBlockStatus(activeId)
+                            .then((payload) => {
+                              setWaBlocked(Boolean(payload?.blocked));
+                            })
+                            .catch(() => {})
+                            .finally(() => setWaBlockLoading(false));
+                        }
+                      }}
+                      aria-label="More conversation options"
+                    >
+                      <MoreVertical size={14} />
+                    </button>
+                    {moreMenuOpen ? (
+                      <div className="absolute right-0 z-40 mt-1 w-56 rounded-md border border-slate-200 bg-white p-1 shadow-lg">
+                        <p className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-400">
+                          More options
+                        </p>
+                        {isWhatsappConversation ? (
+                          <button
+                            type="button"
+                            className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs ${
+                              waBlocked
+                                ? "text-slate-700 hover:bg-slate-50"
+                                : "text-red-600 hover:bg-red-50"
+                            } ${waBlockLoading ? "cursor-not-allowed opacity-60" : ""}`}
+                            onClick={() => void handleToggleWhatsappBlock()}
+                            disabled={waBlockLoading}
+                          >
+                            {waBlockLoading
+                              ? "Updating..."
+                              : waBlocked
+                                ? "Unblock contact"
+                                : "Block contact"}
+                          </button>
+                        ) : null}
                         <button
                           type="button"
-                          className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs ${
-                            waBlocked
-                              ? "text-slate-700 hover:bg-slate-50"
-                              : "text-red-600 hover:bg-red-50"
-                          } ${waBlockLoading ? "cursor-not-allowed opacity-60" : ""}`}
-                          onClick={() => void handleToggleWhatsappBlock()}
-                          disabled={waBlockLoading}
+                          className="flex w-full cursor-not-allowed items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-400"
+                          disabled
+                          title="Coming soon"
                         >
-                          {waBlockLoading
-                            ? "Updating..."
-                            : waBlocked
-                              ? "Unblock contact"
-                              : "Block contact"}
+                          Send transcript by email (soon)
                         </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="flex w-full cursor-not-allowed items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-400"
-                        disabled
-                        title="Coming soon"
-                      >
-                        Send transcript by email (soon)
-                      </button>
-                    </div>
-                  ) : null}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
-            ) : null}
-          </header>
-          <ScrollArea className="conversation-thread h-full min-h-0 px-5 py-4">
-            <div className="flex flex-col">
-              {messages.map((message, index) => {
-                if (message.sender === "system") {
-                  return (
-                    <div key={message.id} className="flex justify-center my-3">
-                      <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] text-slate-500">
-                        {String(message.text ?? "")}
-                      </span>
-                    </div>
-                  );
-                }
+              ) : null}
+            </header>
+            <ScrollArea className="conversation-thread h-full min-h-0 px-5 py-4">
+              <div className="flex flex-col">
+                {messages.map((message, index) => {
+                  if (message.sender === "system") {
+                    return (
+                      <div
+                        key={message.id}
+                        className="flex justify-center my-3"
+                      >
+                        <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] text-slate-500">
+                          {String(message.text ?? "")}
+                        </span>
+                      </div>
+                    );
+                  }
 
-                const prev = messages[index - 1];
-                const next = messages[index + 1];
-                const isAgent = message.sender === "agent";
-                const isTeam = message.sender === "team";
-                const isVisitor = !isAgent && !isTeam;
-                const whatsappFailureText =
-                  activeSession?.channel === "whatsapp" && isAgent
-                    ? String(whatsappSendFailuresByMessage?.[message.id] || "")
-                    : "";
-                const isWhatsappFailed = Boolean(whatsappFailureText);
-                const senderGroup = isAgent || isTeam ? "right" : "left";
-                const prevGroup =
-                  prev && prev.sender !== "system"
-                    ? prev.sender === "agent" || prev.sender === "team"
-                      ? "right"
-                      : "left"
-                    : null;
-                const nextGroup =
-                  next && next.sender !== "system"
-                    ? next.sender === "agent" || next.sender === "team"
-                      ? "right"
-                      : "left"
-                    : null;
-                const attachmentWidget =
-                  message?.widget?.type === "attachment" ? message.widget : null;
-                const isWhatsappMessage =
-                  activeSession?.channel === "whatsapp" ||
-                  message?.widget?.type === "whatsapp_template";
-                const renderedText = isWhatsappMessage
-                  ? normalizeWhatsappMarkdown(message.text)
-                  : String(message.text ?? "");
-                const attachmentType = String(
-                  attachmentWidget?.attachmentType || "",
-                ).toLowerCase();
-                const isAudioAttachment =
-                  attachmentType === "audio" || attachmentType === "voice";
-                const attachmentUrl = resolveMediaUrl(
-                  attachmentWidget?.url || attachmentWidget?.mapUrl || "",
-                );
-                const showMessageText = !(
-                  attachmentWidget &&
-                  isAttachmentPlaceholderText(message.text)
-                );
-                const isLastInSequence =
-                  nextGroup !== senderGroup ||
-                  ((isAgent || isTeam) &&
-                    next &&
-                    next.agentId !== message.agentId);
-                const gapTop =
-                  prevGroup === senderGroup &&
-                  (!prev || prev.agentId === message.agentId)
-                    ? "mt-1"
-                    : "mt-3";
-                return (
-                  <article
-                    key={message.id}
-                    className={`flex items-end gap-1.5 ${gapTop} ${isAgent || isTeam ? "ml-auto flex-row-reverse" : ""} ${
-                      isAudioAttachment ? "w-[min(76%,360px)]" : "w-fit max-w-[76%]"
-                    }`}
-                  >
-                    {(isAgent || isTeam) &&
-                      (isLastInSequence ? (
-                        <MessageAvatar
-                          message={message}
-                          tenantSettings={tenantSettings}
-                        />
-                      ) : (
-                        <span className="inline-block h-6 w-6 flex-shrink-0" />
-                      ))}
-                    <div
-                      className={`rounded-xl border text-sm shadow-sm ${
-                        isWhatsappFailed
-                          ? "border-red-300 bg-red-50 text-red-800"
-                          : isAgent
-                          ? "border-blue-600 bg-blue-600 text-white"
-                          : isTeam
-                            ? "border-amber-200 bg-amber-50 text-amber-900"
-                            : "border-slate-200 bg-white text-slate-900"
-                      } ${attachmentWidget && !showMessageText ? "px-1.5 py-1.5" : "px-3 py-2"}`}
+                  const prev = messages[index - 1];
+                  const next = messages[index + 1];
+                  const isAgent = message.sender === "agent";
+                  const isTeam = message.sender === "team";
+                  const isVisitor = !isAgent && !isTeam;
+                  const whatsappFailureText =
+                    activeSession?.channel === "whatsapp" && isAgent
+                      ? String(
+                          whatsappSendFailuresByMessage?.[message.id] || "",
+                        )
+                      : "";
+                  const isWhatsappFailed = Boolean(whatsappFailureText);
+                  const senderGroup = isAgent || isTeam ? "right" : "left";
+                  const prevGroup =
+                    prev && prev.sender !== "system"
+                      ? prev.sender === "agent" || prev.sender === "team"
+                        ? "right"
+                        : "left"
+                      : null;
+                  const nextGroup =
+                    next && next.sender !== "system"
+                      ? next.sender === "agent" || next.sender === "team"
+                        ? "right"
+                        : "left"
+                      : null;
+                  const attachmentWidget =
+                    message?.widget?.type === "attachment"
+                      ? message.widget
+                      : null;
+                  const isWhatsappMessage =
+                    activeSession?.channel === "whatsapp" ||
+                    message?.widget?.type === "whatsapp_template";
+                  const renderedText = isWhatsappMessage
+                    ? normalizeWhatsappMarkdown(message.text)
+                    : String(message.text ?? "");
+                  const attachmentType = String(
+                    attachmentWidget?.attachmentType || "",
+                  ).toLowerCase();
+                  const isAudioAttachment =
+                    attachmentType === "audio" || attachmentType === "voice";
+                  const attachmentUrl = resolveMediaUrl(
+                    attachmentWidget?.url || attachmentWidget?.mapUrl || "",
+                  );
+                  const showMessageText = !(
+                    attachmentWidget &&
+                    isAttachmentPlaceholderText(message.text)
+                  );
+                  const isLastInSequence =
+                    nextGroup !== senderGroup ||
+                    ((isAgent || isTeam) &&
+                      next &&
+                      next.agentId !== message.agentId);
+                  const gapTop =
+                    prevGroup === senderGroup &&
+                    (!prev || prev.agentId === message.agentId)
+                      ? "mt-1"
+                      : "mt-3";
+                  return (
+                    <article
+                      key={message.id}
+                      className={`flex items-end gap-1.5 ${gapTop} ${isAgent || isTeam ? "ml-auto flex-row-reverse" : ""} ${
+                        isAudioAttachment
+                          ? "w-[min(76%,360px)]"
+                          : "w-fit max-w-[76%]"
+                      }`}
                     >
-                      {isTeam ? (
-                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide">
-                          Internal note
-                        </p>
-                      ) : null}
-                      {attachmentWidget ? (
-                        <div>
-                          {(attachmentType === "image" ||
-                            attachmentType === "sticker") &&
-                          attachmentUrl ? (
-                            <button
-                              type="button"
-                              className="block"
-                              onClick={() =>
-                                setLightbox({
-                                  url: attachmentUrl,
-                                  alt:
+                      {(isAgent || isTeam) &&
+                        (isLastInSequence ? (
+                          <MessageAvatar
+                            message={message}
+                            tenantSettings={tenantSettings}
+                          />
+                        ) : (
+                          <span className="inline-block h-6 w-6 flex-shrink-0" />
+                        ))}
+                      <div
+                        className={`rounded-xl border text-sm shadow-sm ${
+                          isWhatsappFailed
+                            ? "border-red-300 bg-red-50 text-red-800"
+                            : isAgent
+                              ? "border-blue-600 bg-blue-600 text-white"
+                              : isTeam
+                                ? "border-amber-200 bg-amber-50 text-amber-900"
+                                : "border-slate-200 bg-white text-slate-900"
+                        } ${attachmentWidget && !showMessageText ? "px-1.5 py-1.5" : "px-3 py-2"}`}
+                      >
+                        {isTeam ? (
+                          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide">
+                            Internal note
+                          </p>
+                        ) : null}
+                        {attachmentWidget ? (
+                          <div>
+                            {(attachmentType === "image" ||
+                              attachmentType === "sticker") &&
+                            attachmentUrl ? (
+                              <button
+                                type="button"
+                                className="block"
+                                onClick={() =>
+                                  setLightbox({
+                                    url: attachmentUrl,
+                                    alt:
+                                      attachmentWidget?.filename ||
+                                      attachmentWidget?.title ||
+                                      "Image",
+                                  })
+                                }
+                              >
+                                <img
+                                  src={attachmentUrl}
+                                  alt={
                                     attachmentWidget?.filename ||
                                     attachmentWidget?.title ||
-                                    "Image",
-                                })
-                              }
-                            >
-                              <img
+                                    "Image"
+                                  }
+                                  className="max-h-80 w-full rounded-lg object-cover"
+                                  loading="lazy"
+                                />
+                              </button>
+                            ) : null}
+                            {(attachmentType === "audio" ||
+                              attachmentType === "voice") &&
+                            attachmentUrl ? (
+                              <audio
+                                controls
+                                preload="metadata"
                                 src={attachmentUrl}
-                                alt={
-                                  attachmentWidget?.filename ||
-                                  attachmentWidget?.title ||
-                                  "Image"
-                                }
-                                className="max-h-80 w-full rounded-lg object-cover"
-                                loading="lazy"
+                                className="block w-full min-w-[280px] max-w-[360px]"
                               />
-                            </button>
-                          ) : null}
-                          {(attachmentType === "audio" ||
-                            attachmentType === "voice") &&
-                          attachmentUrl ? (
-                            <audio
-                              controls
-                              preload="metadata"
-                              src={attachmentUrl}
-                              className="block w-full min-w-[280px] max-w-[360px]"
-                            />
-                          ) : null}
-                          {attachmentType === "video" && attachmentUrl ? (
-                            <video
-                              controls
-                              preload="metadata"
-                              src={attachmentUrl}
-                              className="max-h-80 w-full rounded-lg bg-black"
-                            />
-                          ) : null}
-                          {(attachmentType === "document" ||
-                            attachmentType === "location") &&
-                          attachmentUrl ? (
-                            <a
-                              href={attachmentUrl}
-                              target="_blank"
-                              rel="noreferrer noopener"
-                              className="text-xs underline"
-                            >
-                              {attachmentWidget?.filename || "Open attachment"}
-                            </a>
-                          ) : null}
-                        </div>
-                      ) : (
-                        <>
-                          {showMessageText ? (
-                            <div
-                              className={`dashboard-md ${isAgent ? "dashboard-md-agent" : ""}`}
-                            >
-                              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                {renderedText}
-                              </ReactMarkdown>
-                            </div>
-                          ) : null}
-                          {renderMessageWidget(message)}
-                        </>
-                      )}
-                      {attachmentWidget && showMessageText ? (
-                        <div
-                          className={`mt-1.5 dashboard-md ${isAgent ? "dashboard-md-agent" : ""}`}
+                            ) : null}
+                            {attachmentType === "video" && attachmentUrl ? (
+                              <video
+                                controls
+                                preload="metadata"
+                                src={attachmentUrl}
+                                className="max-h-80 w-full rounded-lg bg-black"
+                              />
+                            ) : null}
+                            {(attachmentType === "document" ||
+                              attachmentType === "location") &&
+                            attachmentUrl ? (
+                              <a
+                                href={attachmentUrl}
+                                target="_blank"
+                                rel="noreferrer noopener"
+                                className="text-xs underline"
+                              >
+                                {attachmentWidget?.filename ||
+                                  "Open attachment"}
+                              </a>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <>
+                            {showMessageText ? (
+                              <div
+                                className={`dashboard-md ${isAgent ? "dashboard-md-agent" : ""}`}
+                              >
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                  {renderedText}
+                                </ReactMarkdown>
+                              </div>
+                            ) : null}
+                            {renderMessageWidget(message)}
+                          </>
+                        )}
+                        {attachmentWidget && showMessageText ? (
+                          <div
+                            className={`mt-1.5 dashboard-md ${isAgent ? "dashboard-md-agent" : ""}`}
+                          >
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                              {renderedText}
+                            </ReactMarkdown>
+                          </div>
+                        ) : null}
+                        <time
+                          className={`mt-1 block text-right text-[10px] ${
+                            isWhatsappFailed
+                              ? "text-red-500"
+                              : isAgent
+                                ? "text-blue-100"
+                                : "text-slate-400"
+                          }`}
                         >
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {renderedText}
-                          </ReactMarkdown>
-                        </div>
-                      ) : null}
-                      <time
-                        className={`mt-1 block text-right text-[10px] ${
-                          isWhatsappFailed
-                            ? "text-red-500"
-                            : isAgent
-                              ? "text-blue-100"
-                              : "text-slate-400"
-                        }`}
-                      >
-                        {formatTime(message.createdAt)}
-                      </time>
-                      {isWhatsappFailed ? (
-                        <p className="mt-1 text-[10px] font-medium text-red-600">
-                          Failed to deliver on WhatsApp
-                        </p>
-                      ) : null}
-                    </div>
+                          {formatTime(message.createdAt)}
+                        </time>
+                        {isWhatsappFailed ? (
+                          <p className="mt-1 text-[10px] font-medium text-red-600">
+                            Failed to deliver on WhatsApp
+                          </p>
+                        ) : null}
+                      </div>
+                    </article>
+                  );
+                })}
+
+                {activeId && visitorDraftBySession[activeId] ? (
+                  <article className="w-fit max-w-[76%] rounded-xl border border-dashed border-slate-300 bg-white px-3 py-2 text-sm text-slate-700">
+                    <p className="whitespace-pre-wrap break-words">
+                      {visitorDraftBySession[activeId]}
+                    </p>
+                    <time className="mt-1 block text-right text-[10px] text-slate-400">
+                      typing...
+                    </time>
                   </article>
-                );
-              })}
-
-              {activeId && visitorDraftBySession[activeId] ? (
-                <article className="w-fit max-w-[76%] rounded-xl border border-dashed border-slate-300 bg-white px-3 py-2 text-sm text-slate-700">
-                  <p className="whitespace-pre-wrap break-words">
-                    {visitorDraftBySession[activeId]}
-                  </p>
-                  <time className="mt-1 block text-right text-[10px] text-slate-400">
-                    typing...
-                  </time>
-                </article>
-              ) : null}
-              <div ref={bottomRef} />
-            </div>
-          </ScrollArea>
-
-          <form
-            onSubmit={handleComposerSubmit}
-            className="relative border-t border-slate-200 bg-white p-3"
-          >
-            {(cannedPanelOpen || slashQuery.length > 0) && (
-              <div className="absolute bottom-full left-3 right-3 z-20 mb-2 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
-                {slashQuery ? (
-                  <p className="mb-2 text-[11px] text-slate-500">
-                    Filtering canned replies by: <strong>/{slashQuery}</strong>
-                  </p>
                 ) : null}
-                <div className="max-h-36 space-y-1 overflow-y-auto">
-                  {filteredCannedReplies.map((reply) => (
-                    <div
-                      key={reply.id}
-                      className="flex items-center gap-2 rounded-md border border-slate-200 bg-white p-1.5"
-                    >
-                      <button
-                        type="button"
-                        className="flex-1 text-left"
-                        onClick={() => insertCannedReply(reply)}
+                <div ref={bottomRef} />
+              </div>
+            </ScrollArea>
+
+            <form
+              onSubmit={handleComposerSubmit}
+              className="relative border-t border-slate-200 bg-white p-3"
+            >
+              {(cannedPanelOpen || slashQuery.length > 0) && (
+                <div className="absolute bottom-full left-3 right-3 z-20 mb-2 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+                  {slashQuery ? (
+                    <p className="mb-2 text-[11px] text-slate-500">
+                      Filtering canned replies by:{" "}
+                      <strong>/{slashQuery}</strong>
+                    </p>
+                  ) : null}
+                  <div className="max-h-36 space-y-1 overflow-y-auto">
+                    {filteredCannedReplies.map((reply) => (
+                      <div
+                        key={reply.id}
+                        className="flex items-center gap-2 rounded-md border border-slate-200 bg-white p-1.5"
                       >
-                        <p className="text-xs font-semibold text-slate-800">
-                          {reply.title}
+                        <button
+                          type="button"
+                          className="flex-1 text-left"
+                          onClick={() => insertCannedReply(reply)}
+                        >
+                          <p className="text-xs font-semibold text-slate-800">
+                            {reply.title}
+                          </p>
+                          <p className="truncate text-[11px] text-slate-500">
+                            {reply.shortcut ? `${reply.shortcut} • ` : ""}
+                            {reply.body}
+                          </p>
+                        </button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2 text-xs text-red-600 hover:text-red-700"
+                          onClick={() => deleteCannedReply(reply.id)}
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    ))}
+                    {filteredCannedReplies.length === 0 ? (
+                      <p className="text-xs text-slate-400">
+                        No canned replies found.
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              )}
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-2.5 shadow-[0_1px_0_rgba(15,23,42,0.04)]">
+                <div className="mb-2 flex items-center justify-start">
+                  <div className="inline-flex rounded-md border border-slate-300 bg-white p-0.5">
+                    <button
+                      type="button"
+                      className={`rounded px-2 py-1 text-xs font-medium transition ${
+                        messageAudience === "user"
+                          ? "bg-slate-100 text-slate-900"
+                          : "text-slate-600"
+                      }`}
+                      onClick={() => setMessageAudience("user")}
+                    >
+                      Reply
+                    </button>
+                    <button
+                      type="button"
+                      className={`rounded px-2 py-1 text-xs font-medium transition ${
+                        messageAudience === "team"
+                          ? "bg-amber-100 text-amber-900"
+                          : "text-slate-600"
+                      }`}
+                      onClick={() => setMessageAudience("team")}
+                    >
+                      Note
+                    </button>
+                  </div>
+                </div>
+                {pendingAttachment ? (
+                  <div className="mb-2 rounded-xl border border-slate-200 bg-white p-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-medium text-slate-800">
+                          {pendingAttachment.name}
                         </p>
-                        <p className="truncate text-[11px] text-slate-500">
-                          {reply.shortcut ? `${reply.shortcut} • ` : ""}
-                          {reply.body}
+                        <p className="text-[11px] text-slate-500">
+                          {pendingAttachment.type} •{" "}
+                          {Math.max(
+                            1,
+                            Math.round(pendingAttachment.size / 1024),
+                          )}{" "}
+                          KB
                         </p>
-                      </button>
+                      </div>
                       <Button
                         type="button"
                         size="sm"
                         variant="ghost"
-                        className="h-7 px-2 text-xs text-red-600 hover:text-red-700"
-                        onClick={() => deleteCannedReply(reply.id)}
+                        className="h-7 px-2 text-xs text-slate-500"
+                        onClick={clearPendingAttachment}
                       >
-                        Delete
+                        <X size={12} className="mr-1" />
+                        Cancel
                       </Button>
                     </div>
-                  ))}
-                  {filteredCannedReplies.length === 0 ? (
-                    <p className="text-xs text-slate-400">
-                      No canned replies found.
+                    {pendingAttachment.previewUrl &&
+                    pendingAttachment.type.startsWith("image/") ? (
+                      <img
+                        src={pendingAttachment.previewUrl}
+                        alt={pendingAttachment.name}
+                        className="mt-2 max-h-48 rounded-lg border border-slate-200 object-contain"
+                      />
+                    ) : null}
+                    {pendingAttachment.previewUrl &&
+                    pendingAttachment.type.startsWith("audio/") ? (
+                      <audio
+                        controls
+                        preload="metadata"
+                        src={pendingAttachment.previewUrl}
+                        className="mt-2 w-full"
+                      />
+                    ) : null}
+                    <p className="mt-2 text-[11px] text-slate-500">
+                      Add an optional message below, then press Send.
                     </p>
-                  ) : null}
-                </div>
-              </div>
-            )}
-
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-2.5 shadow-[0_1px_0_rgba(15,23,42,0.04)]">
-              <div className="mb-2 flex items-center justify-start">
-                <div className="inline-flex rounded-md border border-slate-300 bg-white p-0.5">
-                  <button
-                    type="button"
-                    className={`rounded px-2 py-1 text-xs font-medium transition ${
-                      messageAudience === "user"
-                        ? "bg-slate-100 text-slate-900"
-                        : "text-slate-600"
-                    }`}
-                    onClick={() => setMessageAudience("user")}
-                  >
-                    Reply
-                  </button>
-                  <button
-                    type="button"
-                    className={`rounded px-2 py-1 text-xs font-medium transition ${
-                      messageAudience === "team"
-                        ? "bg-amber-100 text-amber-900"
-                        : "text-slate-600"
-                    }`}
-                    onClick={() => setMessageAudience("team")}
-                  >
-                    Note
-                  </button>
-                </div>
-              </div>
-              {pendingAttachment ? (
-                <div className="mb-2 rounded-xl border border-slate-200 bg-white p-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-medium text-slate-800">
-                        {pendingAttachment.name}
-                      </p>
-                      <p className="text-[11px] text-slate-500">
-                        {pendingAttachment.type} •{" "}
-                        {Math.max(1, Math.round(pendingAttachment.size / 1024))}{" "}
-                        KB
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 px-2 text-xs text-slate-500"
-                      onClick={clearPendingAttachment}
-                    >
-                      <X size={12} className="mr-1" />
-                      Cancel
-                    </Button>
-                  </div>
-                  {pendingAttachment.previewUrl &&
-                  pendingAttachment.type.startsWith("image/") ? (
-                    <img
-                      src={pendingAttachment.previewUrl}
-                      alt={pendingAttachment.name}
-                      className="mt-2 max-h-48 rounded-lg border border-slate-200 object-contain"
-                    />
-                  ) : null}
-                  {pendingAttachment.previewUrl &&
-                  pendingAttachment.type.startsWith("audio/") ? (
-                    <audio
-                      controls
-                      preload="metadata"
-                      src={pendingAttachment.previewUrl}
-                      className="mt-2 w-full"
-                    />
-                  ) : null}
-                  <p className="mt-2 text-[11px] text-slate-500">
-                    Add an optional message below, then press Send.
-                  </p>
-                </div>
-              ) : null}
-              <div className="relative">
-                {mentionOpen && mentionSuggestions.length > 0 ? (
-                  <div
-                    ref={mentionPanelRef}
-                    className="absolute bottom-full left-0 right-0 z-40 mb-1 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"
-                  >
-                    {mentionSuggestions.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-slate-50"
-                        onClick={() => insertMention(item)}
-                      >
-                        {item.avatarUrl ? (
-                          <img
-                            src={item.avatarUrl}
-                            alt={item.name}
-                            className="h-5 w-5 rounded-full object-cover"
-                          />
-                        ) : (
-                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[10px] font-semibold text-slate-600">
-                            {String(item.name || "A").slice(0, 1).toUpperCase()}
-                          </span>
-                        )}
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-xs font-medium text-slate-800">
-                            {item.name}
-                          </span>
-                          <span className="block truncate text-[11px] text-slate-500">
-                            @{item.mentionHandle}
-                          </span>
-                        </span>
-                      </button>
-                    ))}
                   </div>
                 ) : null}
-                <Textarea
-                  ref={textareaRef}
-                  placeholder={
-                    activeId
-                      ? isActiveSessionClosed && messageAudience === "user"
-                        ? "This conversation is resolved. Reopen to send a user message."
-                        : isUserReplyBlockedByBot
-                          ? `${botName} is assigned. Change assignee to reply as an agent.`
-                        : "Type your message"
-                      : "Select a conversation"
-                  }
-                  value={text}
-                  onChange={(e) => {
-                    const nextValue = e.target.value;
-                    setText(nextValue);
-                    updateMentionContext(
-                      nextValue,
-                      e.target.selectionStart,
-                      messageAudience,
-                    );
-                    bumpTyping();
-                  }}
-                  onClick={(e) =>
-                    updateMentionContext(
-                      text,
-                      e.currentTarget.selectionStart,
-                      messageAudience,
-                    )
-                  }
-                  onKeyUp={(e) =>
-                    updateMentionContext(
-                      text,
-                      e.currentTarget.selectionStart,
-                      messageAudience,
-                    )
-                  }
-                  onBlur={() => sendTypingState(false)}
-                  onKeyDown={handleComposerKeyDown}
-                  disabled={
-                    !activeId ||
-                    (isActiveSessionClosed && messageAudience === "user") ||
-                    isUserReplyBlockedByBot
-                  }
-                  rows={2}
-                  className="min-h-20 resize-none border-0 bg-transparent px-1 py-1.5 text-[13px] shadow-none focus-visible:ring-0"
-                />
-              </div>
-
-              <div className="mt-1 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    className="hidden"
-                    onChange={handleSelectAttachment}
-                  />
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 w-7 rounded-full p-0 text-slate-500 hover:text-slate-700"
+                <div className="relative">
+                  {mentionOpen && mentionSuggestions.length > 0 ? (
+                    <div
+                      ref={mentionPanelRef}
+                      className="absolute bottom-full left-0 right-0 z-40 mb-1 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"
+                    >
+                      {mentionSuggestions.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-slate-50"
+                          onClick={() => insertMention(item)}
+                        >
+                          {item.avatarUrl ? (
+                            <img
+                              src={item.avatarUrl}
+                              alt={item.name}
+                              className="h-5 w-5 rounded-full object-cover"
+                            />
+                          ) : (
+                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[10px] font-semibold text-slate-600">
+                              {String(item.name || "A")
+                                .slice(0, 1)
+                                .toUpperCase()}
+                            </span>
+                          )}
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-xs font-medium text-slate-800">
+                              {item.name}
+                            </span>
+                            <span className="block truncate text-[11px] text-slate-500">
+                              @{item.mentionHandle}
+                            </span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  <Textarea
+                    ref={textareaRef}
+                    placeholder={
+                      activeId
+                        ? isActiveSessionClosed && messageAudience === "user"
+                          ? "This conversation is resolved. Reopen to send a user message."
+                          : isUserReplyBlockedByBot
+                            ? `${botName} is assigned. Change assignee to reply as an agent.`
+                            : "Type your message"
+                        : "Select a conversation"
+                    }
+                    value={text}
+                    onChange={(e) => {
+                      const nextValue = e.target.value;
+                      setText(nextValue);
+                      updateMentionContext(
+                        nextValue,
+                        e.target.selectionStart,
+                        messageAudience,
+                      );
+                      bumpTyping();
+                    }}
+                    onClick={(e) =>
+                      updateMentionContext(
+                        text,
+                        e.currentTarget.selectionStart,
+                        messageAudience,
+                      )
+                    }
+                    onKeyUp={(e) =>
+                      updateMentionContext(
+                        text,
+                        e.currentTarget.selectionStart,
+                        messageAudience,
+                      )
+                    }
+                    onBlur={() => sendTypingState(false)}
+                    onKeyDown={handleComposerKeyDown}
                     disabled={
                       !activeId ||
                       (isActiveSessionClosed && messageAudience === "user") ||
                       isUserReplyBlockedByBot
                     }
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    <Paperclip size={14} />
-                  </Button>
-                  <div className="relative" ref={emojiPanelRef}>
+                    rows={2}
+                    className="min-h-20 resize-none border-0 bg-transparent px-1 py-1.5 text-[13px] shadow-none focus-visible:ring-0"
+                  />
+                </div>
+
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      className="hidden"
+                      onChange={handleSelectAttachment}
+                    />
                     <Button
                       type="button"
                       size="sm"
@@ -1647,556 +1657,610 @@ export default function ConversationsView({
                         (isActiveSessionClosed && messageAudience === "user") ||
                         isUserReplyBlockedByBot
                       }
-                      onClick={() => setEmojiOpen((v) => !v)}
+                      onClick={() => fileInputRef.current?.click()}
                     >
-                      <Smile size={14} />
+                      <Paperclip size={14} />
                     </Button>
-                    {emojiOpen && activeId ? (
-                      <div className="absolute bottom-9 left-0 z-50 grid grid-cols-6 gap-1 rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg">
-                        {[
-                          "😀",
-                          "😁",
-                          "😂",
-                          "🙂",
-                          "😉",
-                          "😍",
-                          "😘",
-                          "😎",
-                          "🤔",
-                          "👍",
-                          "🙏",
-                          "🔥",
-                        ].map((emoji) => (
-                          <button
-                            key={emoji}
-                            type="button"
-                            className="rounded p-1 text-base hover:bg-slate-100"
-                            onClick={() => insertEmoji(emoji)}
-                          >
-                            {emoji}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5">
-                  {canUseTemplates ? (
-                    <div className="relative" ref={templatePanelRef}>
+                    <div className="relative" ref={emojiPanelRef}>
                       <Button
                         type="button"
                         size="sm"
-                        variant="outline"
-                        className="h-8 rounded-lg px-2 text-[11px]"
-                        onClick={() => {
-                          if (waTemplatesOpen) {
-                            setWaTemplatesOpen(false);
-                          } else {
-                            void openWaTemplates();
-                          }
-                        }}
-                        disabled={!activeId || waTemplateSending}
+                        variant="ghost"
+                        className="h-7 w-7 rounded-full p-0 text-slate-500 hover:text-slate-700"
+                        disabled={
+                          !activeId ||
+                          (isActiveSessionClosed &&
+                            messageAudience === "user") ||
+                          isUserReplyBlockedByBot
+                        }
+                        onClick={() => setEmojiOpen((v) => !v)}
                       >
-                        <ClipboardList size={13} className="mr-1" />
-                        WhatsApp Template
+                        <Smile size={14} />
                       </Button>
-                      {waTemplatesOpen ? (
-                        <div className="absolute bottom-10 right-0 z-50 w-80 rounded-lg border border-slate-200 bg-white p-2 shadow-xl">
-                          <Input
-                            value={waTemplateQuery}
-                            onChange={(e) => setWaTemplateQuery(e.target.value)}
-                            placeholder="Search templates"
-                            className="h-8 text-xs"
-                          />
-                          <div className="mt-2 max-h-64 space-y-1 overflow-y-auto pr-1">
-                            {waTemplatesLoading ? (
-                              <p className="text-xs text-slate-500">
-                                Loading templates...
-                              </p>
-                            ) : null}
-                            {waTemplatesError ? (
-                              <p className="text-xs text-red-600">
-                                {waTemplatesError}
-                              </p>
-                            ) : null}
-                            {!waTemplatesLoading &&
-                            filteredWaTemplates.length === 0 ? (
-                              <p className="text-xs text-slate-500">
-                                No templates found.
-                              </p>
-                            ) : null}
-                            {filteredWaTemplates.map((tpl) => (
-                              <button
-                                key={`${tpl.name}-${tpl.language || "lang"}`}
-                                type="button"
-                                className="w-full rounded-md border border-slate-200 p-2 text-left hover:bg-slate-50"
-                                onClick={() => selectTemplateForParams(tpl)}
-                                disabled={waTemplateSending}
-                              >
-                                <p className="text-xs font-semibold text-slate-800">
-                                  {tpl.name}
-                                </p>
-                                <p className="text-[10px] text-slate-500">
-                                  {(tpl.language || "en_US").toUpperCase()} •{" "}
-                                  {tpl.status || "UNKNOWN"}
-                                </p>
-                                {tpl.bodyPreview ? (
-                                  <p className="mt-1 line-clamp-2 text-[11px] text-slate-600">
-                                    {tpl.bodyPreview}
-                                  </p>
-                                ) : null}
-                              </button>
-                            ))}
-                          </div>
-                          {waSelectedTemplate ? (
-                            <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-2">
-                              <p className="text-xs font-semibold text-slate-800">
-                                {waSelectedTemplate.name}
-                              </p>
-                              {waTemplateParams.length > 0 ? (
-                                <div className="mt-2 space-y-1.5">
-                                  {waTemplateParams.map((value, idx) => (
-                                    <Input
-                                      key={`${waSelectedTemplate.name}-param-${idx}`}
-                                      value={value}
-                                      onChange={(e) =>
-                                        setWaTemplateParams((prev) =>
-                                          prev.map((v, i) =>
-                                            i === idx ? e.target.value : v,
-                                          ),
-                                        )
-                                      }
-                                      placeholder={`Parameter ${idx + 1}`}
-                                      className="h-8 text-xs"
-                                    />
-                                  ))}
-                                </div>
-                              ) : (
-                                <p className="mt-1 text-[11px] text-slate-500">
-                                  No parameters required.
-                                </p>
-                              )}
-                              {renderedWaPreview ? (
-                                <p className="mt-2 rounded border border-slate-200 bg-white p-1.5 text-[11px] text-slate-700">
-                                  {renderedWaPreview}
-                                </p>
-                              ) : null}
-                              <div className="mt-2 flex items-center justify-end gap-1.5">
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 px-2 text-[11px]"
-                                  onClick={() => {
-                                    setWaSelectedTemplate(null);
-                                    setWaTemplateParams([]);
-                                  }}
-                                  disabled={waTemplateSending}
-                                >
-                                  Cancel
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  className="h-7 px-2 text-[11px]"
-                                  onClick={() => void sendTemplate(waSelectedTemplate)}
-                                  disabled={waTemplateSending}
-                                >
-                                  {waTemplateSending ? "Sending..." : "Send Template"}
-                                </Button>
-                              </div>
-                            </div>
-                          ) : null}
+                      {emojiOpen && activeId ? (
+                        <div className="absolute bottom-9 left-0 z-50 grid grid-cols-6 gap-1 rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg">
+                          {[
+                            "😀",
+                            "😁",
+                            "😂",
+                            "🙂",
+                            "😉",
+                            "😍",
+                            "😘",
+                            "😎",
+                            "🤔",
+                            "👍",
+                            "🙏",
+                            "🔥",
+                          ].map((emoji) => (
+                            <button
+                              key={emoji}
+                              type="button"
+                              className="rounded p-1 text-base hover:bg-slate-100"
+                              onClick={() => insertEmoji(emoji)}
+                            >
+                              {emoji}
+                            </button>
+                          ))}
                         </div>
                       ) : null}
                     </div>
-                  ) : null}
-                  <Button
-                    type="submit"
-                    disabled={
-                      !activeId ||
-                      (!text.trim() && !pendingAttachment) ||
-                      (isActiveSessionClosed && messageAudience === "user") ||
-                      isUserReplyBlockedByBot
-                    }
-                    className="h-8 rounded-lg bg-orange-500 px-3 text-white hover:bg-orange-600"
-                  >
-                    Send <Send size={12} />
-                  </Button>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    {canUseTemplates ? (
+                      <div className="relative" ref={templatePanelRef}>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-8 rounded-lg px-2 text-[11px]"
+                          onClick={() => {
+                            if (waTemplatesOpen) {
+                              setWaTemplatesOpen(false);
+                            } else {
+                              void openWaTemplates();
+                            }
+                          }}
+                          disabled={!activeId || waTemplateSending}
+                        >
+                          <ClipboardList size={13} className="mr-1" />
+                          WhatsApp Template
+                        </Button>
+                        {waTemplatesOpen ? (
+                          <div className="absolute bottom-10 right-0 z-50 w-80 rounded-lg border border-slate-200 bg-white p-2 shadow-xl">
+                            <Input
+                              value={waTemplateQuery}
+                              onChange={(e) =>
+                                setWaTemplateQuery(e.target.value)
+                              }
+                              placeholder="Search templates"
+                              className="h-8 text-xs"
+                            />
+                            <div className="mt-2 max-h-64 space-y-1 overflow-y-auto pr-1">
+                              {waTemplatesLoading ? (
+                                <p className="text-xs text-slate-500">
+                                  Loading templates...
+                                </p>
+                              ) : null}
+                              {waTemplatesError ? (
+                                <p className="text-xs text-red-600">
+                                  {waTemplatesError}
+                                </p>
+                              ) : null}
+                              {!waTemplatesLoading &&
+                              filteredWaTemplates.length === 0 ? (
+                                <p className="text-xs text-slate-500">
+                                  No templates found.
+                                </p>
+                              ) : null}
+                              {filteredWaTemplates.map((tpl) => (
+                                <button
+                                  key={`${tpl.name}-${tpl.language || "lang"}`}
+                                  type="button"
+                                  className="w-full rounded-md border border-slate-200 p-2 text-left hover:bg-slate-50"
+                                  onClick={() => selectTemplateForParams(tpl)}
+                                  disabled={waTemplateSending}
+                                >
+                                  <p className="text-xs font-semibold text-slate-800">
+                                    {tpl.name}
+                                  </p>
+                                  <p className="text-[10px] text-slate-500">
+                                    {(tpl.language || "en_US").toUpperCase()} •{" "}
+                                    {tpl.status || "UNKNOWN"}
+                                  </p>
+                                  {tpl.bodyPreview ? (
+                                    <p className="mt-1 line-clamp-2 text-[11px] text-slate-600">
+                                      {tpl.bodyPreview}
+                                    </p>
+                                  ) : null}
+                                </button>
+                              ))}
+                            </div>
+                            {waSelectedTemplate ? (
+                              <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-2">
+                                <p className="text-xs font-semibold text-slate-800">
+                                  {waSelectedTemplate.name}
+                                </p>
+                                {waTemplateParams.length > 0 ? (
+                                  <div className="mt-2 space-y-1.5">
+                                    {waTemplateParams.map((value, idx) => (
+                                      <Input
+                                        key={`${waSelectedTemplate.name}-param-${idx}`}
+                                        value={value}
+                                        onChange={(e) =>
+                                          setWaTemplateParams((prev) =>
+                                            prev.map((v, i) =>
+                                              i === idx ? e.target.value : v,
+                                            ),
+                                          )
+                                        }
+                                        placeholder={`Parameter ${idx + 1}`}
+                                        className="h-8 text-xs"
+                                      />
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="mt-1 text-[11px] text-slate-500">
+                                    No parameters required.
+                                  </p>
+                                )}
+                                {renderedWaPreview ? (
+                                  <p className="mt-2 rounded border border-slate-200 bg-white p-1.5 text-[11px] text-slate-700">
+                                    {renderedWaPreview}
+                                  </p>
+                                ) : null}
+                                <div className="mt-2 flex items-center justify-end gap-1.5">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 px-2 text-[11px]"
+                                    onClick={() => {
+                                      setWaSelectedTemplate(null);
+                                      setWaTemplateParams([]);
+                                    }}
+                                    disabled={waTemplateSending}
+                                  >
+                                    Cancel
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    className="h-7 px-2 text-[11px]"
+                                    onClick={() =>
+                                      void sendTemplate(waSelectedTemplate)
+                                    }
+                                    disabled={waTemplateSending}
+                                  >
+                                    {waTemplateSending
+                                      ? "Sending..."
+                                      : "Send Template"}
+                                  </Button>
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <Button
+                      type="submit"
+                      disabled={
+                        !activeId ||
+                        (!text.trim() && !pendingAttachment) ||
+                        (isActiveSessionClosed && messageAudience === "user") ||
+                        isUserReplyBlockedByBot
+                      }
+                      className="h-8 rounded-lg bg-orange-500 px-3 text-white hover:bg-orange-600"
+                    >
+                      Send <Send size={12} />
+                    </Button>
+                  </div>
                 </div>
               </div>
+            </form>
+          </section>
+        }
+        detailsPanel={
+          <aside className="crm-details flex h-full min-h-0 flex-col border-l border-slate-200 bg-white text-slate-900">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <p className="text-sm font-semibold">Contact</p>
+              <span className="text-[10px] text-slate-500">
+                {activeSession?.id ? activeSession.id.slice(0, 8) : ""}
+              </span>
             </div>
-          </form>
-        </section>
-      }
-      detailsPanel={
-        <aside className="crm-details flex h-full min-h-0 flex-col border-l border-slate-200 bg-white text-slate-900">
-          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-            <p className="text-sm font-semibold">Contact</p>
-            <span className="text-[10px] text-slate-500">
-              {activeSession?.id ? activeSession.id.slice(0, 8) : ""}
-            </span>
-          </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-3">
-            <div className="space-y-2.5">
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <div className="flex items-start gap-2.5">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-fuchsia-100 text-xs font-semibold text-fuchsia-700">
-                    {sessionInitials(activeSession, sessionContact)}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-slate-900">
-                      {getSessionTitle(activeSession, sessionContact)}
-                    </p>
-                    <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
-                      <Mail size={11} className="text-slate-400" />
-                      <span className="truncate">
-                        {sessionContact?.email || "Unavailable"}
-                      </span>
-                    </p>
-                    <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
-                      <Phone size={11} className="text-slate-400" />
-                      <span className="truncate">
-                        {sessionContact?.phone || activeSession?.phone || "Unavailable"}
-                      </span>
-                    </p>
-                    <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
-                      <Building2 size={11} className="text-slate-400" />
-                      <span className="truncate">
-                        {sessionContact?.company || "Unavailable"}
-                      </span>
-                    </p>
+            <div className="min-h-0 flex-1 overflow-y-auto p-3">
+              <div className="space-y-2.5">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="flex items-start gap-2.5">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-fuchsia-100 text-xs font-semibold text-fuchsia-700">
+                      {sessionInitials(activeSession, sessionContact)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-slate-900">
+                        {getSessionTitle(activeSession, sessionContact)}
+                      </p>
+                      <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
+                        <Mail size={11} className="text-slate-400" />
+                        <span className="truncate">
+                          {sessionContact?.email || "Unavailable"}
+                        </span>
+                      </p>
+                      <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
+                        <Phone size={11} className="text-slate-400" />
+                        <span className="truncate">
+                          {sessionContact?.phone ||
+                            activeSession?.phone ||
+                            "Unavailable"}
+                        </span>
+                      </p>
+                      <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
+                        <Building2 size={11} className="text-slate-400" />
+                        <span className="truncate">
+                          {sessionContact?.company || "Unavailable"}
+                        </span>
+                      </p>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <section className="rounded-lg border border-slate-200 bg-white">
-                <button
-                  type="button"
-                  className="flex w-full items-center justify-between px-3 py-2.5 text-left"
-                  onClick={() => toggleSidebarPanel("actions")}
-                >
-                  <span className="text-xs font-semibold text-slate-900">
-                    Conversation Actions
-                  </span>
-                  {sidebarPanels.actions ? (
-                    <ChevronDown size={14} className="text-slate-400" />
-                  ) : (
-                    <ChevronRight size={14} className="text-slate-400" />
-                  )}
-                </button>
-                {sidebarPanels.actions ? (
-                  <div className="space-y-2 border-t border-slate-200 px-3 pb-3 pt-2">
-                    <div>
-                      <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
-                        Assignee
-                      </label>
-                      <RichCombobox
-                        value={activeSession?.assigneeAgentId || botAssigneeId}
-                        options={assigneeOptions}
-                        onSelect={(agentId) =>
-                          patchActiveSession("assignee", { agentId })
-                        }
-                        placeholder="Select assignee..."
-                        searchPlaceholder="Search assignee..."
-                        disabled={!activeId}
-                        renderOptionIcon={(option) => (
-                          <AvatarOption
-                            label={option.label}
-                            avatarUrl={option.avatarUrl}
-                            fallback={option.fallback}
-                          />
-                        )}
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
-                        Team
-                      </label>
-                      <RichCombobox
-                        value={activeSession?.teamId || ""}
-                        options={teamOptions}
-                        onSelect={(teamId) =>
-                          patchActiveSession("team", {
-                            teamId: teamId || null,
-                          })
-                        }
-                        placeholder="Select team..."
-                        searchPlaceholder="Search team..."
-                        disabled={!activeId}
-                        renderOptionIcon={(option) => (
-                          <AvatarOption
-                            label={option.label}
-                            fallback={option.fallback}
-                          />
-                        )}
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
-                          Status
-                        </label>
-                        <RichCombobox
-                          value={activeSession?.status || "open"}
-                          options={statusOptions}
-                          onSelect={(status) => patchSessionMeta({ status })}
-                          placeholder="Select status..."
-                          searchPlaceholder="Search status..."
-                          disabled={!activeId}
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
-                          Priority
-                        </label>
-                        <RichCombobox
-                          value={activeSession?.priority || "normal"}
-                          options={priorityOptions}
-                          onSelect={(priority) =>
-                            patchSessionMeta({ priority })
-                          }
-                          placeholder="Select priority..."
-                          searchPlaceholder="Search priority..."
-                          disabled={!activeId}
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">
-                        Conversation Tags
-                      </p>
-                      <div className="mb-1.5 flex flex-wrap gap-1">
-                        {(sessionTags || []).map((tag) => (
-                          <Badge
-                            key={tag.id}
-                            variant="outline"
-                            className="gap-1 text-[10px]"
-                            style={{
-                              borderColor: tag.color || "#cbd5e1",
-                              color: tag.color || "#334155",
-                              backgroundColor: `${tag.color || "#cbd5e1"}15`,
-                            }}
-                          >
-                            <Tag size={10} />
-                            {tag.name}
-                            <button
-                              onClick={() => removeSessionTag(tag.id)}
-                              className="ml-0.5 hover:opacity-70"
-                            >
-                              <X size={10} />
-                            </button>
-                          </Badge>
-                        ))}
-                      </div>
-                      <RichCombobox
-                        value=""
-                        options={addableTagOptions}
-                        onSelect={(tagId) => tagId && addSessionTag(tagId)}
-                        placeholder="+ Add tag"
-                        searchPlaceholder="Search tags..."
-                        disabled={!activeId}
-                        renderOptionIcon={(option) => (
-                          <span
-                            className="inline-block h-2.5 w-2.5 rounded-full"
-                            style={{ backgroundColor: option.color }}
-                          />
-                        )}
-                      />
-                    </div>
-                  </div>
-                ) : null}
-              </section>
-
-              {[
-                ["conversationInfo", "Conversation Information"],
-                ["contactAttrs", "Contact Attributes"],
-                ["previousConversations", "Previous Conversations"],
-                ["conversationNotes", "Conversation Notes"],
-                ["participants", "Conversation Participants"],
-              ].map(([key, title]) => (
-                <section
-                  key={key}
-                  className="rounded-lg border border-slate-200 bg-white"
-                >
+                <section className="rounded-lg border border-slate-200 bg-white">
                   <button
                     type="button"
                     className="flex w-full items-center justify-between px-3 py-2.5 text-left"
-                    onClick={() => toggleSidebarPanel(key)}
+                    onClick={() => toggleSidebarPanel("actions")}
                   >
                     <span className="text-xs font-semibold text-slate-900">
-                      {title}
+                      Conversation Actions
                     </span>
-                    {sidebarPanels[key] ? (
+                    {sidebarPanels.actions ? (
                       <ChevronDown size={14} className="text-slate-400" />
                     ) : (
-                      <Plus size={14} className="text-slate-400" />
+                      <ChevronRight size={14} className="text-slate-400" />
                     )}
                   </button>
-                  {sidebarPanels[key] ? (
-                    <div className="border-t border-slate-200 px-3 pb-3 pt-2">
-                      {key === "conversationInfo" ? (
-                        <div className="space-y-2 text-xs text-slate-700">
-                          <div className="flex items-start gap-2">
-                            <MessageCircle size={12} className="mt-0.5 text-slate-500" />
-                            <span>{(activeSession?.channel || "web").toUpperCase()}</span>
-                          </div>
-                          <div className="flex items-start gap-2">
-                            <AtSign size={12} className="mt-0.5 text-slate-500" />
-                            <span className="break-all">{activeSession?.id || "-"}</span>
-                          </div>
-                          <div className="flex items-start gap-2">
-                            <Phone size={12} className="mt-0.5 text-slate-500" />
-                            <span>{activeSession?.phone || sessionContact?.phone || "-"}</span>
-                          </div>
-                        </div>
-                      ) : null}
-                      {key === "contactAttrs" ? (
-                        <div className="space-y-2">
-                          {sessionContact ? (
-                            <>
-                              <div className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-2 py-1.5">
-                                <p className="truncate text-xs text-slate-700">
-                                  {sessionContact.displayName || "Unnamed"}
-                                </p>
-                                <button
-                                  className="text-slate-400 hover:text-red-500"
-                                  onClick={() => patchSessionContact(null)}
-                                  title="Unlink contact"
-                                >
-                                  <X size={12} />
-                                </button>
-                              </div>
-                              <div className="space-y-1 text-xs text-slate-400">
-                                <p className="flex items-center gap-1.5">
-                                  <Mail size={11} />
-                                  {sessionContact.email || "Unavailable"}
-                                </p>
-                                <p className="flex items-center gap-1.5">
-                                  <Building2 size={11} />
-                                  {sessionContact.company || "Unavailable"}
-                                </p>
-                                <p className="flex items-center gap-1.5">
-                                  <MapPin size={11} />
-                                  {sessionContact.location || "Unavailable"}
-                                </p>
-                              </div>
-                            </>
-                          ) : (
-                            <select
-                              className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-500"
-                              value=""
-                              onChange={(e) =>
-                                e.target.value && patchSessionContact(e.target.value)
-                              }
-                              disabled={!activeId}
-                            >
-                              <option value="">Link a contact…</option>
-                              {(contacts || []).map((c) => (
-                                <option key={c.id} value={c.id}>
-                                  {c.displayName || c.email || c.id.slice(0, 8)}
-                                </option>
-                              ))}
-                            </select>
-                          )}
-                        </div>
-                      ) : null}
-                      {key === "previousConversations" ? (
-                        (() => {
-                          const items = (previousConversations || []).filter(
-                            (conv) => conv.id !== activeId,
-                          );
-                          if (items.length === 0) {
-                            return (
-                              <p className="text-xs text-slate-500">
-                                No previous conversations found.
-                              </p>
-                            );
+                  {sidebarPanels.actions ? (
+                    <div className="space-y-2 border-t border-slate-200 px-3 pb-3 pt-2">
+                      <div>
+                        <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
+                          Assignee
+                        </label>
+                        <RichCombobox
+                          value={
+                            activeSession?.assigneeAgentId || botAssigneeId
                           }
-                          return (
-                            <div className="space-y-1.5">
-                              {items.slice(0, 8).map((conv) => (
-                                <button
-                                  key={`prev-conv-${conv.id}`}
-                                  type="button"
-                                  onClick={() => setActiveId(conv.id)}
-                                  className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-left hover:bg-slate-50"
-                                >
-                                  <p className="truncate text-xs font-medium text-slate-800">
-                                    {conv.contactName ||
-                                      conv.contactEmail ||
-                                      conv.contactPhone ||
-                                      `Conversation ${String(conv.id || "").slice(0, 6)}`}
-                                  </p>
-                                  <p className="truncate text-[10px] text-slate-500">
-                                    {conv.lastMessage?.text || "No messages"}
-                                  </p>
-                                  <p className="mt-0.5 text-[10px] uppercase tracking-wide text-slate-400">
-                                    {(conv.status || "open").toUpperCase()} •{" "}
-                                    {formatTime(conv.updatedAt)}
-                                  </p>
-                                </button>
-                              ))}
-                            </div>
-                          );
-                        })()
-                      ) : null}
-                      {key === "conversationNotes" ? (
-                        <div className="space-y-2">
-                          <Textarea
-                            value={noteText}
-                            onChange={(e) => setNoteText(e.target.value)}
-                            placeholder="Write a note"
-                            rows={3}
+                          options={assigneeOptions}
+                          onSelect={(agentId) =>
+                            patchActiveSession("assignee", { agentId })
+                          }
+                          placeholder="Select assignee..."
+                          searchPlaceholder="Search assignee..."
+                          disabled={!activeId}
+                          renderOptionIcon={(option) => (
+                            <AvatarOption
+                              label={option.label}
+                              avatarUrl={option.avatarUrl}
+                              fallback={option.fallback}
+                            />
+                          )}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
+                          Team
+                        </label>
+                        <RichCombobox
+                          value={activeSession?.teamId || ""}
+                          options={teamOptions}
+                          onSelect={(teamId) =>
+                            patchActiveSession("team", {
+                              teamId: teamId || null,
+                            })
+                          }
+                          placeholder="Select team..."
+                          searchPlaceholder="Search team..."
+                          disabled={!activeId}
+                          renderOptionIcon={(option) => (
+                            <AvatarOption
+                              label={option.label}
+                              fallback={option.fallback}
+                            />
+                          )}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
+                            Status
+                          </label>
+                          <RichCombobox
+                            value={activeSession?.status || "open"}
+                            options={statusOptions}
+                            onSelect={(status) => patchSessionMeta({ status })}
+                            placeholder="Select status..."
+                            searchPlaceholder="Search status..."
                             disabled={!activeId}
-                            className="rounded-md border-slate-200 bg-white text-xs text-slate-800"
                           />
-                          <Button
-                            className="h-7 w-full rounded-md bg-slate-100 text-xs text-slate-800 hover:bg-slate-200"
-                            onClick={saveNote}
-                            disabled={!activeId || !noteText.trim()}
-                          >
-                            Save note
-                          </Button>
-                          <div className="space-y-1.5">
-                            {notes.map((note) => (
-                              <div
-                                key={note.id}
-                                className="rounded-md border border-slate-200 bg-white p-2"
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
+                            Priority
+                          </label>
+                          <RichCombobox
+                            value={activeSession?.priority || "normal"}
+                            options={priorityOptions}
+                            onSelect={(priority) =>
+                              patchSessionMeta({ priority })
+                            }
+                            placeholder="Select priority..."
+                            searchPlaceholder="Search priority..."
+                            disabled={!activeId}
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">
+                          Conversation Tags
+                        </p>
+                        <div className="mb-1.5 flex flex-wrap gap-1">
+                          {(sessionTags || []).map((tag) => (
+                            <Badge
+                              key={tag.id}
+                              variant="outline"
+                              className="gap-1 text-[10px]"
+                              style={{
+                                borderColor: tag.color || "#cbd5e1",
+                                color: tag.color || "#334155",
+                                backgroundColor: `${tag.color || "#cbd5e1"}15`,
+                              }}
+                            >
+                              <Tag size={10} />
+                              {tag.name}
+                              <button
+                                onClick={() => removeSessionTag(tag.id)}
+                                className="ml-0.5 hover:opacity-70"
                               >
-                                <p className="text-xs text-slate-700">{note.text}</p>
-                                <p className="mt-1 text-[10px] text-slate-500">
-                                  {formatTime(note.createdAt)}
-                                </p>
-                              </div>
-                            ))}
-                            {notes.length === 0 ? (
-                              <p className="text-xs text-slate-500">No notes yet.</p>
-                            ) : null}
-                          </div>
+                                <X size={10} />
+                              </button>
+                            </Badge>
+                          ))}
                         </div>
-                      ) : null}
-                      {key === "participants" ? (
-                        <div className="space-y-1.5 text-xs text-slate-700">
-                          <p>Assignee: {assigneeName}</p>
-                          <p>
-                            Team:{" "}
-                            {teams.find((item) => item.id === activeSession?.teamId)
-                              ?.name || "None"}
-                          </p>
-                          <p>Bot: {botName}</p>
-                        </div>
-                      ) : null}
+                        <RichCombobox
+                          value=""
+                          options={addableTagOptions}
+                          onSelect={(tagId) => tagId && addSessionTag(tagId)}
+                          placeholder="+ Add tag"
+                          searchPlaceholder="Search tags..."
+                          disabled={!activeId}
+                          renderOptionIcon={(option) => (
+                            <span
+                              className="inline-block h-2.5 w-2.5 rounded-full"
+                              style={{ backgroundColor: option.color }}
+                            />
+                          )}
+                        />
+                      </div>
                     </div>
                   ) : null}
                 </section>
-              ))}
+
+                {[
+                  ["conversationInfo", "Conversation Information"],
+                  ["contactAttrs", "Contact Attributes"],
+                  ["previousConversations", "Previous Conversations"],
+                  ["conversationNotes", "Conversation Notes"],
+                  ["participants", "Conversation Participants"],
+                ].map(([key, title]) => (
+                  <section
+                    key={key}
+                    className="rounded-lg border border-slate-200 bg-white"
+                  >
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between px-3 py-2.5 text-left"
+                      onClick={() => toggleSidebarPanel(key)}
+                    >
+                      <span className="text-xs font-semibold text-slate-900">
+                        {title}
+                      </span>
+                      {sidebarPanels[key] ? (
+                        <ChevronDown size={14} className="text-slate-400" />
+                      ) : (
+                        <Plus size={14} className="text-slate-400" />
+                      )}
+                    </button>
+                    {sidebarPanels[key] ? (
+                      <div className="border-t border-slate-200 px-3 pb-3 pt-2">
+                        {key === "conversationInfo" ? (
+                          <div className="space-y-2 text-xs text-slate-700">
+                            <div className="flex items-start gap-2">
+                              <MessageCircle
+                                size={12}
+                                className="mt-0.5 text-slate-500"
+                              />
+                              <span>
+                                {(
+                                  activeSession?.channel || "web"
+                                ).toUpperCase()}
+                              </span>
+                            </div>
+                            <div className="flex items-start gap-2">
+                              <AtSign
+                                size={12}
+                                className="mt-0.5 text-slate-500"
+                              />
+                              <span className="break-all">
+                                {activeSession?.id || "-"}
+                              </span>
+                            </div>
+                            <div className="flex items-start gap-2">
+                              <Phone
+                                size={12}
+                                className="mt-0.5 text-slate-500"
+                              />
+                              <span>
+                                {activeSession?.phone ||
+                                  sessionContact?.phone ||
+                                  "-"}
+                              </span>
+                            </div>
+                          </div>
+                        ) : null}
+                        {key === "contactAttrs" ? (
+                          <div className="space-y-2">
+                            {sessionContact ? (
+                              <>
+                                <div className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-2 py-1.5">
+                                  <p className="truncate text-xs text-slate-700">
+                                    {sessionContact.displayName || "Unnamed"}
+                                  </p>
+                                  <button
+                                    className="text-slate-400 hover:text-red-500"
+                                    onClick={() => patchSessionContact(null)}
+                                    title="Unlink contact"
+                                  >
+                                    <X size={12} />
+                                  </button>
+                                </div>
+                                <div className="space-y-1 text-xs text-slate-400">
+                                  <p className="flex items-center gap-1.5">
+                                    <Mail size={11} />
+                                    {sessionContact.email || "Unavailable"}
+                                  </p>
+                                  <p className="flex items-center gap-1.5">
+                                    <Building2 size={11} />
+                                    {sessionContact.company || "Unavailable"}
+                                  </p>
+                                  <p className="flex items-center gap-1.5">
+                                    <MapPin size={11} />
+                                    {sessionContact.location || "Unavailable"}
+                                  </p>
+                                </div>
+                              </>
+                            ) : (
+                              <select
+                                className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-500"
+                                value=""
+                                onChange={(e) =>
+                                  e.target.value &&
+                                  patchSessionContact(e.target.value)
+                                }
+                                disabled={!activeId}
+                              >
+                                <option value="">Link a contact…</option>
+                                {(contacts || []).map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.displayName ||
+                                      c.email ||
+                                      c.id.slice(0, 8)}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                          </div>
+                        ) : null}
+                        {key === "previousConversations"
+                          ? (() => {
+                              const items = (
+                                previousConversations || []
+                              ).filter((conv) => conv.id !== activeId);
+                              if (items.length === 0) {
+                                return (
+                                  <p className="text-xs text-slate-500">
+                                    No previous conversations found.
+                                  </p>
+                                );
+                              }
+                              return (
+                                <div className="space-y-1.5">
+                                  {items.slice(0, 8).map((conv) => (
+                                    <button
+                                      key={`prev-conv-${conv.id}`}
+                                      type="button"
+                                      onClick={() => setActiveId(conv.id)}
+                                      className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-left hover:bg-slate-50"
+                                    >
+                                      <p className="truncate text-xs font-medium text-slate-800">
+                                        {conv.contactName ||
+                                          conv.contactEmail ||
+                                          conv.contactPhone ||
+                                          `Conversation ${String(conv.id || "").slice(0, 6)}`}
+                                      </p>
+                                      <p className="truncate text-[10px] text-slate-500">
+                                        {conv.lastMessage?.text ||
+                                          "No messages"}
+                                      </p>
+                                      <p className="mt-0.5 text-[10px] uppercase tracking-wide text-slate-400">
+                                        {(conv.status || "open").toUpperCase()}{" "}
+                                        • {formatTime(conv.updatedAt)}
+                                      </p>
+                                    </button>
+                                  ))}
+                                </div>
+                              );
+                            })()
+                          : null}
+                        {key === "conversationNotes" ? (
+                          <div className="space-y-2">
+                            <Textarea
+                              value={noteText}
+                              onChange={(e) => setNoteText(e.target.value)}
+                              placeholder="Write a note"
+                              rows={3}
+                              disabled={!activeId}
+                              className="rounded-md border-slate-200 bg-white text-xs text-slate-800"
+                            />
+                            <Button
+                              className="h-7 w-full rounded-md bg-slate-100 text-xs text-slate-800 hover:bg-slate-200"
+                              onClick={saveNote}
+                              disabled={!activeId || !noteText.trim()}
+                            >
+                              Save note
+                            </Button>
+                            <div className="space-y-1.5">
+                              {notes.map((note) => (
+                                <div
+                                  key={note.id}
+                                  className="rounded-md border border-slate-200 bg-white p-2"
+                                >
+                                  <p className="text-xs text-slate-700">
+                                    {note.text}
+                                  </p>
+                                  <p className="mt-1 text-[10px] text-slate-500">
+                                    {formatTime(note.createdAt)}
+                                  </p>
+                                </div>
+                              ))}
+                              {notes.length === 0 ? (
+                                <p className="text-xs text-slate-500">
+                                  No notes yet.
+                                </p>
+                              ) : null}
+                            </div>
+                          </div>
+                        ) : null}
+                        {key === "participants" ? (
+                          <div className="space-y-1.5 text-xs text-slate-700">
+                            <p>Assignee: {assigneeName}</p>
+                            <p>
+                              Team:{" "}
+                              {teams.find(
+                                (item) => item.id === activeSession?.teamId,
+                              )?.name || "None"}
+                            </p>
+                            <p>Bot: {botName}</p>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </section>
+                ))}
+              </div>
             </div>
-          </div>
-        </aside>
-      }
+          </aside>
+        }
       />
       {lightbox?.url ? (
         <div
