@@ -1231,6 +1231,269 @@ async fn whatsapp_channel_and_recipient_for_session(
     Ok((parse_channel_row(channel_row), to_phone))
 }
 
+fn whatsapp_blocklist_contains(response: &Value, phone_or_wa_id: &str) -> bool {
+    let Some(target) = normalize_whatsapp_phone(phone_or_wa_id) else {
+        return false;
+    };
+    let mut candidates: Vec<Value> = Vec::new();
+
+    if let Some(data_rows) = response.get("data").and_then(Value::as_array) {
+        for row in data_rows {
+            if row.get("wa_id").is_some() || row.get("input").is_some() {
+                candidates.push(row.clone());
+            }
+            if let Some(items) = row.get("block_users").and_then(Value::as_array) {
+                candidates.extend(items.iter().cloned());
+            }
+        }
+    }
+
+    if let Some(items) = response.get("block_users").and_then(Value::as_array) {
+        candidates.extend(items.iter().cloned());
+    }
+    if let Some(items) = response
+        .get("block_users")
+        .and_then(Value::as_object)
+        .and_then(|obj| obj.get("added_users"))
+        .and_then(Value::as_array)
+    {
+        candidates.extend(items.iter().cloned());
+    }
+
+    candidates.iter().any(|entry| {
+        let input = entry
+            .get("input")
+            .and_then(Value::as_str)
+            .and_then(normalize_whatsapp_phone)
+            .unwrap_or_default();
+        let wa_id = entry
+            .get("wa_id")
+            .and_then(Value::as_str)
+            .and_then(normalize_whatsapp_phone)
+            .unwrap_or_default();
+        input == target || wa_id == target
+    })
+}
+
+async fn whatsapp_fetch_block_status_for_phone(
+    state: &Arc<AppState>,
+    session_id: &str,
+    to_phone: &str,
+) -> Result<bool, String> {
+    let raw = whatsapp_block_users_request_for_session(
+        state,
+        session_id,
+        reqwest::Method::GET,
+        Vec::new(),
+    )
+    .await?;
+    Ok(whatsapp_blocklist_contains(&raw, to_phone))
+}
+
+async fn whatsapp_block_users_request_for_session(
+    state: &Arc<AppState>,
+    session_id: &str,
+    method: reqwest::Method,
+    users: Vec<String>,
+) -> Result<Value, String> {
+    let (channel, _) = whatsapp_channel_and_recipient_for_session(state, session_id).await?;
+    let access_token = config_text(&channel.config, "accessToken");
+    let phone_number_id = config_text(&channel.config, "phoneNumberId");
+    if access_token.is_empty() || phone_number_id.is_empty() {
+        return Err("missing whatsapp accessToken or phoneNumberId".to_string());
+    }
+    let url = format!("https://graph.facebook.com/v21.0/{phone_number_id}/block_users");
+    let request = state.ai_client.request(method, url).bearer_auth(&access_token);
+    let response = if users.is_empty() {
+        request.send().await.map_err(|e| e.to_string())?
+    } else {
+        let payload = json!({
+            "messaging_product": "whatsapp",
+            "block_users": users.into_iter().map(|user| json!({ "user": user })).collect::<Vec<_>>()
+        });
+        request.json(&payload).send().await.map_err(|e| e.to_string())?
+    };
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    let parsed = serde_json::from_str::<Value>(&body).unwrap_or_else(|_| json!({ "raw": body }));
+    if status.is_success() {
+        return Ok(parsed);
+    }
+    Err(format!("{} {}: {}", status.as_u16(), status, body))
+}
+
+async fn whatsapp_block_status(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let session_tenant = tenant_for_session(&state, &session_id).await.unwrap_or_default();
+    if session_tenant != tenant_id {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "session not in active workspace" })),
+        )
+            .into_response();
+    }
+    let (_, to_phone) = match whatsapp_channel_and_recipient_for_session(&state, &session_id).await
+    {
+        Ok(v) => v,
+        Err(err) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": err }))).into_response(),
+    };
+    let raw = match whatsapp_block_users_request_for_session(
+        &state,
+        &session_id,
+        reqwest::Method::GET,
+        Vec::new(),
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": format!("whatsapp block status error {err}") })),
+            )
+                .into_response()
+        }
+    };
+    let blocked = whatsapp_blocklist_contains(&raw, &to_phone);
+    (StatusCode::OK, Json(json!({ "blocked": blocked, "raw": raw }))).into_response()
+}
+
+async fn whatsapp_block_user(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(agent) => agent,
+        Err(err) => return err.into_response(),
+    };
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let session_tenant = tenant_for_session(&state, &session_id).await.unwrap_or_default();
+    if session_tenant != tenant_id {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "session not in active workspace" })),
+        )
+            .into_response();
+    }
+    let (_, to_phone) = match whatsapp_channel_and_recipient_for_session(&state, &session_id).await
+    {
+        Ok(v) => v,
+        Err(err) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": err }))).into_response(),
+    };
+    let raw = match whatsapp_block_users_request_for_session(
+        &state,
+        &session_id,
+        reqwest::Method::POST,
+        vec![to_phone.clone()],
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": format!("whatsapp block error {err}") })),
+            )
+                .into_response()
+        }
+    };
+    let blocked = whatsapp_fetch_block_status_for_phone(&state, &session_id, &to_phone)
+        .await
+        .unwrap_or(true);
+    let _ = add_message(
+        state.clone(),
+        &session_id,
+        "system",
+        &format!("{} blocked this WhatsApp contact", agent.name),
+        None,
+        None,
+        None,
+    )
+    .await;
+    (
+        StatusCode::OK,
+        Json(json!({ "ok": true, "blocked": blocked, "raw": raw })),
+    )
+        .into_response()
+}
+
+async fn whatsapp_unblock_user(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(agent) => agent,
+        Err(err) => return err.into_response(),
+    };
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let session_tenant = tenant_for_session(&state, &session_id).await.unwrap_or_default();
+    if session_tenant != tenant_id {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "session not in active workspace" })),
+        )
+            .into_response();
+    }
+    let (_, to_phone) = match whatsapp_channel_and_recipient_for_session(&state, &session_id).await
+    {
+        Ok(v) => v,
+        Err(err) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": err }))).into_response(),
+    };
+    let raw = match whatsapp_block_users_request_for_session(
+        &state,
+        &session_id,
+        reqwest::Method::DELETE,
+        vec![to_phone.clone()],
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": format!("whatsapp unblock error {err}") })),
+            )
+                .into_response()
+        }
+    };
+    let blocked = whatsapp_fetch_block_status_for_phone(&state, &session_id, &to_phone)
+        .await
+        .unwrap_or(false);
+    let _ = add_message(
+        state.clone(),
+        &session_id,
+        "system",
+        &format!("{} unblocked this WhatsApp contact", agent.name),
+        None,
+        None,
+        None,
+    )
+    .await;
+    (
+        StatusCode::OK,
+        Json(json!({ "ok": true, "blocked": blocked, "raw": raw })),
+    )
+        .into_response()
+}
+
 async fn persist_session(pool: &PgPool, session: &Session) {
     let _ = sqlx::query(
         r#"
@@ -2566,11 +2829,37 @@ async fn add_message(
         let session_id = session_id.to_string();
         let text = message.text.clone();
         let widget = message.widget.clone();
+        let message_id = message.id.clone();
         tokio::spawn(async move {
             if let Err(err) =
-                send_whatsapp_message_for_session(state_clone, session_id, text, widget).await
+                send_whatsapp_message_for_session(state_clone.clone(), session_id.clone(), text, widget).await
             {
                 eprintln!("[whatsapp] outbound delivery failed: {err}");
+                let normalized = err
+                    .replace('\n', " ")
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let detail = if normalized.len() > 220 {
+                    format!("{}...", &normalized[..220])
+                } else {
+                    normalized
+                };
+                let tenant_id = tenant_for_session(&state_clone, &session_id)
+                    .await
+                    .unwrap_or_default();
+                let agents = agent_clients_for_tenant(&state_clone, &tenant_id).await;
+                emit_to_clients(
+                    &state_clone,
+                    &agents,
+                    "whatsapp:send-error",
+                    json!({
+                        "sessionId": session_id,
+                        "messageId": message_id,
+                        "error": detail
+                    }),
+                )
+                .await;
             }
         });
     }
@@ -11509,6 +11798,18 @@ pub async fn run() {
         .route(
             "/api/session/{session_id}/whatsapp/template",
             post(send_whatsapp_template),
+        )
+        .route(
+            "/api/session/{session_id}/whatsapp/block-status",
+            get(whatsapp_block_status),
+        )
+        .route(
+            "/api/session/{session_id}/whatsapp/block",
+            post(whatsapp_block_user),
+        )
+        .route(
+            "/api/session/{session_id}/whatsapp/unblock",
+            post(whatsapp_unblock_user),
         )
         .route("/api/session/{session_id}/csat", post(submit_csat))
         .route(

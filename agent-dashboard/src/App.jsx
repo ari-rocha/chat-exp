@@ -345,6 +345,7 @@ export default function App() {
   const [newConvAttrValue, setNewConvAttrValue] = useState("");
   const [notifications, setNotifications] = useState([]);
   const [notificationsUnreadCount, setNotificationsUnreadCount] = useState(0);
+  const [whatsappSendErrors, setWhatsappSendErrors] = useState({});
 
   const [flows, setFlows] = useState([]);
   const [activeFlowId, setActiveFlowId] = useState("");
@@ -708,6 +709,14 @@ export default function App() {
             setNotificationsUnreadCount(unreadCount);
           }
         }
+
+        if (envelope?.event === "whatsapp:send-error") {
+          const payload = envelope.data ?? {};
+          const sessionId = String(payload.sessionId || "");
+          const error = String(payload.error || "Failed to deliver WhatsApp message");
+          if (!sessionId) return;
+          setWhatsappSendErrors((prev) => ({ ...prev, [sessionId]: error }));
+        }
       });
 
       ws.addEventListener("close", () => {
@@ -1031,6 +1040,40 @@ export default function App() {
     });
   };
 
+  const getWhatsappBlockStatus = useCallback(
+    async (sessionId) => {
+      if (!token || !sessionId) return { blocked: false };
+      const payload = await apiFetch(
+        `/api/session/${sessionId}/whatsapp/block-status`,
+        token,
+      );
+      return { blocked: Boolean(payload?.blocked) };
+    },
+    [token],
+  );
+
+  const blockWhatsappContact = useCallback(
+    async (sessionId) => {
+      if (!token || !sessionId) return { blocked: false };
+      const payload = await apiFetch(`/api/session/${sessionId}/whatsapp/block`, token, {
+        method: "POST",
+      });
+      return { blocked: Boolean(payload?.blocked) };
+    },
+    [token],
+  );
+
+  const unblockWhatsappContact = useCallback(
+    async (sessionId) => {
+      if (!token || !sessionId) return { blocked: false };
+      const payload = await apiFetch(`/api/session/${sessionId}/whatsapp/unblock`, token, {
+        method: "POST",
+      });
+      return { blocked: Boolean(payload?.blocked) };
+    },
+    [token],
+  );
+
   const saveNote = async () => {
     if (!token || !activeId || !noteText.trim()) return;
     const payload = await apiFetch(`/api/session/${activeId}/notes`, token, {
@@ -1087,6 +1130,16 @@ export default function App() {
       await markNotificationRead(notification.id);
     }
   };
+
+  const clearWhatsappSendError = useCallback((sessionId) => {
+    if (!sessionId) return;
+    setWhatsappSendErrors((prev) => {
+      if (!prev[sessionId]) return prev;
+      const next = { ...prev };
+      delete next[sessionId];
+      return next;
+    });
+  }, []);
 
   const updateAgentStatus = async (status) => {
     if (!token) return;
@@ -1671,6 +1724,9 @@ export default function App() {
           sendAttachment={sendAttachment}
           listWhatsappTemplates={listWhatsappTemplates}
           sendWhatsappTemplate={sendWhatsappTemplate}
+          getWhatsappBlockStatus={getWhatsappBlockStatus}
+          blockWhatsappContact={blockWhatsappContact}
+          unblockWhatsappContact={unblockWhatsappContact}
           messageAudience={messageAudience}
           setMessageAudience={setMessageAudience}
           cannedPanelOpen={cannedPanelOpen}
@@ -1720,6 +1776,8 @@ export default function App() {
           tenantSettings={tenantSettings}
           onOpenSettings={() => setSettingsOpen(true)}
           unreadNotificationsCount={notificationsUnreadCount}
+          whatsappSendError={activeId ? (whatsappSendErrors[activeId] ?? "") : ""}
+          clearWhatsappSendError={() => clearWhatsappSendError(activeId)}
         />
 
         <CustomizationView

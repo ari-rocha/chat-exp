@@ -325,8 +325,13 @@ export default function ConversationsView({
   tenantSettings,
   onOpenSettings,
   unreadNotificationsCount = 0,
+  whatsappSendError = "",
+  clearWhatsappSendError,
   listWhatsappTemplates,
   sendWhatsappTemplate,
+  getWhatsappBlockStatus,
+  blockWhatsappContact,
+  unblockWhatsappContact,
 }) {
   const [lightbox, setLightbox] = useStateReact(null);
   const [emojiOpen, setEmojiOpen] = useStateReact(false);
@@ -341,6 +346,8 @@ export default function ConversationsView({
   const [waTemplateParams, setWaTemplateParams] = useStateReact([]);
   const [statusMenuOpen, setStatusMenuOpen] = useStateReact(false);
   const [moreMenuOpen, setMoreMenuOpen] = useStateReact(false);
+  const [waBlocked, setWaBlocked] = useStateReact(false);
+  const [waBlockLoading, setWaBlockLoading] = useStateReact(false);
   const [mentionOpen, setMentionOpen] = useStateReact(false);
   const [mentionQuery, setMentionQuery] = useStateReact("");
   const [mentionStart, setMentionStart] = useStateReact(-1);
@@ -483,6 +490,7 @@ export default function ConversationsView({
     activeStatus === "closed"
       ? { value: "open", label: "Reopen" }
       : { value: "resolved", label: "Resolve" };
+  const isWhatsappConversation = activeSession?.channel === "whatsapp";
   const mentionHandleForAgent = (item) => {
     const email = String(item?.email || "").trim().toLowerCase();
     const emailLocal = email.includes("@") ? email.split("@")[0] : "";
@@ -533,6 +541,7 @@ export default function ConversationsView({
       text: text.trim(),
       internal: messageAudience === "team",
     });
+    clearWhatsappSendError?.();
     setText("");
     setMentionOpen(false);
     setMentionQuery("");
@@ -634,6 +643,60 @@ export default function ConversationsView({
   const handleComposerSubmit = async (e) => {
     e.preventDefault();
     await submitComposerPayload();
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!activeId || !isWhatsappConversation || !getWhatsappBlockStatus) {
+      setWaBlocked(false);
+      return;
+    }
+    setWaBlockLoading(true);
+    getWhatsappBlockStatus(activeId)
+      .then((payload) => {
+        if (cancelled) return;
+        setWaBlocked(Boolean(payload?.blocked));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setWaBlocked(false);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setWaBlockLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeId, isWhatsappConversation, getWhatsappBlockStatus]);
+
+  const handleToggleWhatsappBlock = async () => {
+    if (!activeId || !isWhatsappConversation || waBlockLoading) return;
+    setWaBlockLoading(true);
+    try {
+      if (waBlocked) {
+        const payload = await unblockWhatsappContact?.(activeId);
+        if (typeof payload?.blocked === "boolean") {
+          setWaBlocked(Boolean(payload.blocked));
+        } else {
+          const status = await getWhatsappBlockStatus?.(activeId);
+          setWaBlocked(Boolean(status?.blocked));
+        }
+      } else {
+        const payload = await blockWhatsappContact?.(activeId);
+        if (typeof payload?.blocked === "boolean") {
+          setWaBlocked(Boolean(payload.blocked));
+        } else {
+          const status = await getWhatsappBlockStatus?.(activeId);
+          setWaBlocked(Boolean(status?.blocked));
+        }
+      }
+      setMoreMenuOpen(false);
+    } catch (error) {
+      console.error("failed to update whatsapp block status", error);
+    } finally {
+      setWaBlockLoading(false);
+    }
   };
 
   const updateMentionContext = (nextText, cursorIndex, audience) => {
@@ -866,8 +929,23 @@ export default function ConversationsView({
                     type="button"
                     className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
                     onClick={() => {
-                      setMoreMenuOpen((prev) => !prev);
+                      const nextOpen = !moreMenuOpen;
+                      setMoreMenuOpen(nextOpen);
                       setStatusMenuOpen(false);
+                      if (
+                        nextOpen &&
+                        isWhatsappConversation &&
+                        activeId &&
+                        getWhatsappBlockStatus
+                      ) {
+                        setWaBlockLoading(true);
+                        getWhatsappBlockStatus(activeId)
+                          .then((payload) => {
+                            setWaBlocked(Boolean(payload?.blocked));
+                          })
+                          .catch(() => {})
+                          .finally(() => setWaBlockLoading(false));
+                      }
                     }}
                     aria-label="More conversation options"
                   >
@@ -878,14 +956,24 @@ export default function ConversationsView({
                       <p className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-400">
                         More options
                       </p>
-                      <button
-                        type="button"
-                        className="flex w-full cursor-not-allowed items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-400"
-                        disabled
-                        title="Coming soon"
-                      >
-                        Block contact (soon)
-                      </button>
+                      {isWhatsappConversation ? (
+                        <button
+                          type="button"
+                          className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs ${
+                            waBlocked
+                              ? "text-slate-700 hover:bg-slate-50"
+                              : "text-red-600 hover:bg-red-50"
+                          } ${waBlockLoading ? "cursor-not-allowed opacity-60" : ""}`}
+                          onClick={() => void handleToggleWhatsappBlock()}
+                          disabled={waBlockLoading}
+                        >
+                          {waBlockLoading
+                            ? "Updating..."
+                            : waBlocked
+                              ? "Unblock contact"
+                              : "Block contact"}
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="flex w-full cursor-not-allowed items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-400"
@@ -900,6 +988,11 @@ export default function ConversationsView({
               </div>
             ) : null}
           </header>
+          {activeSession?.channel === "whatsapp" && whatsappSendError ? (
+            <div className="mx-4 mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+              WhatsApp send error: {whatsappSendError}
+            </div>
+          ) : null}
 
           <ScrollArea className="conversation-thread h-full min-h-0 px-5 py-4">
             <div className="flex flex-col">
