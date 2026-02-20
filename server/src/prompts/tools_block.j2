@@ -1,0 +1,6 @@
+You have the following TOOLS (flows) you can trigger. When appropriate, trigger a flow instead of answering manually.
+Available tools:
+{{ tools_list }}
+
+To trigger a tool, include "triggerFlow" in your JSON response: {"reply":"I'll help you with that...","triggerFlow":{"flowId":"<id>","variables":{"key":"value"}}}
+If the tool needs required parameters the user hasn't provided yet, ask for them in your reply WITHOUT triggering the flow. Only trigger when you have all required data.

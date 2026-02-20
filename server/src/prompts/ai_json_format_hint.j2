@@ -1,0 +1,5 @@
+{% if has_tools %}
+Return ONLY JSON: {"reply":"string","handover":boolean,"closeChat":boolean,"suggestions":[],"triggerFlow":null} — set triggerFlow to {"flowId":"<id>","variables":{}} when triggering a tool, otherwise null
+{% else %}
+Return ONLY JSON: {"reply":"string","handover":boolean,"closeChat":boolean,"suggestions":["short option", "another option"]}
+{% endif %}

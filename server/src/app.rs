@@ -9,7 +9,14 @@ use std::{
     time::Duration,
 };
 
-use crate::prompting::{render_system_prompt, SystemPromptContext};
+use crate::prompting::{
+    render_ai_grounding_policy, render_ai_json_format_hint, render_ai_user_content,
+    render_extract_vars_system_prompt, render_extract_vars_user_prompt,
+    render_flow_ai_fallback_prompt, render_kb_block, render_rerank_system_prompt,
+    render_rerank_user_prompt, render_system_prompt, render_tools_block, AiUserContentContext,
+    ExtractVarsUserContext, KbBlockContext, RerankUserContext, SystemPromptContext,
+    ToolsBlockContext,
+};
 use crate::types::*;
 use axum::{
     body::Bytes,
@@ -3868,7 +3875,7 @@ async fn generate_ai_reply(
 
     let mut tools_block = String::new();
     if !tool_flows.is_empty() {
-        tools_block.push_str("\n\nYou have the following TOOLS (flows) you can trigger. When appropriate, trigger a flow instead of answering manually.\nAvailable tools:\n");
+        let mut tools_list = String::new();
         for row in &tool_flows {
             let flow_id: String = row.get("id");
             let flow_name: String = row.get("name");
@@ -3877,12 +3884,12 @@ async fn generate_ai_reply(
             let input_vars: Vec<FlowInputVariable> =
                 serde_json::from_str(&input_vars_raw).unwrap_or_default();
 
-            tools_block.push_str(&format!(
+            tools_list.push_str(&format!(
                 "- Tool \"{}\" (flowId: \"{}\")",
                 flow_name, flow_id
             ));
             if !description.is_empty() {
-                tools_block.push_str(&format!(": {}", description));
+                tools_list.push_str(&format!(": {}", description));
             }
             if !input_vars.is_empty() {
                 let params: Vec<String> = input_vars
@@ -3897,12 +3904,13 @@ async fn generate_ai_reply(
                         format!("{}({}, {})", v.key, label, req)
                     })
                     .collect();
-                tools_block.push_str(&format!(" | parameters: [{}]", params.join(", ")));
+                tools_list.push_str(&format!(" | parameters: [{}]", params.join(", ")));
             }
-            tools_block.push('\n');
+            tools_list.push('\n');
         }
-        tools_block.push_str("\nTo trigger a tool, include \"triggerFlow\" in your JSON response: {\"reply\":\"I'll help you with that...\",\"triggerFlow\":{\"flowId\":\"<id>\",\"variables\":{\"key\":\"value\"}}}\n");
-        tools_block.push_str("If the tool needs required parameters the user hasn't provided yet, ask for them in your reply WITHOUT triggering the flow. Only trigger when you have all required data.\n");
+        tools_block = render_tools_block(&ToolsBlockContext {
+            tools_list: &tools_list,
+        });
     }
 
     let system_instruction = render_system_prompt(&SystemPromptContext {
@@ -3912,6 +3920,8 @@ async fn generate_ai_reply(
         flow_prompt: prompt.trim(),
         tools_block: &tools_block,
     });
+    let kb_context = kb_context_for_ai(&state, &tenant_id, visitor_text.trim()).await;
+    let grounding_policy = render_ai_grounding_policy();
 
     if std::env::var("OPENAI_API_KEY")
         .unwrap_or_default()
@@ -3936,19 +3946,20 @@ async fn generate_ai_reply(
         };
     }
 
-    let json_format_hint = if tool_flows.is_empty() {
-        "Return ONLY JSON: {\"reply\":\"string\",\"handover\":boolean,\"closeChat\":boolean,\"suggestions\":[\"short option\", \"another option\"]}"
-    } else {
-        "Return ONLY JSON: {\"reply\":\"string\",\"handover\":boolean,\"closeChat\":boolean,\"suggestions\":[],\"triggerFlow\":null} — set triggerFlow to {\"flowId\":\"<id>\",\"variables\":{}} when triggering a tool, otherwise null"
-    };
+    let json_format_hint = render_ai_json_format_hint(!tool_flows.is_empty());
 
-    let user_content = format!(
-        "{}\nConversation transcript (oldest to newest):\n{}\n\nLatest visitor message:\n{}\n\n{}",
-        contact_block,
-        transcript,
-        visitor_text.trim(),
-        json_format_hint
-    );
+    let kb_block = render_kb_block(&KbBlockContext {
+        kb_context: &kb_context,
+    });
+    let system_instruction = format!("{system_instruction}\n\n{grounding_policy}");
+
+    let user_content = render_ai_user_content(&AiUserContentContext {
+        contact_block: &contact_block,
+        kb_block: &kb_block,
+        transcript: &transcript,
+        visitor_text: visitor_text.trim(),
+        json_format_hint: &json_format_hint,
+    });
 
     let chat_model = std::env::var("OPENAI_CHAT_MODEL").unwrap_or_else(|_| "gpt-4.1".to_string());
     let raw_text = openai_chat_completion_text(
@@ -4084,31 +4095,13 @@ async fn extract_vars_with_ai(
         })
         .collect();
 
-    let prompt = format!(
-        "You are a data extraction assistant. Extract values for the requested variables from the conversation and any known contact information.\n\
-         \n\
-         {contact}\n\
-         \n\
-         Conversation transcript:\n{transcript}\n\
-         \n\
-         Latest user message: \"{visitor}\"\n\
-         \n\
-         Extract values for these variables: [{vars}]\n\
-         \n\
-         Rules:\n\
-         - Look at the ENTIRE conversation and contact info to find values, not just the latest message.\n\
-         - If the user said something like \"its my name\" or \"you already know\", use the contact info to fill in the value.\n\
-         - If a value was clearly stated or can be inferred from context, include it.\n\
-         - If a value truly cannot be determined, set it to \"\".\n\
-         - Output ONLY a JSON object mapping variable keys to string values.\n\
-         - No explanation, no markdown, just the raw JSON object.\n\
-         \n\
-         Example output: {{\"first_name\": \"John\", \"purchase_id\": \"1234\"}}",
-        contact = contact_block,
-        transcript = transcript,
-        visitor = visitor_text,
-        vars = var_list.join(", "),
-    );
+    let var_list_text = var_list.join(", ");
+    let prompt = render_extract_vars_user_prompt(&ExtractVarsUserContext {
+        contact_block: &contact_block,
+        transcript: &transcript,
+        visitor_text,
+        var_list: &var_list_text,
+    });
 
     eprintln!("[extract_vars] Extracting vars: {:?}", var_descriptions);
     eprintln!("[extract_vars] Contact: {}", contact_block);
@@ -4119,7 +4112,7 @@ async fn extract_vars_with_ai(
     let raw_text = openai_chat_completion_text(
         state,
         &extraction_model,
-        "You are a precise data extraction tool. Output ONLY valid JSON. No markdown, no explanation.",
+        &render_extract_vars_system_prompt(),
         &prompt,
     )
     .await;
@@ -6073,10 +6066,7 @@ async fn run_flow_for_visitor_message(
                 .iter()
                 .find(|node| node.node_type == "ai")
                 .and_then(|node| flow_node_data_text(node, "prompt"))
-                .unwrap_or_else(|| {
-                    "You are a helpful support agent. Use the full conversation context, including user-provided names."
-                        .to_string()
-                });
+                .unwrap_or_else(render_flow_ai_fallback_prompt);
 
             let decision =
                 generate_ai_reply(state.clone(), &session_id, &flow_prompt, &visitor_text).await;
@@ -11006,14 +10996,11 @@ async fn openai_rerank_scores(
         })
         .collect::<Vec<_>>()
         .join("\n\n");
-    let user_prompt = format!(
-        "Rank relevance for RAG.\nQuery: {}\n\nCandidates:\n{}\n\nReturn ONLY JSON object:\n{{\"scores\":[number,...]}}\nRules: one score per candidate, each 0..1, higher is better, preserve order.",
-        query, docs
-    );
+    let user_prompt = render_rerank_user_prompt(&RerankUserContext { query, docs: &docs });
     let raw = openai_chat_completion_text(
         state,
         &model,
-        "You are a retrieval reranker. Output strict JSON only.",
+        &render_rerank_system_prompt(),
         &user_prompt,
     )
     .await?;
@@ -11034,6 +11021,252 @@ async fn openai_rerank_scores(
         ));
     }
     Ok(scores)
+}
+
+async fn kb_collect_candidates(
+    state: &Arc<AppState>,
+    tenant_id: &str,
+    query_text: &str,
+    collection_ids: &[String],
+    tag_ids: &[String],
+    ann_limit: i64,
+    bm25_limit: i64,
+) -> Vec<(String, i32, String, String, String, String, String, String, f64, f64)> {
+    let mut vector_rows = vec![];
+    let query_embedding = openai_embeddings(state, &[query_text.to_string()]).await;
+    if let Ok(embeddings) = query_embedding {
+        if let Some(embedding) = embeddings.first() {
+            let vector = embedding_to_pgvector(embedding);
+            vector_rows = sqlx::query(
+                "SELECT ch.id AS chunk_id, ch.chunk_index, ch.content_text, a.id AS article_id, a.title AS article_title, a.slug AS article_slug, \
+                        c.id AS collection_id, c.name AS collection_name, (1 - (ch.embedding <=> $2::vector)) AS score \
+                 FROM kb_chunks ch \
+                 INNER JOIN kb_articles a ON a.id = ch.article_id \
+                 INNER JOIN kb_collections c ON c.id = a.collection_id \
+                 WHERE ch.tenant_id = $1 \
+                   AND a.status = 'published' \
+                   AND (cardinality($3::text[]) = 0 OR a.collection_id = ANY($3)) \
+                   AND (cardinality($4::text[]) = 0 OR EXISTS (SELECT 1 FROM kb_article_tags kat WHERE kat.article_id = a.id AND kat.tag_id = ANY($4)) OR EXISTS (SELECT 1 FROM kb_collection_tags kct WHERE kct.collection_id = c.id AND kct.tag_id = ANY($4))) \
+                   AND ch.embedding IS NOT NULL \
+                 ORDER BY ch.embedding <=> $2::vector \
+                 LIMIT $5",
+            )
+            .bind(tenant_id)
+            .bind(vector)
+            .bind(collection_ids)
+            .bind(tag_ids)
+            .bind(ann_limit)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
+        }
+    }
+
+    let bm25_rows = sqlx::query(
+        "SELECT ch.id AS chunk_id, ch.chunk_index, ch.content_text, a.id AS article_id, a.title AS article_title, a.slug AS article_slug, \
+                c.id AS collection_id, c.name AS collection_name, \
+                ts_rank_cd(ch.tsv, plainto_tsquery('english', $2)) AS score \
+         FROM kb_chunks ch \
+         INNER JOIN kb_articles a ON a.id = ch.article_id \
+         INNER JOIN kb_collections c ON c.id = a.collection_id \
+         WHERE ch.tenant_id = $1 \
+           AND a.status = 'published' \
+           AND (cardinality($3::text[]) = 0 OR a.collection_id = ANY($3)) \
+           AND (cardinality($4::text[]) = 0 OR EXISTS (SELECT 1 FROM kb_article_tags kat WHERE kat.article_id = a.id AND kat.tag_id = ANY($4)) OR EXISTS (SELECT 1 FROM kb_collection_tags kct WHERE kct.collection_id = c.id AND kct.tag_id = ANY($4))) \
+           AND ch.tsv @@ plainto_tsquery('english', $2) \
+         ORDER BY score DESC \
+         LIMIT $5",
+    )
+    .bind(tenant_id)
+    .bind(query_text)
+    .bind(collection_ids)
+    .bind(tag_ids)
+    .bind(bm25_limit)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    #[derive(Clone)]
+    struct Candidate {
+        chunk_id: String,
+        chunk_index: i32,
+        snippet: String,
+        article_id: String,
+        article_title: String,
+        article_slug: String,
+        collection_id: String,
+        collection_name: String,
+        vector_rank: Option<usize>,
+        bm25_rank: Option<usize>,
+        vector_score: f64,
+        bm25_score: f64,
+        fused_score: f64,
+        rerank_score: f64,
+    }
+
+    let mut merged = HashMap::<String, Candidate>::new();
+    for (rank, row) in vector_rows.iter().enumerate() {
+        let chunk_id: String = row.get("chunk_id");
+        let entry = merged.entry(chunk_id.clone()).or_insert(Candidate {
+            chunk_id: chunk_id.clone(),
+            chunk_index: row.get("chunk_index"),
+            snippet: row.get::<String, _>("content_text"),
+            article_id: row.get("article_id"),
+            article_title: row.get("article_title"),
+            article_slug: row.get("article_slug"),
+            collection_id: row.get("collection_id"),
+            collection_name: row.get("collection_name"),
+            vector_rank: None,
+            bm25_rank: None,
+            vector_score: 0.0,
+            bm25_score: 0.0,
+            fused_score: 0.0,
+            rerank_score: 0.0,
+        });
+        entry.vector_rank = Some(rank);
+        entry.vector_score = row.get::<f64, _>("score");
+    }
+    for (rank, row) in bm25_rows.iter().enumerate() {
+        let chunk_id: String = row.get("chunk_id");
+        let entry = merged.entry(chunk_id.clone()).or_insert(Candidate {
+            chunk_id: chunk_id.clone(),
+            chunk_index: row.get("chunk_index"),
+            snippet: row.get::<String, _>("content_text"),
+            article_id: row.get("article_id"),
+            article_title: row.get("article_title"),
+            article_slug: row.get("article_slug"),
+            collection_id: row.get("collection_id"),
+            collection_name: row.get("collection_name"),
+            vector_rank: None,
+            bm25_rank: None,
+            vector_score: 0.0,
+            bm25_score: 0.0,
+            fused_score: 0.0,
+            rerank_score: 0.0,
+        });
+        entry.bm25_rank = Some(rank);
+        entry.bm25_score = row.get::<f64, _>("score");
+    }
+
+    let rrf_k = 60.0f64;
+    let query_terms = query_text
+        .to_ascii_lowercase()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let mut candidates_all = merged.into_values().collect::<Vec<_>>();
+    for candidate in &mut candidates_all {
+        let mut fused = 0.0f64;
+        if let Some(rank) = candidate.vector_rank {
+            fused += 1.0 / (rrf_k + rank as f64 + 1.0);
+        }
+        if let Some(rank) = candidate.bm25_rank {
+            fused += 1.0 / (rrf_k + rank as f64 + 1.0);
+        }
+        candidate.fused_score = fused;
+        candidate.rerank_score = fused;
+    }
+    candidates_all.sort_by(|a, b| b.fused_score.total_cmp(&a.fused_score));
+
+    let rerank_window = candidates_all.len().min(40);
+    let mut candidates = candidates_all
+        .into_iter()
+        .take(rerank_window)
+        .collect::<Vec<_>>();
+    let rerank_inputs = candidates
+        .iter()
+        .map(|item| {
+            (
+                item.article_title.clone(),
+                item.collection_name.clone(),
+                item.snippet.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let rerank_scores = openai_rerank_scores(state, query_text, &rerank_inputs).await;
+    if let Ok(scores) = rerank_scores {
+        for (idx, candidate) in candidates.iter_mut().enumerate() {
+            candidate.rerank_score = candidate.fused_score + scores[idx];
+        }
+    } else {
+        for candidate in &mut candidates {
+            let snippet_lower = candidate.snippet.to_ascii_lowercase();
+            let chunk_terms = snippet_lower.split_whitespace().collect::<Vec<_>>();
+            let overlap = query_terms
+                .iter()
+                .filter(|term| chunk_terms.contains(&term.as_str()))
+                .count() as f64;
+            candidate.rerank_score =
+                candidate.fused_score + overlap * 0.02 + candidate.vector_score * 0.05 + candidate.bm25_score * 0.05;
+        }
+    }
+    candidates.sort_by(|a, b| b.rerank_score.total_cmp(&a.rerank_score));
+
+    candidates
+        .into_iter()
+        .map(|item| {
+            (
+                item.chunk_id,
+                item.chunk_index,
+                item.snippet,
+                item.article_id,
+                item.article_title,
+                item.article_slug,
+                item.collection_id,
+                item.collection_name,
+                item.fused_score,
+                item.rerank_score,
+            )
+        })
+        .collect()
+}
+
+async fn kb_expand_chunk_context(
+    state: &Arc<AppState>,
+    article_id: &str,
+    center_index: i32,
+    window: i32,
+) -> String {
+    let start = center_index.saturating_sub(window);
+    let end = center_index.saturating_add(window);
+    let rows = sqlx::query(
+        "SELECT content_text FROM kb_chunks \
+         WHERE article_id = $1 AND chunk_index BETWEEN $2 AND $3 \
+         ORDER BY chunk_index ASC",
+    )
+    .bind(article_id)
+    .bind(start)
+    .bind(end)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    rows.into_iter()
+        .map(|row| row.get::<String, _>("content_text"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+async fn kb_context_for_ai(state: &Arc<AppState>, tenant_id: &str, query_text: &str) -> String {
+    let candidates = kb_collect_candidates(state, tenant_id, query_text, &[], &[], 50, 50).await;
+    if candidates.is_empty() {
+        return String::new();
+    }
+    let mut lines = Vec::new();
+    for (idx, item) in candidates.into_iter().take(6).enumerate() {
+        let (_chunk_id, chunk_index, _snippet, article_id, article_title, _slug, _cid, cname, _score, rerank) =
+            item;
+        let expanded = kb_expand_chunk_context(state, &article_id, chunk_index, 1).await;
+        let clipped = expanded.chars().take(900).collect::<String>();
+        lines.push(format!(
+            "[{}] {} / {} (relevance {:.3})\n{}",
+            idx + 1,
+            cname,
+            article_title,
+            rerank,
+            clipped
+        ));
+    }
+    lines.join("\n\n")
 }
 
 async fn reindex_kb_article(state: &Arc<AppState>, article: &KbArticle) -> Result<usize, String> {
@@ -11801,181 +12034,22 @@ async fn kb_search(
     let bm25_limit = 80i64;
     let collection_ids = body.collection_ids.clone();
     let tag_ids = body.tag_ids.clone();
-
-    let query_embedding = openai_embeddings(&state, &[query_text.clone()]).await;
-    let mut vector_rows = vec![];
-    if let Ok(embeddings) = query_embedding {
-        if let Some(embedding) = embeddings.first() {
-            let vector = embedding_to_pgvector(embedding);
-            vector_rows = sqlx::query(
-                "SELECT ch.id AS chunk_id, ch.chunk_index, ch.content_text, a.id AS article_id, a.title AS article_title, a.slug AS article_slug, \
-                        c.id AS collection_id, c.name AS collection_name, (1 - (ch.embedding <=> $2::vector)) AS score \
-                 FROM kb_chunks ch \
-                 INNER JOIN kb_articles a ON a.id = ch.article_id \
-                 INNER JOIN kb_collections c ON c.id = a.collection_id \
-                 WHERE ch.tenant_id = $1 \
-                   AND a.status = 'published' \
-                   AND (cardinality($3::text[]) = 0 OR a.collection_id = ANY($3)) \
-                   AND (cardinality($4::text[]) = 0 OR EXISTS (SELECT 1 FROM kb_article_tags kat WHERE kat.article_id = a.id AND kat.tag_id = ANY($4)) OR EXISTS (SELECT 1 FROM kb_collection_tags kct WHERE kct.collection_id = c.id AND kct.tag_id = ANY($4))) \
-                   AND ch.embedding IS NOT NULL \
-                 ORDER BY ch.embedding <=> $2::vector \
-                 LIMIT $5",
-            )
-            .bind(&tenant_id)
-            .bind(vector)
-            .bind(&collection_ids)
-            .bind(&tag_ids)
-            .bind(ann_limit)
-            .fetch_all(&state.db)
-            .await
-            .unwrap_or_default();
-        }
-    }
-
-    let bm25_rows = sqlx::query(
-        "SELECT ch.id AS chunk_id, ch.chunk_index, ch.content_text, a.id AS article_id, a.title AS article_title, a.slug AS article_slug, \
-                c.id AS collection_id, c.name AS collection_name, \
-                ts_rank_cd(ch.tsv, plainto_tsquery('english', $2)) AS score \
-         FROM kb_chunks ch \
-         INNER JOIN kb_articles a ON a.id = ch.article_id \
-         INNER JOIN kb_collections c ON c.id = a.collection_id \
-         WHERE ch.tenant_id = $1 \
-           AND a.status = 'published' \
-           AND (cardinality($3::text[]) = 0 OR a.collection_id = ANY($3)) \
-           AND (cardinality($4::text[]) = 0 OR EXISTS (SELECT 1 FROM kb_article_tags kat WHERE kat.article_id = a.id AND kat.tag_id = ANY($4)) OR EXISTS (SELECT 1 FROM kb_collection_tags kct WHERE kct.collection_id = c.id AND kct.tag_id = ANY($4))) \
-           AND ch.tsv @@ plainto_tsquery('english', $2) \
-         ORDER BY score DESC \
-         LIMIT $5",
+    let candidates = kb_collect_candidates(
+        &state,
+        &tenant_id,
+        &query_text,
+        &collection_ids,
+        &tag_ids,
+        ann_limit,
+        bm25_limit,
     )
-    .bind(&tenant_id)
-    .bind(&query_text)
-    .bind(&collection_ids)
-    .bind(&tag_ids)
-    .bind(bm25_limit)
-    .fetch_all(&state.db)
     .await
-    .unwrap_or_default();
-
-    #[derive(Clone)]
-    struct Candidate {
-        chunk_id: String,
-        chunk_index: i32,
-        snippet: String,
-        article_id: String,
-        article_title: String,
-        article_slug: String,
-        collection_id: String,
-        collection_name: String,
-        vector_rank: Option<usize>,
-        bm25_rank: Option<usize>,
-        vector_score: f64,
-        bm25_score: f64,
-        fused_score: f64,
-        rerank_score: f64,
-    }
-
-    let mut merged = HashMap::<String, Candidate>::new();
-    for (rank, row) in vector_rows.iter().enumerate() {
-        let chunk_id: String = row.get("chunk_id");
-        let entry = merged.entry(chunk_id.clone()).or_insert(Candidate {
-            chunk_id: chunk_id.clone(),
-            chunk_index: row.get("chunk_index"),
-            snippet: row.get::<String, _>("content_text"),
-            article_id: row.get("article_id"),
-            article_title: row.get("article_title"),
-            article_slug: row.get("article_slug"),
-            collection_id: row.get("collection_id"),
-            collection_name: row.get("collection_name"),
-            vector_rank: None,
-            bm25_rank: None,
-            vector_score: 0.0,
-            bm25_score: 0.0,
-            fused_score: 0.0,
-            rerank_score: 0.0,
-        });
-        entry.vector_rank = Some(rank);
-        entry.vector_score = row.get::<f64, _>("score");
-    }
-    for (rank, row) in bm25_rows.iter().enumerate() {
-        let chunk_id: String = row.get("chunk_id");
-        let entry = merged.entry(chunk_id.clone()).or_insert(Candidate {
-            chunk_id: chunk_id.clone(),
-            chunk_index: row.get("chunk_index"),
-            snippet: row.get::<String, _>("content_text"),
-            article_id: row.get("article_id"),
-            article_title: row.get("article_title"),
-            article_slug: row.get("article_slug"),
-            collection_id: row.get("collection_id"),
-            collection_name: row.get("collection_name"),
-            vector_rank: None,
-            bm25_rank: None,
-            vector_score: 0.0,
-            bm25_score: 0.0,
-            fused_score: 0.0,
-            rerank_score: 0.0,
-        });
-        entry.bm25_rank = Some(rank);
-        entry.bm25_score = row.get::<f64, _>("score");
-    }
-
-    let rrf_k = 60.0f64;
-    let query_terms = query_text
-        .to_ascii_lowercase()
-        .split_whitespace()
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    let mut candidates_all = merged.into_values().collect::<Vec<_>>();
-    for candidate in &mut candidates_all {
-        let mut fused = 0.0f64;
-        if let Some(rank) = candidate.vector_rank {
-            fused += 1.0 / (rrf_k + rank as f64 + 1.0);
-        }
-        if let Some(rank) = candidate.bm25_rank {
-            fused += 1.0 / (rrf_k + rank as f64 + 1.0);
-        }
-        candidate.fused_score = fused;
-        candidate.rerank_score = fused;
-    }
-    candidates_all.sort_by(|a, b| b.fused_score.total_cmp(&a.fused_score));
-
-    let rerank_window = candidates_all.len().min(40);
-    let mut candidates = candidates_all
-        .into_iter()
-        .take(rerank_window)
-        .collect::<Vec<_>>();
-    let rerank_inputs = candidates
-        .iter()
-        .map(|item| {
-            (
-                item.article_title.clone(),
-                item.collection_name.clone(),
-                item.snippet.clone(),
-            )
-        })
-        .collect::<Vec<_>>();
-    let rerank_scores = openai_rerank_scores(&state, &query_text, &rerank_inputs).await;
-    if let Ok(scores) = rerank_scores {
-        for (idx, candidate) in candidates.iter_mut().enumerate() {
-            candidate.rerank_score = candidate.fused_score + scores[idx];
-        }
-    } else {
-        // Fallback to lexical overlap if LLM reranker fails.
-        for candidate in &mut candidates {
-            let snippet_lower = candidate.snippet.to_ascii_lowercase();
-            let chunk_terms = snippet_lower.split_whitespace().collect::<Vec<_>>();
-            let overlap = query_terms
-                .iter()
-                .filter(|term| chunk_terms.contains(&term.as_str()))
-                .count() as f64;
-            candidate.rerank_score =
-                candidate.fused_score + overlap * 0.02 + candidate.vector_score * 0.05 + candidate.bm25_score * 0.05;
-        }
-    }
-    candidates.sort_by(|a, b| b.rerank_score.total_cmp(&a.rerank_score));
-    let candidates = candidates.into_iter().take(top_k).collect::<Vec<_>>();
+    .into_iter()
+    .take(top_k)
+    .collect::<Vec<_>>();
     let article_ids = candidates
         .iter()
-        .map(|item| item.article_id.clone())
+        .map(|item| item.3.clone())
         .collect::<Vec<_>>();
 
     let tag_rows = if article_ids.is_empty() {
@@ -12014,33 +12088,36 @@ async fn kb_search(
         tags_by_article.entry(article_id).or_default().push(tag);
     }
 
-    let hits = candidates
-        .into_iter()
-        .map(|candidate| {
-            let snippet = candidate
-                .snippet
-                .chars()
-                .take(280)
-                .collect::<String>()
-                .trim()
-                .to_string();
-            KbSearchHit {
-                article_id: candidate.article_id.clone(),
-                article_title: candidate.article_title,
-                article_slug: candidate.article_slug,
-                collection_id: candidate.collection_id,
-                collection_name: candidate.collection_name,
-                chunk_id: candidate.chunk_id,
-                chunk_index: candidate.chunk_index,
-                snippet,
-                score: candidate.fused_score,
-                rerank_score: candidate.rerank_score,
-                tags: tags_by_article
-                    .remove(&candidate.article_id)
-                    .unwrap_or_default(),
-            }
-        })
-        .collect::<Vec<_>>();
+    let mut hits = Vec::new();
+    for candidate in candidates {
+        let (chunk_id, chunk_index, snippet, article_id, article_title, article_slug, collection_id, collection_name, score, rerank_score) =
+            candidate;
+        let expanded = kb_expand_chunk_context(&state, &article_id, chunk_index, 1).await;
+        let snippet_text = if expanded.trim().is_empty() {
+            snippet
+        } else {
+            expanded
+        };
+        let snippet = snippet_text
+            .chars()
+            .take(1200)
+            .collect::<String>()
+            .trim()
+            .to_string();
+        hits.push(KbSearchHit {
+            article_id: article_id.clone(),
+            article_title,
+            article_slug,
+            collection_id,
+            collection_name,
+            chunk_id,
+            chunk_index,
+            snippet,
+            score,
+            rerank_score,
+            tags: tags_by_article.remove(&article_id).unwrap_or_default(),
+        });
+    }
     (StatusCode::OK, Json(json!({ "hits": hits }))).into_response()
 }
 

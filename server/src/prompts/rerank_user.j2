@@ -1,0 +1,9 @@
+Rank relevance for RAG.
+Query: {{ query }}
+
+Candidates:
+{{ docs }}
+
+Return ONLY JSON object:
+{"scores":[number,...]}
+Rules: one score per candidate, each 0..1, higher is better, preserve order.
