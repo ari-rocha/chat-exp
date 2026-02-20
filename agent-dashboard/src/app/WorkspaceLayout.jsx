@@ -41,6 +41,14 @@ const STATUS_ITEMS = [
   { id: "closed", label: "Paused" },
 ];
 
+const STATUS_FILTER_OPTIONS = [
+  { id: "active", label: "Active", color: "bg-blue-500" },
+  { id: "all", label: "All", color: "bg-slate-500" },
+  { id: "open", label: "Agent", color: "bg-emerald-500" },
+  { id: "awaiting", label: "Awaiting agent", color: "bg-amber-500" },
+  { id: "closed", label: "Paused", color: "bg-slate-400" },
+];
+
 const AGENT_INBOX_ITEMS = [
   { id: "mine", label: "Mine", icon: MessageSquare },
   { id: "unassigned", label: "Unassigned", icon: UserMinus },
@@ -150,7 +158,9 @@ export default function WorkspaceLayout({
     agent: true,
   });
   const [agentStatusMenuOpen, setAgentStatusMenuOpen] = useState(false);
+  const [statusFilterMenuOpen, setStatusFilterMenuOpen] = useState(false);
   const agentStatusMenuRef = useRef(null);
+  const statusFilterMenuRef = useRef(null);
   const [collapsedPanels, setCollapsedPanels] = useState({
     workspaceSidebar: false,
     conversationList: false,
@@ -170,16 +180,29 @@ export default function WorkspaceLayout({
     }
   }, [isMobileLayout, activeId]);
   useEffect(() => {
-    if (!agentStatusMenuOpen || typeof window === "undefined") return undefined;
+    if (
+      (!agentStatusMenuOpen && !statusFilterMenuOpen) ||
+      typeof window === "undefined"
+    ) {
+      return undefined;
+    }
     const onClickOutside = (event) => {
-      if (!agentStatusMenuRef.current) return;
-      if (!agentStatusMenuRef.current.contains(event.target)) {
+      if (
+        agentStatusMenuRef.current &&
+        !agentStatusMenuRef.current.contains(event.target)
+      ) {
         setAgentStatusMenuOpen(false);
+      }
+      if (
+        statusFilterMenuRef.current &&
+        !statusFilterMenuRef.current.contains(event.target)
+      ) {
+        setStatusFilterMenuOpen(false);
       }
     };
     window.addEventListener("mousedown", onClickOutside);
     return () => window.removeEventListener("mousedown", onClickOutside);
-  }, [agentStatusMenuOpen]);
+  }, [agentStatusMenuOpen, statusFilterMenuOpen]);
   const showDesktopDetailsPanel = viewportWidth > 1280 && Boolean(detailsPanel);
   const showDesktopSidebar =
     showConversationPanels &&
@@ -191,6 +214,9 @@ export default function WorkspaceLayout({
   const activeAgentStatus =
     AGENT_STATUS_OPTIONS.find((item) => item.id === (agent?.status || "online")) ||
     AGENT_STATUS_OPTIONS[0];
+  const activeStatusFilter =
+    STATUS_FILTER_OPTIONS.find((item) => item.id === conversationFilter) ||
+    STATUS_FILTER_OPTIONS[0];
   const surfaceGridClass = (() => {
     if (showConversationPanels) {
       if (isMobileLayout) return "grid-cols-[1fr]";
@@ -658,17 +684,50 @@ export default function WorkspaceLayout({
                             Conversations
                           </p>
                         </div>
-                        <select
-                          className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700"
-                          value={conversationFilter}
-                          onChange={(e) => setConversationFilter(e.target.value)}
-                        >
-                          {STATUS_ITEMS.map((item) => (
-                            <option key={item.id} value={item.id}>
-                              {item.label}
-                            </option>
-                          ))}
-                        </select>
+                        <div className="relative" ref={statusFilterMenuRef}>
+                          <button
+                            type="button"
+                            onClick={() => setStatusFilterMenuOpen((prev) => !prev)}
+                            className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] text-slate-700 hover:bg-slate-50"
+                          >
+                            <span
+                              className={`h-2 w-2 rounded-full ${activeStatusFilter.color}`}
+                            />
+                            <span>{activeStatusFilter.label}</span>
+                            <ChevronDown size={12} className="text-slate-500" />
+                          </button>
+                          {statusFilterMenuOpen ? (
+                            <div className="absolute right-0 z-30 mt-1 w-44 rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
+                              {STATUS_FILTER_OPTIONS.map((option) => (
+                                <button
+                                  key={option.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setConversationFilter(option.id);
+                                    setStatusFilterMenuOpen(false);
+                                  }}
+                                  className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
+                                    option.id === activeStatusFilter.id
+                                      ? "bg-blue-50 text-blue-700"
+                                      : "text-slate-700 hover:bg-slate-50"
+                                  }`}
+                                >
+                                  <span className="flex items-center gap-2">
+                                    <span
+                                      className={`h-2.5 w-2.5 rounded-full ${option.color}`}
+                                    />
+                                    {option.label}
+                                  </span>
+                                  {option.id === activeStatusFilter.id ? (
+                                    <span className="text-[10px] font-medium">
+                                      Selected
+                                    </span>
+                                  ) : null}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
                       <div className="border-b border-slate-200 px-3 py-2">
                         {renderInboxScopeTabs()}
