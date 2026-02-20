@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  ArrowLeft,
   CircleUserRound,
   MessageSquare,
   Search,
@@ -15,6 +16,7 @@ import {
   UserRound,
   Workflow,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 
 const NAV_ITEMS = [
   { id: "conversations", icon: MessageSquare, title: "Conversations" },
@@ -103,6 +105,18 @@ export default function WorkspaceLayout({
   showConversationPanels = true,
   onOpenSettings,
 }) {
+  const [isMobileLayout, setIsMobileLayout] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth <= 1024;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onResize = () => setIsMobileLayout(window.innerWidth <= 1024);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   const statusCount = {
     active: openCount + waitingCount,
     all: sessions.length,
@@ -114,15 +128,15 @@ export default function WorkspaceLayout({
   return (
     <div className="conversation-workspace h-full w-full">
       <div
-        className={`crm-surface grid h-full min-h-0 overflow-hidden bg-white max-[980px]:grid-cols-[1fr] ${
+        className={`crm-surface grid h-full min-h-0 overflow-hidden bg-white max-[1024px]:grid-cols-[1fr] ${
           showConversationPanels
-            ? "grid-cols-[64px_250px_1fr] max-[1220px]:grid-cols-[64px_240px_1fr]"
+            ? "grid-cols-[64px_250px_1fr] max-[1280px]:grid-cols-[64px_240px_1fr]"
             : detailsPanel
-              ? "grid-cols-[64px_1fr_300px] max-[1500px]:grid-cols-[64px_1fr]"
+              ? "grid-cols-[64px_1fr_300px] max-[1280px]:grid-cols-[64px_1fr]"
               : "grid-cols-[64px_1fr]"
         }`}
       >
-        <aside className="crm-rail flex min-h-0 flex-col items-center justify-between border-r border-slate-200 py-3 max-[980px]:hidden">
+        <aside className="crm-rail flex min-h-0 flex-col items-center justify-between border-r border-slate-200 py-3 max-[1024px]:hidden">
           <div className="flex flex-col items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-md bg-red-500 text-[10px] font-bold text-white">
               Q
@@ -160,7 +174,7 @@ export default function WorkspaceLayout({
         </aside>
 
         {showConversationPanels ? (
-          <aside className="crm-sidebar-panel flex min-h-0 flex-col border-r border-slate-200 bg-[#fbfcfe] max-[1220px]:hidden">
+          <aside className="crm-sidebar-panel flex min-h-0 flex-col border-r border-slate-200 bg-[#fbfcfe] max-[1280px]:hidden">
             <div className="border-b border-slate-200 p-4">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-slate-900">Chat</h2>
@@ -247,9 +261,81 @@ export default function WorkspaceLayout({
         ) : null}
 
         {showConversationPanels ? (
+          isMobileLayout ? (
+          activeId ? (
+            <div className="flex h-full min-h-0 flex-col bg-white">
+              <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveId("")}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50"
+                  aria-label="Back to conversations"
+                >
+                  <ArrowLeft size={16} />
+                </button>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-slate-900">
+                    {getSessionTitle(
+                      sessions.find((session) => session.id === activeId) || null,
+                    )}
+                  </p>
+                  <p className="text-[11px] text-slate-500">Conversation</p>
+                </div>
+              </div>
+              <div className="min-h-0 flex-1">{mainPanel}</div>
+            </div>
+          ) : (
+            <div className="flex h-full min-h-0 flex-col bg-white">
+              <div className="border-b border-slate-200 p-3">
+                <div className="relative">
+                  <Search
+                    className="pointer-events-none absolute left-3 top-2.5 text-slate-400"
+                    size={14}
+                  />
+                  <Input
+                    value={conversationSearch}
+                    onChange={(e) => setConversationSearch(e.target.value)}
+                    placeholder="Search chat"
+                    className="h-9 rounded-lg border-slate-200 bg-white pl-8"
+                  />
+                </div>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                <div className="space-y-1.5">
+                  {filteredSessions.map((session) => (
+                    <button
+                      key={session.id}
+                      type="button"
+                      onClick={() => setActiveId(session.id)}
+                      className="w-full rounded-xl border border-transparent bg-white px-3 py-2 text-left transition hover:border-slate-200 hover:bg-slate-50"
+                    >
+                      <div className="mb-1 flex items-start justify-between gap-3">
+                        <p className="truncate text-sm font-medium text-slate-900">
+                          {getSessionTitle(session)}
+                        </p>
+                        <span className="shrink-0 text-[10px] text-slate-400">
+                          {formatTime(session.updatedAt)}
+                        </span>
+                      </div>
+                      <p className="truncate text-xs text-slate-500">
+                        {sessionPreview(session) || getSessionSubtitle(session)}
+                      </p>
+                    </button>
+                  ))}
+                  {filteredSessions.length === 0 ? (
+                    <p className="px-2 py-6 text-xs text-slate-400">
+                      No conversations found.
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          )
+          ) : (
+          <>
           <ResizablePanelGroup direction="horizontal" className="min-h-0">
             <ResizablePanel defaultSize={32} minSize={20} className="min-h-0">
-              <aside className="crm-list flex h-full min-h-0 flex-col bg-white max-[980px]:hidden">
+              <aside className="crm-list flex h-full min-h-0 flex-col bg-white">
                 <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
                   <div className="flex items-center gap-2">
                     <CircleUserRound size={16} className="text-slate-500" />
@@ -354,13 +440,15 @@ export default function WorkspaceLayout({
                 <ResizablePanel
                   defaultSize={23}
                   minSize={16}
-                  className="min-h-0 max-[1500px]:hidden"
+                  className="min-h-0 max-[1280px]:hidden"
                 >
                   {detailsPanel}
                 </ResizablePanel>
               </>
             ) : null}
           </ResizablePanelGroup>
+          </>
+          )
         ) : (
           <>
             {mainPanel}

@@ -1122,7 +1122,7 @@ export default function ConversationsView({
         </section>
       }
       detailsPanel={
-        <aside className="crm-details flex min-h-0 flex-col border-l border-slate-200 bg-white text-slate-900 max-[1500px]:hidden">
+        <aside className="crm-details flex min-h-0 flex-col border-l border-slate-200 bg-white text-slate-900">
           <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
             <p className="text-sm font-semibold">Contact</p>
             <span className="text-[10px] text-slate-500">
@@ -1130,7 +1130,7 @@ export default function ConversationsView({
             </span>
           </div>
 
-          <ScrollArea className="min-h-0 flex-1 p-3">
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
             <div className="space-y-2.5">
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                 <div className="flex items-start gap-2.5">
@@ -1513,7 +1513,7 @@ export default function ConversationsView({
                 </section>
               ))}
             </div>
-          </ScrollArea>
+          </div>
         </aside>
       }
       />
