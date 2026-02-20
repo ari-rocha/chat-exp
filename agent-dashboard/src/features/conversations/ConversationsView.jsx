@@ -336,8 +336,7 @@ export default function ConversationsView({
   tenantSettings,
   onOpenSettings,
   unreadNotificationsCount = 0,
-  whatsappSendError = "",
-  clearWhatsappSendError,
+  whatsappSendFailuresByMessage = {},
   listWhatsappTemplates,
   sendWhatsappTemplate,
   getWhatsappBlockStatus,
@@ -552,7 +551,6 @@ export default function ConversationsView({
       text: text.trim(),
       internal: messageAudience === "team",
     });
-    clearWhatsappSendError?.();
     setText("");
     setMentionOpen(false);
     setMentionQuery("");
@@ -1011,12 +1009,6 @@ export default function ConversationsView({
               </div>
             ) : null}
           </header>
-          {activeSession?.channel === "whatsapp" && whatsappSendError ? (
-            <div className="mx-4 mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-              WhatsApp send error: {whatsappSendError}
-            </div>
-          ) : null}
-
           <ScrollArea className="conversation-thread h-full min-h-0 px-5 py-4">
             <div className="flex flex-col">
               {messages.map((message, index) => {
@@ -1035,6 +1027,11 @@ export default function ConversationsView({
                 const isAgent = message.sender === "agent";
                 const isTeam = message.sender === "team";
                 const isVisitor = !isAgent && !isTeam;
+                const whatsappFailureText =
+                  activeSession?.channel === "whatsapp" && isAgent
+                    ? String(whatsappSendFailuresByMessage?.[message.id] || "")
+                    : "";
+                const isWhatsappFailed = Boolean(whatsappFailureText);
                 const senderGroup = isAgent || isTeam ? "right" : "left";
                 const prevGroup =
                   prev && prev.sender !== "system"
@@ -1096,7 +1093,9 @@ export default function ConversationsView({
                       ))}
                     <div
                       className={`rounded-xl border text-sm shadow-sm ${
-                        isAgent
+                        isWhatsappFailed
+                          ? "border-red-300 bg-red-50 text-red-800"
+                          : isAgent
                           ? "border-blue-600 bg-blue-600 text-white"
                           : isTeam
                             ? "border-amber-200 bg-amber-50 text-amber-900"
@@ -1193,10 +1192,21 @@ export default function ConversationsView({
                         </div>
                       ) : null}
                       <time
-                        className={`mt-1 block text-right text-[10px] ${isAgent ? "text-blue-100" : "text-slate-400"}`}
+                        className={`mt-1 block text-right text-[10px] ${
+                          isWhatsappFailed
+                            ? "text-red-500"
+                            : isAgent
+                              ? "text-blue-100"
+                              : "text-slate-400"
+                        }`}
                       >
                         {formatTime(message.createdAt)}
                       </time>
+                      {isWhatsappFailed ? (
+                        <p className="mt-1 text-[10px] font-medium text-red-600">
+                          Failed to deliver on WhatsApp
+                        </p>
+                      ) : null}
                     </div>
                   </article>
                 );

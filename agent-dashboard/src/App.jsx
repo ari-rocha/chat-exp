@@ -349,7 +349,7 @@ export default function App() {
   const [newConvAttrValue, setNewConvAttrValue] = useState("");
   const [notifications, setNotifications] = useState([]);
   const [notificationsUnreadCount, setNotificationsUnreadCount] = useState(0);
-  const [whatsappSendErrors, setWhatsappSendErrors] = useState({});
+  const [whatsappSendFailures, setWhatsappSendFailures] = useState({});
 
   const [flows, setFlows] = useState([]);
   const [activeFlowId, setActiveFlowId] = useState("");
@@ -888,9 +888,32 @@ export default function App() {
         if (envelope?.event === "whatsapp:send-error") {
           const payload = envelope.data ?? {};
           const sessionId = String(payload.sessionId || "");
+          const messageId = String(payload.messageId || "");
           const error = String(payload.error || "Failed to deliver WhatsApp message");
+          if (!sessionId || !messageId) return;
+          setWhatsappSendFailures((prev) => ({
+            ...prev,
+            [sessionId]: {
+              ...(prev[sessionId] || {}),
+              [messageId]: error,
+            },
+          }));
+        }
+
+        if (envelope?.event === "whatsapp:send-result") {
+          const payload = envelope.data ?? {};
+          const sessionId = String(payload.sessionId || "");
+          const messageId = String(payload.messageId || "");
           if (!sessionId) return;
-          setWhatsappSendErrors((prev) => ({ ...prev, [sessionId]: error }));
+          if (!messageId) return;
+          if (Boolean(payload.ok)) {
+            setWhatsappSendFailures((prev) => {
+              const sessionFailures = { ...(prev[sessionId] || {}) };
+              if (!sessionFailures[messageId]) return prev;
+              delete sessionFailures[messageId];
+              return { ...prev, [sessionId]: sessionFailures };
+            });
+          }
         }
       });
 
@@ -1305,16 +1328,6 @@ export default function App() {
       await markNotificationRead(notification.id);
     }
   };
-
-  const clearWhatsappSendError = useCallback((sessionId) => {
-    if (!sessionId) return;
-    setWhatsappSendErrors((prev) => {
-      if (!prev[sessionId]) return prev;
-      const next = { ...prev };
-      delete next[sessionId];
-      return next;
-    });
-  }, []);
 
   const updateAgentStatus = async (status) => {
     if (!token) return;
@@ -1962,8 +1975,7 @@ export default function App() {
           tenantSettings={tenantSettings}
           onOpenSettings={() => setSettingsOpen(true)}
           unreadNotificationsCount={notificationsUnreadCount}
-          whatsappSendError={activeId ? (whatsappSendErrors[activeId] ?? "") : ""}
-          clearWhatsappSendError={() => clearWhatsappSendError(activeId)}
+          whatsappSendFailuresByMessage={activeId ? (whatsappSendFailures[activeId] ?? {}) : {}}
         />
 
         <CustomizationView

@@ -1104,13 +1104,18 @@ async fn send_whatsapp_message_for_session(
     session_id: String,
     text: String,
     widget: Option<Value>,
-) -> Result<(), String> {
+) -> Result<Value, Value> {
     let (channel, to_phone) =
         whatsapp_channel_and_recipient_for_session(&state, &session_id).await?;
     let access_token = config_text(&channel.config, "accessToken");
     let phone_number_id = config_text(&channel.config, "phoneNumberId");
     if access_token.is_empty() || phone_number_id.is_empty() {
-        return Err("missing whatsapp accessToken or phoneNumberId".to_string());
+        return Err(json!({
+            "statusCode": 0,
+            "statusText": "CONFIG_ERROR",
+            "rawBody": "missing whatsapp accessToken or phoneNumberId",
+            "body": { "error": "missing whatsapp accessToken or phoneNumberId" }
+        }));
     }
 
     let mut payload = json!({
@@ -1133,7 +1138,12 @@ async fn send_whatsapp_message_for_session(
             att.get("url").and_then(Value::as_str).unwrap_or(""),
         );
         if media_link.is_empty() {
-            return Err("missing attachment url for whatsapp media send".to_string());
+            return Err(json!({
+                "statusCode": 0,
+                "statusText": "PAYLOAD_ERROR",
+                "rawBody": "missing attachment url for whatsapp media send",
+                "body": { "error": "missing attachment url for whatsapp media send" }
+            }));
         }
         match attachment_type.as_str() {
             "image" | "sticker" => {
@@ -1181,14 +1191,30 @@ async fn send_whatsapp_message_for_session(
         .json(&payload)
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            json!({
+                "statusCode": 0,
+                "statusText": "REQUEST_ERROR",
+                "rawBody": e.to_string(),
+                "body": { "error": e.to_string() }
+            })
+        })?;
 
-    if response.status().is_success() {
-        return Ok(());
-    }
     let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    Err(format!("whatsapp api error {status}: {body}"))
+    let raw_body = response.text().await.unwrap_or_default();
+    let body =
+        serde_json::from_str::<Value>(&raw_body).unwrap_or_else(|_| json!({ "raw": raw_body }));
+    let result = json!({
+        "statusCode": status.as_u16(),
+        "statusText": status.to_string(),
+        "rawBody": raw_body,
+        "body": body
+    });
+
+    if status.is_success() {
+        return Ok(result);
+    }
+    Err(result)
 }
 
 async fn whatsapp_channel_and_recipient_for_session(
@@ -2831,36 +2857,76 @@ async fn add_message(
         let widget = message.widget.clone();
         let message_id = message.id.clone();
         tokio::spawn(async move {
-            if let Err(err) =
-                send_whatsapp_message_for_session(state_clone.clone(), session_id.clone(), text, widget).await
+            let tenant_id = tenant_for_session(&state_clone, &session_id)
+                .await
+                .unwrap_or_default();
+            let agents = agent_clients_for_tenant(&state_clone, &tenant_id).await;
+            match send_whatsapp_message_for_session(
+                state_clone.clone(),
+                session_id.clone(),
+                text,
+                widget,
+            )
+            .await
             {
-                eprintln!("[whatsapp] outbound delivery failed: {err}");
-                let normalized = err
-                    .replace('\n', " ")
-                    .split_whitespace()
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                let detail = if normalized.len() > 220 {
-                    format!("{}...", &normalized[..220])
-                } else {
-                    normalized
-                };
-                let tenant_id = tenant_for_session(&state_clone, &session_id)
-                    .await
-                    .unwrap_or_default();
-                let agents = agent_clients_for_tenant(&state_clone, &tenant_id).await;
-                emit_to_clients(
-                    &state_clone,
-                    &agents,
-                    "whatsapp:send-error",
-                    json!({
-                        "sessionId": session_id,
-                        "messageId": message_id,
-                        "error": detail
-                    }),
-                )
-                .await;
-            }
+                Ok(result) => {
+                    emit_to_clients(
+                        &state_clone,
+                        &agents,
+                        "whatsapp:send-result",
+                        json!({
+                            "ok": true,
+                            "sessionId": session_id,
+                            "messageId": message_id,
+                            "result": result
+                        }),
+                    )
+                    .await;
+                }
+                Err(result) => {
+                    eprintln!("[whatsapp] outbound delivery failed: {result}");
+                    let detail = result
+                        .get("rawBody")
+                        .and_then(Value::as_str)
+                        .map(|text| {
+                            let normalized = text
+                                .replace('\n', " ")
+                                .split_whitespace()
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            if normalized.len() > 220 {
+                                format!("{}...", &normalized[..220])
+                            } else {
+                                normalized
+                            }
+                        })
+                        .unwrap_or_else(|| "Failed to deliver WhatsApp message".to_string());
+
+                    emit_to_clients(
+                        &state_clone,
+                        &agents,
+                        "whatsapp:send-result",
+                        json!({
+                            "ok": false,
+                            "sessionId": session_id,
+                            "messageId": message_id,
+                            "result": result
+                        }),
+                    )
+                    .await;
+                    emit_to_clients(
+                        &state_clone,
+                        &agents,
+                        "whatsapp:send-error",
+                        json!({
+                            "sessionId": session_id,
+                            "messageId": message_id,
+                            "error": detail
+                        }),
+                    )
+                    .await;
+                }
+            };
         });
     }
 
