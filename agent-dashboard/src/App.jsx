@@ -6,6 +6,7 @@ import CsatView from "@/features/csat/CsatView";
 import CustomizationView from "@/features/customization/CustomizationView";
 import FlowsView from "@/features/flows/FlowsView";
 import InboxView from "@/features/inbox/InboxView";
+import KnowledgeBaseView from "@/features/knowledge/KnowledgeBaseView";
 import { addEdge, useEdgesState, useNodesState } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -2058,6 +2059,8 @@ export default function App() {
           setFlowAiToolDescription={setFlowAiToolDescription}
         />
       </section>
+    ) : view === "knowledge" ? (
+      <KnowledgeBaseView apiFetch={apiFetch} token={token} />
     ) : view === "contacts" ? (
       <section className="crm-main h-full min-h-0 bg-[#f8f9fb]">
         <ContactsView

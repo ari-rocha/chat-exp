@@ -8,6 +8,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   AtSign,
+  BookOpenText,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -28,6 +29,7 @@ const NAV_ITEMS = [
   { id: "conversations", icon: MessageSquare, title: "Conversations" },
   { id: "inbox", icon: Inbox, title: "Inbox" },
   { id: "flows", icon: Workflow, title: "Flow Builder" },
+  { id: "knowledge", icon: BookOpenText, title: "Knowledge Base" },
   { id: "contacts", icon: UserRound, title: "Contacts" },
   { id: "settings", icon: Settings, title: "Settings" },
   { id: "csat", icon: Smile, title: "CSAT" },

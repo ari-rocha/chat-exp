@@ -11,7 +11,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import {
   ArrowLeft,
-  BookOpenText,
   Bot,
   ChevronRight,
   CircleUserRound,
@@ -40,7 +39,6 @@ const NAV_SECTIONS = [
       { key: "general", label: "General", icon: Settings2 },
       { key: "bot", label: "Bot", icon: Bot },
       { key: "channels", label: "Channels", icon: Globe },
-      { key: "knowledge", label: "Knowledge Base", icon: BookOpenText },
       { key: "canned", label: "Canned Responses", icon: MessageSquareText },
       { key: "tags", label: "Tags", icon: Tag },
       { key: "teams", label: "Teams", icon: Users },

@@ -11045,7 +11045,7 @@ async fn kb_collect_candidates(
             let vector = embedding_to_pgvector(embedding);
             vector_rows = sqlx::query(
                 "SELECT ch.id AS chunk_id, ch.chunk_index, ch.content_text, a.id AS article_id, a.title AS article_title, a.slug AS article_slug, \
-                        c.id AS collection_id, c.name AS collection_name, (1 - (ch.embedding <=> $2::vector)) AS score \
+                        c.id AS collection_id, c.name AS collection_name, ((1 - (ch.embedding <=> $2::vector))::double precision) AS score \
                  FROM kb_chunks ch \
                  INNER JOIN kb_articles a ON a.id = ch.article_id \
                  INNER JOIN kb_collections c ON c.id = a.collection_id \
@@ -11071,7 +11071,7 @@ async fn kb_collect_candidates(
     let bm25_rows = sqlx::query(
         "SELECT ch.id AS chunk_id, ch.chunk_index, ch.content_text, a.id AS article_id, a.title AS article_title, a.slug AS article_slug, \
                 c.id AS collection_id, c.name AS collection_name, \
-                ts_rank_cd(ch.tsv, plainto_tsquery('english', $2)) AS score \
+                (ts_rank_cd(ch.tsv, plainto_tsquery('english', $2))::double precision) AS score \
          FROM kb_chunks ch \
          INNER JOIN kb_articles a ON a.id = ch.article_id \
          INNER JOIN kb_collections c ON c.id = a.collection_id \
