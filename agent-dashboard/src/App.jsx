@@ -402,7 +402,7 @@ export default function App() {
     return sessions.filter((session) => {
       const status = session.status || "open";
       if (conversationFilter === "active") {
-        return status !== "closed";
+        return status !== "closed" && status !== "snoozed";
       }
       if (conversationFilter === "all") return true;
       return status === conversationFilter;

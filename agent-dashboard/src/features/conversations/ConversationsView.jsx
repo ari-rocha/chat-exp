@@ -355,6 +355,9 @@ export default function ConversationsView({
   const [waSelectedTemplate, setWaSelectedTemplate] = useStateReact(null);
   const [waTemplateParams, setWaTemplateParams] = useStateReact([]);
   const [statusMenuOpen, setStatusMenuOpen] = useStateReact(false);
+  const [snoozeMenuOpen, setSnoozeMenuOpen] = useStateReact(false);
+  const [customSnoozeOpen, setCustomSnoozeOpen] = useStateReact(false);
+  const [customSnoozeAt, setCustomSnoozeAt] = useStateReact("");
   const [moreMenuOpen, setMoreMenuOpen] = useStateReact(false);
   const [waBlocked, setWaBlocked] = useStateReact(false);
   const [waBlockLoading, setWaBlockLoading] = useStateReact(false);
@@ -375,6 +378,7 @@ export default function ConversationsView({
   const mentionPanelRef = useRef(null);
   const textareaRef = useRef(null);
   const statusMenuRef = useRef(null);
+  const snoozeMenuRef = useRef(null);
   const moreMenuRef = useRef(null);
 
   const clearPendingAttachment = () => {
@@ -411,6 +415,12 @@ export default function ConversationsView({
         !statusMenuRef.current.contains(event.target)
       ) {
         setStatusMenuOpen(false);
+        setSnoozeMenuOpen(false);
+        setCustomSnoozeOpen(false);
+      }
+      if (snoozeMenuRef.current && !snoozeMenuRef.current.contains(event.target)) {
+        setSnoozeMenuOpen(false);
+        setCustomSnoozeOpen(false);
       }
       if (moreMenuRef.current && !moreMenuRef.current.contains(event.target)) {
         setMoreMenuOpen(false);
@@ -492,13 +502,14 @@ export default function ConversationsView({
   const statusMenuOptions = [
     { value: "open", label: "Open" },
     { value: "awaiting", label: "Pending" },
-    { value: "snoozed", label: "Snooze" },
     { value: "resolved", label: "Resolve" },
     { value: "closed", label: "Close" },
   ].filter((option) => option.value !== activeStatus);
   const quickAction =
     activeStatus === "closed"
       ? { value: "open", label: "Reopen" }
+      : activeStatus === "snoozed"
+        ? { value: "open", label: "Unsnooze" }
       : { value: "resolved", label: "Resolve" };
   const isWhatsappConversation = activeSession?.channel === "whatsapp";
   const mentionHandleForAgent = (item) => {
@@ -535,6 +546,72 @@ export default function ConversationsView({
     !(isActiveSessionClosed && messageAudience === "user") &&
     !isUserReplyBlockedByBot &&
     (Boolean(pendingAttachment) || Boolean(text.trim()));
+
+  const toLocalInputDateTime = (date) => {
+    const pad = (value) => String(value).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+      date.getDate(),
+    )}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
+
+  const applySnooze = async ({ mode, until }) => {
+    if (!activeId) return;
+    const payload = {
+      status: "snoozed",
+      snoozeMode: mode,
+      snoozedUntil: until || "",
+    };
+    await patchSessionMeta(payload);
+    setStatusMenuOpen(false);
+    setSnoozeMenuOpen(false);
+    setCustomSnoozeOpen(false);
+  };
+
+  const handleSnoozePreset = async (preset) => {
+    const now = new Date();
+    if (preset === "until_reply") {
+      await applySnooze({ mode: "until_reply", until: "" });
+      return;
+    }
+    if (preset === "in_1h") {
+      const target = new Date(now.getTime() + 60 * 60 * 1000);
+      await applySnooze({ mode: "until_time", until: target.toISOString() });
+      return;
+    }
+    if (preset === "tomorrow") {
+      const target = new Date(now);
+      target.setDate(target.getDate() + 1);
+      target.setHours(9, 0, 0, 0);
+      await applySnooze({ mode: "until_time", until: target.toISOString() });
+      return;
+    }
+    if (preset === "next_week") {
+      const target = new Date(now);
+      target.setDate(target.getDate() + 7);
+      target.setHours(9, 0, 0, 0);
+      await applySnooze({ mode: "until_time", until: target.toISOString() });
+      return;
+    }
+    if (preset === "next_month") {
+      const target = new Date(now);
+      target.setMonth(target.getMonth() + 1);
+      target.setHours(9, 0, 0, 0);
+      await applySnooze({ mode: "until_time", until: target.toISOString() });
+      return;
+    }
+    if (preset === "custom") {
+      const defaultTarget = new Date(now.getTime() + 60 * 60 * 1000);
+      setCustomSnoozeAt(toLocalInputDateTime(defaultTarget));
+      setCustomSnoozeOpen(true);
+    }
+  };
+
+  const handleApplyCustomSnooze = async () => {
+    if (!customSnoozeAt) return;
+    const target = new Date(customSnoozeAt);
+    if (Number.isNaN(target.getTime())) return;
+    await applySnooze({ mode: "until_time", until: target.toISOString() });
+  };
 
   const submitComposerPayload = async () => {
     if (!canSendNow) return;
@@ -910,6 +987,8 @@ export default function ConversationsView({
                       className="inline-flex h-8 w-8 items-center justify-center border-l border-slate-200 text-slate-500 hover:bg-slate-50"
                       onClick={() => {
                         setStatusMenuOpen((prev) => !prev);
+                        setSnoozeMenuOpen(false);
+                        setCustomSnoozeOpen(false);
                         setMoreMenuOpen(false);
                       }}
                       aria-label="More status actions"
@@ -918,7 +997,7 @@ export default function ConversationsView({
                     </button>
                   </div>
                   {statusMenuOpen ? (
-                    <div className="absolute right-0 z-40 mt-1 w-44 rounded-md border border-slate-200 bg-white p-1 shadow-lg">
+                    <div className="absolute right-0 z-40 mt-1 w-52 rounded-md border border-slate-200 bg-white p-1 shadow-lg">
                       <p className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-400">
                         Status actions
                       </p>
@@ -930,18 +1009,119 @@ export default function ConversationsView({
                           onClick={() => {
                             patchSessionMeta({ status: option.value });
                             setStatusMenuOpen(false);
+                            setSnoozeMenuOpen(false);
+                            setCustomSnoozeOpen(false);
                           }}
                         >
                           {option.value === "resolved" ? (
                             <CheckCircle2 size={13} className="text-slate-500" />
-                          ) : option.value === "snoozed" ? (
-                            <Clock3 size={13} className="text-slate-500" />
                           ) : (
                             <span className="inline-block h-1.5 w-1.5 rounded-full bg-slate-400" />
                           )}
                           {option.label}
                         </button>
                       ))}
+                      <div className="my-1 border-t border-slate-100" />
+                      <div className="relative" ref={snoozeMenuRef}>
+                        <button
+                          type="button"
+                          className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                          onClick={() => {
+                            setSnoozeMenuOpen((prev) => !prev);
+                            setCustomSnoozeOpen(false);
+                          }}
+                        >
+                          <span className="inline-flex items-center gap-2">
+                            <Clock3 size={13} />
+                            Snooze conversation
+                          </span>
+                          <ChevronRight size={13} />
+                        </button>
+                        {snoozeMenuOpen ? (
+                          <div className="absolute right-full top-0 z-50 mr-1 w-56 rounded-md border border-slate-200 bg-white p-1 shadow-xl">
+                            <p className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-400">
+                              Snooze until
+                            </p>
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                              onClick={() => void handleSnoozePreset("until_reply")}
+                            >
+                              <Clock3 size={13} />
+                              Until next reply
+                            </button>
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                              onClick={() => void handleSnoozePreset("in_1h")}
+                            >
+                              <Clock3 size={13} />
+                              In one hour
+                            </button>
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                              onClick={() => void handleSnoozePreset("tomorrow")}
+                            >
+                              <Clock3 size={13} />
+                              Until tomorrow
+                            </button>
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                              onClick={() => void handleSnoozePreset("next_week")}
+                            >
+                              <Clock3 size={13} />
+                              Until next week
+                            </button>
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                              onClick={() => void handleSnoozePreset("next_month")}
+                            >
+                              <Clock3 size={13} />
+                              Until next month
+                            </button>
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                              onClick={() => void handleSnoozePreset("custom")}
+                            >
+                              <Clock3 size={13} />
+                              Custom...
+                            </button>
+                            {customSnoozeOpen ? (
+                              <div className="mt-1 rounded-md border border-slate-200 bg-slate-50 p-2">
+                                <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
+                                  Date and time
+                                </label>
+                                <Input
+                                  type="datetime-local"
+                                  value={customSnoozeAt}
+                                  onChange={(e) => setCustomSnoozeAt(e.target.value)}
+                                  className="h-8 text-xs"
+                                />
+                                <div className="mt-2 flex justify-end gap-1.5">
+                                  <button
+                                    type="button"
+                                    className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700"
+                                    onClick={() => setCustomSnoozeOpen(false)}
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="rounded-md bg-slate-900 px-2 py-1 text-[11px] text-white"
+                                    onClick={() => void handleApplyCustomSnooze()}
+                                  >
+                                    Apply
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   ) : null}
                 </div>
@@ -953,6 +1133,8 @@ export default function ConversationsView({
                       const nextOpen = !moreMenuOpen;
                       setMoreMenuOpen(nextOpen);
                       setStatusMenuOpen(false);
+                      setSnoozeMenuOpen(false);
+                      setCustomSnoozeOpen(false);
                       if (
                         nextOpen &&
                         isWhatsappConversation &&

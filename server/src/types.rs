@@ -682,6 +682,8 @@ pub struct CreateCsatBody {
 pub struct SessionMetaBody {
     pub status: Option<String>,
     pub priority: Option<String>,
+    pub snooze_mode: Option<String>,
+    pub snoozed_until: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

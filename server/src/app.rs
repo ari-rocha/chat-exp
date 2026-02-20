@@ -23,7 +23,7 @@ use axum::{
     Json, Router,
 };
 use bcrypt::{hash, verify, DEFAULT_COST};
-use chrono::{Duration as ChronoDuration, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use hmac::{Hmac, Mac};
 use regex::Regex;
@@ -1029,7 +1029,7 @@ async fn find_or_create_whatsapp_session(
          WHERE tenant_id = $1 \
            AND channel = 'whatsapp' \
            AND visitor_id = $2 \
-           AND status = 'open' \
+           AND status <> 'closed' \
          ORDER BY updated_at DESC",
     )
     .bind(tenant_id)
@@ -2155,6 +2155,7 @@ async fn emit_session_snapshot(state: Arc<AppState>) {
     };
 
     for (tenant_id, clients) in tenant_to_clients {
+        unsnooze_due_sessions_for_tenant(&state, &tenant_id).await;
         let mut list = {
             let rows = sqlx::query(
                 "SELECT id FROM sessions WHERE tenant_id = $1 ORDER BY updated_at DESC LIMIT 500",
@@ -2790,6 +2791,33 @@ async fn add_message(
     let trimmed = text.trim();
     if trimmed.is_empty() && widget.is_none() {
         return None;
+    }
+
+    if sender == "visitor" {
+        let snooze_row = sqlx::query(
+            "SELECT status, COALESCE(snooze_mode, '') AS snooze_mode, COALESCE(snoozed_until, '') AS snoozed_until \
+             FROM sessions WHERE id = $1 LIMIT 1",
+        )
+        .bind(session_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+        if let Some(row) = snooze_row {
+            let status: String = row.get("status");
+            let mode: String = row.get("snooze_mode");
+            let snoozed_until_raw: String = row.get("snoozed_until");
+            let now = Utc::now();
+            let should_unsnooze = status == "snoozed"
+                && (mode == "until_reply"
+                    || (mode == "until_time"
+                        && parse_snoozed_until_utc(&snoozed_until_raw)
+                            .map(|ts| ts <= now)
+                            .unwrap_or(false)));
+            if should_unsnooze {
+                let _ = unsnooze_session(&state, session_id).await;
+            }
+        }
     }
 
     let mut final_widget = widget;
@@ -3475,7 +3503,14 @@ async fn set_session_status(
         .ok()
         .flatten()?;
     let changed = current != normalized;
-    let _ = sqlx::query("UPDATE sessions SET status = $1, updated_at = $2 WHERE id = $3")
+    let _ = sqlx::query(
+        "UPDATE sessions \
+         SET status = $1, \
+             snooze_mode = CASE WHEN $1 = 'snoozed' THEN snooze_mode ELSE NULL END, \
+             snoozed_until = CASE WHEN $1 = 'snoozed' THEN snoozed_until ELSE NULL END, \
+             updated_at = $2 \
+         WHERE id = $3",
+    )
         .bind(&normalized)
         .bind(now_iso())
         .bind(session_id)
@@ -3483,6 +3518,85 @@ async fn set_session_status(
         .await;
     let summary = get_session_summary_db(&state.db, session_id).await?;
     Some((summary, changed))
+}
+
+fn normalize_snooze_mode(value: &str) -> Option<String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "until_reply" | "until_time" => Some(normalized),
+        _ => None,
+    }
+}
+
+fn parse_snoozed_until_utc(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc))
+}
+
+async fn unsnooze_session(
+    state: &Arc<AppState>,
+    session_id: &str,
+) -> Option<SessionSummary> {
+    let now = now_iso();
+    let _ = sqlx::query(
+        "UPDATE sessions \
+         SET status = 'open', snooze_mode = NULL, snoozed_until = NULL, updated_at = $1 \
+         WHERE id = $2 AND status = 'snoozed'",
+    )
+    .bind(&now)
+    .bind(session_id)
+    .execute(&state.db)
+    .await;
+
+    let summary = get_session_summary_db(&state.db, session_id).await?;
+    emit_session_update(state, summary.clone()).await;
+    Some(summary)
+}
+
+async fn unsnooze_due_sessions_for_tenant(state: &Arc<AppState>, tenant_id: &str) {
+    let rows = sqlx::query(
+        "SELECT id FROM sessions \
+         WHERE tenant_id = $1 \
+           AND status = 'snoozed' \
+           AND snooze_mode = 'until_time' \
+           AND COALESCE(snoozed_until, '') <> ''",
+    )
+    .bind(tenant_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let now = Utc::now();
+    for row in rows {
+        let session_id: String = row.get("id");
+        let snoozed_until_raw = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT snoozed_until FROM sessions WHERE id = $1",
+        )
+        .bind(&session_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .flatten()
+        .unwrap_or_default();
+        let due = parse_snoozed_until_utc(&snoozed_until_raw)
+            .map(|ts| ts <= now)
+            .unwrap_or(false);
+        if due {
+            if unsnooze_session(state, &session_id).await.is_some() {
+                let _ = add_message(
+                    state.clone(),
+                    &session_id,
+                    "system",
+                    "Snooze expired",
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+            }
+        }
+    }
 }
 
 async fn recent_session_context(state: &Arc<AppState>, session_id: &str, limit: usize) -> String {
@@ -6101,6 +6215,8 @@ async fn get_sessions(State(state): State<Arc<AppState>>, headers: HeaderMap) ->
         Err(err) => return err.into_response(),
     };
 
+    unsnooze_due_sessions_for_tenant(&state, &tenant_id).await;
+
     let rows = if agent.role == "owner" || agent.role == "admin" {
         sqlx::query("SELECT id FROM sessions WHERE tenant_id = $1 ORDER BY updated_at DESC")
             .bind(&tenant_id)
@@ -7576,7 +7692,9 @@ async fn patch_session_meta(
         return err.into_response();
     }
 
-    let row = sqlx::query("SELECT status, priority FROM sessions WHERE id = $1")
+    let row = sqlx::query(
+        "SELECT status, priority, snooze_mode, snoozed_until FROM sessions WHERE id = $1",
+    )
         .bind(&session_id)
         .fetch_optional(&state.db)
         .await
@@ -7592,6 +7710,10 @@ async fn patch_session_meta(
     let previous_status: String = row.get("status");
     let mut next_status = previous_status.clone();
     let mut next_priority: String = row.get("priority");
+    let previous_snooze_mode: Option<String> = row.get("snooze_mode");
+    let previous_snoozed_until: Option<String> = row.get("snoozed_until");
+    let mut next_snooze_mode = previous_snooze_mode.clone();
+    let mut next_snoozed_until = previous_snoozed_until.clone();
 
     if let Some(status) = body.status {
         let normalized = status.trim().to_ascii_lowercase();
@@ -7620,11 +7742,86 @@ async fn patch_session_meta(
             }
         }
     }
+
+    if let Some(snooze_mode) = body.snooze_mode {
+        let Some(normalized) = normalize_snooze_mode(&snooze_mode) else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "invalid snooze_mode (expected until_reply or until_time)" })),
+            )
+                .into_response();
+        };
+        next_snooze_mode = Some(normalized.clone());
+        if normalized == "until_reply" {
+            next_snoozed_until = None;
+        }
+    }
+
+    if let Some(snoozed_until_raw) = body.snoozed_until {
+        let value = snoozed_until_raw.trim();
+        if value.is_empty() {
+            next_snoozed_until = None;
+        } else {
+            let Some(parsed) = parse_snoozed_until_utc(value) else {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "invalid snoozed_until (expected RFC3339)" })),
+                )
+                    .into_response();
+            };
+            if parsed <= Utc::now() {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "snoozed_until must be in the future" })),
+                )
+                    .into_response();
+            }
+            next_snoozed_until = Some(parsed.to_rfc3339());
+            next_snooze_mode = Some("until_time".to_string());
+        }
+    }
+
+    if next_status != "snoozed" {
+        next_snooze_mode = None;
+        next_snoozed_until = None;
+    } else {
+        if next_snooze_mode.is_none() {
+            next_snooze_mode = Some("until_reply".to_string());
+        }
+        if next_snooze_mode.as_deref() == Some("until_time") {
+            let Some(until) = next_snoozed_until.clone() else {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "snoozed_until required when snooze_mode is until_time" })),
+                )
+                    .into_response();
+            };
+            let Some(parsed) = parse_snoozed_until_utc(&until) else {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "invalid snoozed_until (expected RFC3339)" })),
+                )
+                    .into_response();
+            };
+            if parsed <= Utc::now() {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "snoozed_until must be in the future" })),
+                )
+                    .into_response();
+            }
+        }
+    }
+
     let _ = sqlx::query(
-        "UPDATE sessions SET status = $1, priority = $2, updated_at = $3 WHERE id = $4",
+        "UPDATE sessions \
+         SET status = $1, priority = $2, snooze_mode = $3, snoozed_until = $4, updated_at = $5 \
+         WHERE id = $6",
     )
     .bind(&next_status)
     .bind(&next_priority)
+    .bind(&next_snooze_mode)
+    .bind(&next_snoozed_until)
     .bind(now_iso())
     .bind(&session_id)
     .execute(&state.db)
@@ -7678,15 +7875,69 @@ async fn patch_session_meta(
             run_lifecycle_trigger(st, sid, "conversation_reopened".into()).await;
         });
     } else if previous_status != next_status {
+        if next_status == "snoozed" {
+            let message = if next_snooze_mode.as_deref() == Some("until_time") {
+                format!(
+                    "Conversation snoozed until {}",
+                    next_snoozed_until.clone().unwrap_or_default()
+                )
+            } else {
+                "Conversation snoozed until next visitor reply".to_string()
+            };
+            let _ = add_message(
+                state.clone(),
+                &session_id,
+                "system",
+                &message,
+                None,
+                None,
+                None,
+            )
+            .await;
+        } else if previous_status == "snoozed" && next_status == "open" {
+            let _ = add_message(
+                state.clone(),
+                &session_id,
+                "system",
+                "Conversation unsnoozed",
+                None,
+                None,
+                None,
+            )
+            .await;
+        } else {
+            let _ = add_message(
+                state.clone(),
+                &session_id,
+                "system",
+                &format!(
+                    "Status changed: {} -> {}",
+                    humanize_system_value(&previous_status),
+                    humanize_system_value(&next_status)
+                ),
+                None,
+                None,
+                None,
+            )
+            .await;
+        }
+    } else if next_status == "snoozed"
+        && (previous_snooze_mode != next_snooze_mode
+            || previous_snoozed_until != next_snoozed_until)
+    {
+        let message = if next_snooze_mode.as_deref() == Some("until_time") {
+            format!(
+                "Snooze updated until {}",
+                next_snoozed_until.clone().unwrap_or_default()
+            )
+        } else {
+            "Snooze updated: until next visitor reply".to_string()
+        };
         let _ = add_message(
             state.clone(),
             &session_id,
             "system",
-            &format!(
-                "Status changed: {} -> {}",
-                humanize_system_value(&previous_status),
-                humanize_system_value(&next_status)
-            ),
+            &message,
             None,
             None,
             None,

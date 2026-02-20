@@ -38,6 +38,7 @@ const STATUS_ITEMS = [
   { id: "all", label: "All" },
   { id: "open", label: "Agent" },
   { id: "awaiting", label: "Awaiting agent" },
+  { id: "snoozed", label: "Snoozed" },
   { id: "closed", label: "Paused" },
 ];
 
@@ -46,6 +47,7 @@ const STATUS_FILTER_OPTIONS = [
   { id: "all", label: "All", color: "bg-slate-500" },
   { id: "open", label: "Agent", color: "bg-emerald-500" },
   { id: "awaiting", label: "Awaiting agent", color: "bg-amber-500" },
+  { id: "snoozed", label: "Snoozed", color: "bg-violet-500" },
   { id: "closed", label: "Paused", color: "bg-slate-400" },
 ];
 
