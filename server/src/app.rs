@@ -91,6 +91,30 @@ fn normalize_canned_shortcut(value: &str) -> String {
     value.trim().replace('/', "")
 }
 
+fn resolve_database_url() -> String {
+    if let Ok(url) = env::var("DATABASE_URL") {
+        if !url.trim().is_empty() {
+            return url;
+        }
+    }
+    let host = env::var("POSTGRES_HOST")
+        .or_else(|_| env::var("PGHOST"))
+        .unwrap_or_else(|_| "localhost".to_string());
+    let port = env::var("POSTGRES_PORT")
+        .or_else(|_| env::var("PGPORT"))
+        .unwrap_or_else(|_| "5432".to_string());
+    let user = env::var("POSTGRES_USER")
+        .or_else(|_| env::var("PGUSER"))
+        .unwrap_or_else(|_| "postgres".to_string());
+    let password = env::var("POSTGRES_PASSWORD")
+        .or_else(|_| env::var("PGPASSWORD"))
+        .unwrap_or_else(|_| "S8hibBES24uF7e6NJCUnxxA3vJ0E".to_string());
+    let db = env::var("POSTGRES_DB")
+        .or_else(|_| env::var("PGDATABASE"))
+        .unwrap_or_else(|_| "chat_exp".to_string());
+    format!("postgres://{user}:{password}@{host}:{port}/{db}")
+}
+
 fn markdown_to_plain_text(markdown: &str) -> String {
     let code_fence_re = Regex::new(r"(?s)```.*?```").ok();
     let inline_code_re = Regex::new(r"`([^`]+)`").ok();
@@ -3678,6 +3702,56 @@ async fn recent_session_context(state: &Arc<AppState>, session_id: &str, limit: 
         .join("\n")
 }
 
+async fn openai_chat_completion_text(
+    state: &Arc<AppState>,
+    model: &str,
+    system: &str,
+    user: &str,
+) -> Result<String, String> {
+    let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+    if api_key.trim().is_empty() {
+        return Err("OPENAI_API_KEY not configured".to_string());
+    }
+    let response = state
+        .ai_client
+        .post("https://api.openai.com/v1/chat/completions")
+        .bearer_auth(api_key)
+        .json(&json!({
+            "model": model,
+            "messages": [
+                { "role": "system", "content": system },
+                { "role": "user", "content": user }
+            ],
+            "temperature": 0.1
+        }))
+        .send()
+        .await
+        .map_err(|err| format!("openai request failed: {err}"))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("openai returned {status}: {body}"));
+    }
+    let payload = response
+        .json::<Value>()
+        .await
+        .map_err(|err| format!("openai parse failed: {err}"))?;
+    let text = payload
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("message"))
+        .and_then(|msg| msg.get("content"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("")
+        .to_string();
+    if text.is_empty() {
+        return Err("openai response had empty content".to_string());
+    }
+    Ok(text)
+}
+
 async fn generate_ai_reply(
     state: Arc<AppState>,
     session_id: &str,
@@ -3839,8 +3913,11 @@ async fn generate_ai_reply(
         tools_block: &tools_block,
     });
 
-    let api_key = std::env::var("GROQ_API_KEY").unwrap_or_default();
-    if api_key.trim().is_empty() {
+    if std::env::var("OPENAI_API_KEY")
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
+    {
         let fallback = if !transcript.is_empty() {
             format!(
                 "I can help with that. I saw this context:\n{}\n\nLatest message: {}",
@@ -3873,21 +3950,16 @@ async fn generate_ai_reply(
         json_format_hint
     );
 
-    let response = state
-        .ai_client
-        .post("https://api.groq.com/openai/v1/chat/completions")
-        .bearer_auth(api_key)
-        .json(&json!({
-            "model": "openai/gpt-oss-120b",
-            "messages": [
-                { "role": "system", "content": system_instruction },
-                { "role": "user", "content": user_content }
-            ],
-        }))
-        .send()
-        .await;
+    let chat_model = std::env::var("OPENAI_CHAT_MODEL").unwrap_or_else(|_| "gpt-4.1".to_string());
+    let raw_text = openai_chat_completion_text(
+        &state,
+        &chat_model,
+        &system_instruction,
+        &user_content,
+    )
+    .await;
 
-    let Ok(response) = response else {
+    let Ok(raw_text) = raw_text else {
         return AiDecision {
             reply: "I had a temporary issue generating an AI reply. Could you rephrase?"
                 .to_string(),
@@ -3898,36 +3970,12 @@ async fn generate_ai_reply(
         };
     };
 
-    let payload = response.json::<Value>().await.unwrap_or_else(|_| json!({}));
-    let raw_text = payload
-        .get("choices")
-        .and_then(Value::as_array)
-        .and_then(|choices| choices.first())
-        .and_then(|choice| choice.get("message"))
-        .and_then(|msg| msg.get("content"))
-        .and_then(Value::as_str)
-        .map(|text| text.trim().to_string())
-        .filter(|text| !text.is_empty());
-
-    if let Some(raw_text) = raw_text {
-        if let Some(parsed) = parse_ai_decision_from_text(&raw_text) {
-            return parsed;
-        }
-
-        // If model didn't follow JSON format, use plain text and keep heuristic handover.
-        return AiDecision {
-            reply: raw_text,
-            handover: has_handover_intent(visitor_text),
-            close_chat: false,
-            suggestions: vec![],
-            trigger_flow: None,
-        };
+    if let Some(parsed) = parse_ai_decision_from_text(&raw_text) {
+        return parsed;
     }
-
-    let reply = "I can help with that. Tell me a bit more.".to_string();
-
+    // If model didn't follow JSON format, use plain text and keep heuristic handover.
     AiDecision {
-        reply,
+        reply: raw_text,
         handover: has_handover_intent(visitor_text),
         close_chat: false,
         suggestions: vec![],
@@ -3965,9 +4013,12 @@ async fn extract_vars_with_ai(
     visitor_text: &str,
     var_descriptions: &[(String, String)], // (key, label)
 ) -> HashMap<String, String> {
-    let api_key = std::env::var("GROQ_API_KEY").unwrap_or_default();
-    if api_key.trim().is_empty() {
-        eprintln!("[extract_vars] No API key");
+    if std::env::var("OPENAI_API_KEY")
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
+    {
+        eprintln!("[extract_vars] OPENAI_API_KEY missing");
         return HashMap::new();
     }
 
@@ -4063,36 +4114,20 @@ async fn extract_vars_with_ai(
     eprintln!("[extract_vars] Contact: {}", contact_block);
     eprintln!("[extract_vars] Visitor text: {}", visitor_text);
 
-    let response = state
-        .ai_client
-        .post("https://api.groq.com/openai/v1/chat/completions")
-        .bearer_auth(&api_key)
-        .json(&json!({
-            "model": "openai/gpt-oss-120b",
-            "messages": [
-                { "role": "system", "content": "You are a precise data extraction tool. Output ONLY valid JSON. No markdown, no explanation." },
-                { "role": "user", "content": prompt }
-            ],
-        }))
-        .send()
-        .await;
+    let extraction_model =
+        std::env::var("OPENAI_EXTRACTION_MODEL").unwrap_or_else(|_| "gpt-4.1".to_string());
+    let raw_text = openai_chat_completion_text(
+        state,
+        &extraction_model,
+        "You are a precise data extraction tool. Output ONLY valid JSON. No markdown, no explanation.",
+        &prompt,
+    )
+    .await;
 
-    let Ok(response) = response else {
-        eprintln!("[extract_vars] API request failed");
+    let Ok(raw_text) = raw_text else {
+        eprintln!("[extract_vars] OpenAI request failed");
         return HashMap::new();
     };
-
-    let payload = response.json::<Value>().await.unwrap_or_else(|_| json!({}));
-    let raw_text = payload
-        .get("choices")
-        .and_then(Value::as_array)
-        .and_then(|choices| choices.first())
-        .and_then(|choice| choice.get("message"))
-        .and_then(|msg| msg.get("content"))
-        .and_then(Value::as_str)
-        .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty())
-        .unwrap_or_default();
 
     eprintln!("[extract_vars] Raw AI response: {}", raw_text);
 
@@ -10948,6 +10983,59 @@ async fn openai_embeddings(
     Ok(out)
 }
 
+async fn openai_rerank_scores(
+    state: &Arc<AppState>,
+    query: &str,
+    candidates: &[(String, String, String)],
+) -> Result<Vec<f64>, String> {
+    if candidates.is_empty() {
+        return Ok(vec![]);
+    }
+    let model = env::var("OPENAI_RERANK_MODEL").unwrap_or_else(|_| "gpt-4.1".to_string());
+    let docs = candidates
+        .iter()
+        .enumerate()
+        .map(|(idx, (title, collection, snippet))| {
+            format!(
+                "{}. title: {}\ncollection: {}\ntext: {}",
+                idx + 1,
+                title,
+                collection,
+                snippet
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let user_prompt = format!(
+        "Rank relevance for RAG.\nQuery: {}\n\nCandidates:\n{}\n\nReturn ONLY JSON object:\n{{\"scores\":[number,...]}}\nRules: one score per candidate, each 0..1, higher is better, preserve order.",
+        query, docs
+    );
+    let raw = openai_chat_completion_text(
+        state,
+        &model,
+        "You are a retrieval reranker. Output strict JSON only.",
+        &user_prompt,
+    )
+    .await?;
+    let value: Value = serde_json::from_str(&raw)
+        .map_err(|err| format!("reranker json parse failed: {err}; raw={raw}"))?;
+    let scores = value
+        .get("scores")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "reranker output missing scores".to_string())?
+        .iter()
+        .map(|v| v.as_f64().unwrap_or(0.0))
+        .collect::<Vec<_>>();
+    if scores.len() != candidates.len() {
+        return Err(format!(
+            "reranker score length mismatch: expected {}, got {}",
+            candidates.len(),
+            scores.len()
+        ));
+    }
+    Ok(scores)
+}
+
 async fn reindex_kb_article(state: &Arc<AppState>, article: &KbArticle) -> Result<usize, String> {
     let _ = sqlx::query("DELETE FROM kb_chunks WHERE article_id = $1")
         .bind(&article.id)
@@ -11836,8 +11924,8 @@ async fn kb_search(
         .split_whitespace()
         .map(str::to_string)
         .collect::<Vec<_>>();
-    let mut candidates = merged.into_values().collect::<Vec<_>>();
-    for candidate in &mut candidates {
+    let mut candidates_all = merged.into_values().collect::<Vec<_>>();
+    for candidate in &mut candidates_all {
         let mut fused = 0.0f64;
         if let Some(rank) = candidate.vector_rank {
             fused += 1.0 / (rrf_k + rank as f64 + 1.0);
@@ -11846,13 +11934,42 @@ async fn kb_search(
             fused += 1.0 / (rrf_k + rank as f64 + 1.0);
         }
         candidate.fused_score = fused;
-        let snippet_lower = candidate.snippet.to_ascii_lowercase();
-        let chunk_terms = snippet_lower.split_whitespace().collect::<Vec<_>>();
-        let overlap = query_terms
-            .iter()
-            .filter(|term| chunk_terms.contains(&term.as_str()))
-            .count() as f64;
-        candidate.rerank_score = fused + overlap * 0.02 + candidate.vector_score * 0.05 + candidate.bm25_score * 0.05;
+        candidate.rerank_score = fused;
+    }
+    candidates_all.sort_by(|a, b| b.fused_score.total_cmp(&a.fused_score));
+
+    let rerank_window = candidates_all.len().min(40);
+    let mut candidates = candidates_all
+        .into_iter()
+        .take(rerank_window)
+        .collect::<Vec<_>>();
+    let rerank_inputs = candidates
+        .iter()
+        .map(|item| {
+            (
+                item.article_title.clone(),
+                item.collection_name.clone(),
+                item.snippet.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let rerank_scores = openai_rerank_scores(&state, &query_text, &rerank_inputs).await;
+    if let Ok(scores) = rerank_scores {
+        for (idx, candidate) in candidates.iter_mut().enumerate() {
+            candidate.rerank_score = candidate.fused_score + scores[idx];
+        }
+    } else {
+        // Fallback to lexical overlap if LLM reranker fails.
+        for candidate in &mut candidates {
+            let snippet_lower = candidate.snippet.to_ascii_lowercase();
+            let chunk_terms = snippet_lower.split_whitespace().collect::<Vec<_>>();
+            let overlap = query_terms
+                .iter()
+                .filter(|term| chunk_terms.contains(&term.as_str()))
+                .count() as f64;
+            candidate.rerank_score =
+                candidate.fused_score + overlap * 0.02 + candidate.vector_score * 0.05 + candidate.bm25_score * 0.05;
+        }
     }
     candidates.sort_by(|a, b| b.rerank_score.total_cmp(&a.rerank_score));
     let candidates = candidates.into_iter().take(top_k).collect::<Vec<_>>();
@@ -13096,12 +13213,13 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
 }
 
 pub async fn run() {
+    let _ = dotenvy::dotenv();
+
     let port = std::env::var("PORT")
         .ok()
         .and_then(|v| v.parse::<u16>().ok())
         .unwrap_or(4000);
-    let database_url = env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432/chat_exp".to_string());
+    let database_url = resolve_database_url();
     let media_storage_dir = env::var("MEDIA_STORAGE_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("./media_uploads"));
@@ -13120,7 +13238,7 @@ pub async fn run() {
         .max_connections(10)
         .connect(&database_url)
         .await
-        .expect("failed to connect to postgres (set DATABASE_URL)");
+        .expect("failed to connect to postgres (set DATABASE_URL or POSTGRES_* env vars)");
 
     sqlx::migrate!("./migrations")
         .run(&db)
