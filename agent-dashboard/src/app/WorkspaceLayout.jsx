@@ -7,6 +7,9 @@ import {
 } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleUserRound,
   MessageSquare,
   Search,
@@ -110,6 +113,16 @@ export default function WorkspaceLayout({
     return window.innerWidth;
   });
   const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false);
+  const [sidebarSections, setSidebarSections] = useState({
+    status: true,
+    channel: true,
+    agent: true,
+  });
+  const [collapsedPanels, setCollapsedPanels] = useState({
+    workspaceSidebar: false,
+    conversationList: false,
+    details: false,
+  });
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -124,7 +137,13 @@ export default function WorkspaceLayout({
     }
   }, [isMobileLayout, activeId]);
   const showDesktopDetailsPanel = viewportWidth > 1280 && Boolean(detailsPanel);
-  const showDesktopSidebar = showConversationPanels && !isMobileLayout && viewportWidth > 1280;
+  const showDesktopSidebar =
+    showConversationPanels &&
+    !isMobileLayout &&
+    viewportWidth > 1280 &&
+    !collapsedPanels.workspaceSidebar;
+  const showDesktopConversationList = !collapsedPanels.conversationList;
+  const showDesktopDetails = showDesktopDetailsPanel && !collapsedPanels.details;
   const surfaceGridClass = (() => {
     if (showConversationPanels) {
       if (isMobileLayout) return "grid-cols-[1fr]";
@@ -146,6 +165,12 @@ export default function WorkspaceLayout({
     open: openCount,
     awaiting: waitingCount,
     closed: closedCount,
+  };
+  const toggleSidebarSection = (key) => {
+    setSidebarSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+  const toggleDesktopPanel = (key) => {
+    setCollapsedPanels((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   return (
@@ -191,7 +216,18 @@ export default function WorkspaceLayout({
         </aside>
 
         {showDesktopSidebar ? (
-          <aside className="crm-sidebar-panel flex min-h-0 flex-col border-r border-slate-200 bg-[#fbfcfe]">
+          <aside className="crm-sidebar-panel relative flex min-h-0 flex-col border-r border-slate-200 bg-[#fbfcfe]">
+            {viewportWidth > 1280 ? (
+              <button
+                type="button"
+                onClick={() => toggleDesktopPanel("workspaceSidebar")}
+                className="absolute -right-3 top-4 z-30 inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm hover:text-slate-700"
+                title="Collapse chat list"
+                aria-label="Collapse chat list"
+              >
+                <ChevronLeft size={14} />
+              </button>
+            ) : null}
             <div className="border-b border-slate-200 p-4">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-slate-900">Chat</h2>
@@ -215,63 +251,96 @@ export default function WorkspaceLayout({
 
             <div className="space-y-4 p-4">
               <div>
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Status
-                </p>
-                <div className="space-y-1.5">
-                  {STATUS_ITEMS.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => setConversationFilter(item.id)}
-                      className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-left text-xs ${
-                        conversationFilter === item.id
-                          ? "border-blue-200 bg-blue-50 text-blue-700"
-                          : "border-slate-200 bg-white text-slate-600"
-                      }`}
-                    >
-                      <span>{item.label}</span>
-                      <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
-                        {statusCount[item.id] ?? 0}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Channel
-                </p>
-                <div className="space-y-1.5">
-                  {channelCounts.map(([channel, count]) => (
-                    <div
-                      key={channel}
-                      className="flex items-center justify-between rounded-lg px-2 py-1.5 text-xs text-slate-600"
-                    >
-                      <span className="capitalize">{channel}</span>
-                      <span>{count}</span>
-                    </div>
-                  ))}
-                  {channelCounts.length === 0 ? (
-                    <p className="text-xs text-slate-400">No channels</p>
-                  ) : null}
-                </div>
-              </div>
-
-              <div>
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Agent
-                </p>
-                <select
-                  className="w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700"
-                  value={agent?.status || "online"}
-                  onChange={(e) => updateAgentStatus(e.target.value)}
+                <button
+                  type="button"
+                  className="mb-2 flex w-full items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-slate-500"
+                  onClick={() => toggleSidebarSection("status")}
                 >
-                  <option value="online">online</option>
-                  <option value="away">away</option>
-                  <option value="paused">paused</option>
-                </select>
+                  <span>Status</span>
+                  {sidebarSections.status ? (
+                    <ChevronDown size={14} className="text-slate-400" />
+                  ) : (
+                    <ChevronRight size={14} className="text-slate-400" />
+                  )}
+                </button>
+                {sidebarSections.status ? (
+                  <div className="space-y-1.5">
+                    {STATUS_ITEMS.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => setConversationFilter(item.id)}
+                        className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-left text-xs ${
+                          conversationFilter === item.id
+                            ? "border-blue-200 bg-blue-50 text-blue-700"
+                            : "border-slate-200 bg-white text-slate-600"
+                        }`}
+                      >
+                        <span>{item.label}</span>
+                        <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
+                          {statusCount[item.id] ?? 0}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+
+              <div>
+                <button
+                  type="button"
+                  className="mb-2 flex w-full items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-slate-500"
+                  onClick={() => toggleSidebarSection("channel")}
+                >
+                  <span>Channel</span>
+                  {sidebarSections.channel ? (
+                    <ChevronDown size={14} className="text-slate-400" />
+                  ) : (
+                    <ChevronRight size={14} className="text-slate-400" />
+                  )}
+                </button>
+                {sidebarSections.channel ? (
+                  <div className="space-y-1.5">
+                    {channelCounts.map(([channel, count]) => (
+                      <div
+                        key={channel}
+                        className="flex items-center justify-between rounded-lg px-2 py-1.5 text-xs text-slate-600"
+                      >
+                        <span className="capitalize">{channel}</span>
+                        <span>{count}</span>
+                      </div>
+                    ))}
+                    {channelCounts.length === 0 ? (
+                      <p className="text-xs text-slate-400">No channels</p>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+
+              <div>
+                <button
+                  type="button"
+                  className="mb-2 flex w-full items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-slate-500"
+                  onClick={() => toggleSidebarSection("agent")}
+                >
+                  <span>Agent</span>
+                  {sidebarSections.agent ? (
+                    <ChevronDown size={14} className="text-slate-400" />
+                  ) : (
+                    <ChevronRight size={14} className="text-slate-400" />
+                  )}
+                </button>
+                {sidebarSections.agent ? (
+                  <select
+                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700"
+                    value={agent?.status || "online"}
+                    onChange={(e) => updateAgentStatus(e.target.value)}
+                  >
+                    <option value="online">online</option>
+                    <option value="away">away</option>
+                    <option value="paused">paused</option>
+                  </select>
+                ) : null}
               </div>
             </div>
           </aside>
@@ -365,122 +434,176 @@ export default function WorkspaceLayout({
             </div>
           )
           ) : (
-          <>
-          <ResizablePanelGroup direction="horizontal" className="min-h-0">
-            <ResizablePanel defaultSize={32} minSize={20} className="min-h-0">
-              <aside className="crm-list flex h-full min-h-0 flex-col bg-white">
-                <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <CircleUserRound size={16} className="text-slate-500" />
-                    <p className="text-sm font-semibold text-slate-900">
-                      Conversations
-                    </p>
-                  </div>
-                  <select
-                    className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700"
-                    value={conversationFilter}
-                    onChange={(e) => setConversationFilter(e.target.value)}
-                  >
-                    {STATUS_ITEMS.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <ScrollArea className="h-full p-2">
-                  <div className="space-y-1.5">
-                    {filteredSessions.map((session) => {
-                      const isActive = session.id === activeId;
-                      return (
-                        <button
-                          key={session.id}
-                          type="button"
-                          onClick={() => setActiveId(session.id)}
-                          className={`w-full rounded-xl border px-3 py-2 text-left transition ${
-                            isActive
-                              ? "border-blue-200 bg-blue-50"
-                              : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"
-                          }`}
-                        >
-                          <div className="mb-1 flex items-start justify-between gap-3">
-                            <p className="truncate text-sm font-medium text-slate-900">
-                              {getSessionTitle(session)}
-                            </p>
-                            <span className="shrink-0 text-[10px] text-slate-400">
-                              {formatTime(session.updatedAt)}
-                            </span>
-                          </div>
-                          <p className="truncate text-xs text-slate-500">
-                            {sessionPreview(session) ||
-                              getSessionSubtitle(session)}
-                          </p>
-                          {(session.tags || []).length > 0 ? (
-                            <div className="mt-1 flex flex-wrap gap-1">
-                              {session.tags.slice(0, 3).map((tag) => (
-                                <span
-                                  key={`${session.id}-tag-${tag.id}`}
-                                  className="rounded-full border px-1.5 py-0.5 text-[10px] font-medium"
-                                  style={{
-                                    borderColor: tag.color || "#cbd5e1",
-                                    color: tag.color || "#475569",
-                                    backgroundColor: `${tag.color || "#cbd5e1"}15`,
-                                  }}
-                                >
-                                  {tag.name}
-                                </span>
-                              ))}
-                            </div>
-                          ) : null}
-                          <div className="mt-1.5 flex items-center justify-between">
-                            <p className="text-[10px] uppercase tracking-wide text-slate-400">
-                              {titleCase(session.channel)} •{" "}
-                              {session.status || "open"}
-                            </p>
-                            {(session.unreadCount || 0) > 0 ? (
-                              <span className="rounded-full bg-orange-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                                {session.unreadCount}
-                              </span>
-                            ) : null}
-                          </div>
-                        </button>
-                      );
-                    })}
-                    {filteredSessions.length === 0 ? (
-                      <p className="px-2 py-6 text-xs text-slate-400">
-                        No conversations found.
-                      </p>
-                    ) : null}
-                  </div>
-                </ScrollArea>
-              </aside>
-            </ResizablePanel>
-
-            <ResizableHandle withHandle />
-
-            <ResizablePanel
-              defaultSize={showDesktopDetailsPanel ? 45 : 68}
-              minSize={30}
-              className="min-h-0"
-            >
-              {mainPanel}
-            </ResizablePanel>
-
-            {showDesktopDetailsPanel ? (
-              <>
-                <ResizableHandle withHandle />
-                <ResizablePanel
-                  defaultSize={23}
-                  minSize={16}
-                  className="min-h-0"
-                >
-                  {detailsPanel}
-                </ResizablePanel>
-              </>
+          <div className="relative min-h-0">
+            {viewportWidth > 1280 && collapsedPanels.workspaceSidebar ? (
+              <button
+                type="button"
+                onClick={() => toggleDesktopPanel("workspaceSidebar")}
+                className="absolute left-1 top-4 z-30 inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm hover:text-slate-700"
+                title="Expand chat list"
+                aria-label="Expand chat list"
+              >
+                <ChevronRight size={14} />
+              </button>
             ) : null}
-          </ResizablePanelGroup>
-          </>
+            <ResizablePanelGroup direction="horizontal" className="min-h-0">
+              {showDesktopConversationList ? (
+                <>
+                  <ResizablePanel defaultSize={32} minSize={20} className="min-h-0">
+                    <aside className="crm-list relative flex h-full min-h-0 flex-col bg-white">
+                      <button
+                        type="button"
+                        onClick={() => toggleDesktopPanel("conversationList")}
+                        className="absolute -right-3 top-4 z-30 inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm hover:text-slate-700"
+                        title="Collapse conversations"
+                        aria-label="Collapse conversations"
+                      >
+                        <ChevronLeft size={14} />
+                      </button>
+                      <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <CircleUserRound size={16} className="text-slate-500" />
+                          <p className="text-sm font-semibold text-slate-900">
+                            Conversations
+                          </p>
+                        </div>
+                        <select
+                          className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700"
+                          value={conversationFilter}
+                          onChange={(e) => setConversationFilter(e.target.value)}
+                        >
+                          {STATUS_ITEMS.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <ScrollArea className="h-full p-2">
+                        <div className="space-y-1.5">
+                          {filteredSessions.map((session) => {
+                            const isActive = session.id === activeId;
+                            return (
+                              <button
+                                key={session.id}
+                                type="button"
+                                onClick={() => setActiveId(session.id)}
+                                className={`w-full rounded-xl border px-3 py-2 text-left transition ${
+                                  isActive
+                                    ? "border-blue-200 bg-blue-50"
+                                    : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"
+                                }`}
+                              >
+                                <div className="mb-1 flex items-start justify-between gap-3">
+                                  <p className="truncate text-sm font-medium text-slate-900">
+                                    {getSessionTitle(session)}
+                                  </p>
+                                  <span className="shrink-0 text-[10px] text-slate-400">
+                                    {formatTime(session.updatedAt)}
+                                  </span>
+                                </div>
+                                <p className="truncate text-xs text-slate-500">
+                                  {sessionPreview(session) ||
+                                    getSessionSubtitle(session)}
+                                </p>
+                                {(session.tags || []).length > 0 ? (
+                                  <div className="mt-1 flex flex-wrap gap-1">
+                                    {session.tags.slice(0, 3).map((tag) => (
+                                      <span
+                                        key={`${session.id}-tag-${tag.id}`}
+                                        className="rounded-full border px-1.5 py-0.5 text-[10px] font-medium"
+                                        style={{
+                                          borderColor: tag.color || "#cbd5e1",
+                                          color: tag.color || "#475569",
+                                          backgroundColor: `${tag.color || "#cbd5e1"}15`,
+                                        }}
+                                      >
+                                        {tag.name}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : null}
+                                <div className="mt-1.5 flex items-center justify-between">
+                                  <p className="text-[10px] uppercase tracking-wide text-slate-400">
+                                    {titleCase(session.channel)} •{" "}
+                                    {session.status || "open"}
+                                  </p>
+                                  {(session.unreadCount || 0) > 0 ? (
+                                    <span className="rounded-full bg-orange-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                                      {session.unreadCount}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </button>
+                            );
+                          })}
+                          {filteredSessions.length === 0 ? (
+                            <p className="px-2 py-6 text-xs text-slate-400">
+                              No conversations found.
+                            </p>
+                          ) : null}
+                        </div>
+                      </ScrollArea>
+                    </aside>
+                  </ResizablePanel>
+                  <ResizableHandle withHandle />
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => toggleDesktopPanel("conversationList")}
+                  className="absolute left-1 top-14 z-30 inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm hover:text-slate-700"
+                  title="Expand conversations"
+                  aria-label="Expand conversations"
+                >
+                  <ChevronRight size={14} />
+                </button>
+              )}
+
+              <ResizablePanel
+                defaultSize={showDesktopDetails ? 45 : 68}
+                minSize={30}
+                className="min-h-0"
+              >
+                {mainPanel}
+              </ResizablePanel>
+
+              {showDesktopDetails ? (
+                <>
+                  <ResizableHandle withHandle />
+                  <ResizablePanel
+                    defaultSize={23}
+                    minSize={16}
+                    className="min-h-0"
+                  >
+                    <div className="relative h-full min-h-0">
+                      <button
+                        type="button"
+                        onClick={() => toggleDesktopPanel("details")}
+                        className="absolute -left-3 top-4 z-30 inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm hover:text-slate-700"
+                        title="Collapse contact panel"
+                        aria-label="Collapse contact panel"
+                      >
+                        <ChevronRight size={14} />
+                      </button>
+                      {detailsPanel}
+                    </div>
+                  </ResizablePanel>
+                </>
+              ) : showDesktopDetailsPanel ? (
+                <button
+                  type="button"
+                  onClick={() => toggleDesktopPanel("details")}
+                  className="absolute right-1 top-4 z-30 inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm hover:text-slate-700"
+                  title="Expand contact panel"
+                  aria-label="Expand contact panel"
+                >
+                  <ChevronLeft size={14} />
+                </button>
+              ) : null}
+            </ResizablePanelGroup>
+          </div>
           )
         ) : (
           <>
