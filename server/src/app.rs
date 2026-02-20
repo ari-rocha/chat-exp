@@ -1506,6 +1506,24 @@ fn is_visitor_visible_system_msg(text: &str) -> bool {
         || lower.contains("reopened")
 }
 
+fn humanize_system_value(raw: &str) -> String {
+    let cleaned = raw.trim().replace(['_', '-'], " ");
+    if cleaned.is_empty() {
+        return String::new();
+    }
+    cleaned
+        .split_whitespace()
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => format!("{}{}", first.to_ascii_uppercase(), chars.as_str()),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn visible_messages_for_widget(messages: &[ChatMessage]) -> Vec<ChatMessage> {
     messages
         .iter()
@@ -6665,12 +6683,31 @@ async fn patch_session_assignee(
     headers: HeaderMap,
     Json(body): Json<SessionAssigneeBody>,
 ) -> impl IntoResponse {
-    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
-        return err.into_response();
-    }
+    let actor = match auth_agent_from_headers(&state, &headers).await {
+        Ok(agent) => agent,
+        Err(err) => return err.into_response(),
+    };
     let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
         Ok(id) => id,
         Err(err) => return err.into_response(),
+    };
+    let previous_assignee: Option<String> = match sqlx::query(
+        "SELECT assignee_agent_id FROM sessions WHERE id = $1",
+    )
+    .bind(&session_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    {
+        Some(row) => row.get("assignee_agent_id"),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "session not found" })),
+            )
+                .into_response()
+        }
     };
     let requested = body
         .agent_id
@@ -6718,6 +6755,34 @@ async fn patch_session_assignee(
             Json(json!({ "error": "session not found" })),
         )
             .into_response();
+    }
+    let assignee_changed = previous_assignee.as_deref() != assignee_agent_id.as_deref();
+    if assignee_changed {
+        let target_label = match assignee_agent_id.as_deref() {
+            Some("__bot__") => "Bot".to_string(),
+            Some(agent_id) => sqlx::query_scalar::<_, String>(
+                "SELECT name FROM agents WHERE id = $1 AND tenant_id = $2",
+            )
+            .bind(agent_id)
+            .bind(&tenant_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "Unknown agent".to_string()),
+            None => "Unassigned".to_string(),
+        };
+        let _ = add_message(
+            state.clone(),
+            &session_id,
+            "system",
+            &format!("{} assigned conversation to {}", actor.name, target_label),
+            None,
+            None,
+            None,
+        )
+        .await;
     }
     let Some(summary) = get_session_summary_db(&state.db, &session_id).await else {
         return (
@@ -6804,9 +6869,30 @@ async fn patch_session_team(
     headers: HeaderMap,
     Json(body): Json<SessionTeamBody>,
 ) -> impl IntoResponse {
-    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
-        return err.into_response();
-    }
+    let actor = match auth_agent_from_headers(&state, &headers).await {
+        Ok(agent) => agent,
+        Err(err) => return err.into_response(),
+    };
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let previous_team_id: Option<String> = match sqlx::query("SELECT team_id FROM sessions WHERE id = $1")
+        .bind(&session_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+    {
+        Some(row) => row.get("team_id"),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "session not found" })),
+            )
+                .into_response()
+        }
+    };
     let affected = sqlx::query("UPDATE sessions SET team_id = $1, updated_at = $2 WHERE id = $3")
         .bind(&body.team_id)
         .bind(now_iso())
@@ -6822,6 +6908,32 @@ async fn patch_session_team(
             Json(json!({ "error": "session not found" })),
         )
             .into_response();
+    }
+    if previous_team_id != body.team_id {
+        let team_label = match body.team_id.as_deref() {
+            Some(team_id) => sqlx::query_scalar::<_, String>(
+                "SELECT name FROM teams WHERE id = $1 AND tenant_id = $2",
+            )
+            .bind(team_id)
+            .bind(&tenant_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "Unknown team".to_string()),
+            None => "No team".to_string(),
+        };
+        let _ = add_message(
+            state.clone(),
+            &session_id,
+            "system",
+            &format!("{} changed team to {}", actor.name, team_label),
+            None,
+            None,
+            None,
+        )
+        .await;
     }
     let Some(summary) = get_session_summary_db(&state.db, &session_id).await else {
         return (
@@ -7030,6 +7142,39 @@ async fn patch_session_meta(
         tokio::spawn(async move {
             run_lifecycle_trigger(st, sid, "conversation_reopened".into()).await;
         });
+    } else if previous_status != next_status {
+        let _ = add_message(
+            state.clone(),
+            &session_id,
+            "system",
+            &format!(
+                "Status changed: {} -> {}",
+                humanize_system_value(&previous_status),
+                humanize_system_value(&next_status)
+            ),
+            None,
+            None,
+            None,
+        )
+        .await;
+    }
+
+    if next_priority != row.get::<String, _>("priority") {
+        let previous_priority: String = row.get("priority");
+        let _ = add_message(
+            state.clone(),
+            &session_id,
+            "system",
+            &format!(
+                "Priority changed: {} -> {}",
+                humanize_system_value(&previous_priority),
+                humanize_system_value(&next_priority)
+            ),
+            None,
+            None,
+            None,
+        )
+        .await;
     }
 
     (StatusCode::OK, Json(json!({ "session": summary }))).into_response()
@@ -9900,15 +10045,46 @@ async fn add_session_tag(
     headers: HeaderMap,
     Json(body): Json<SessionTagBody>,
 ) -> impl IntoResponse {
-    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
-        return err.into_response();
-    }
-    let _ = sqlx::query("INSERT INTO conversation_tags (session_id, tag_id, created_at) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING")
+    let actor = match auth_agent_from_headers(&state, &headers).await {
+        Ok(agent) => agent,
+        Err(err) => return err.into_response(),
+    };
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let inserted = sqlx::query("INSERT INTO conversation_tags (session_id, tag_id, created_at) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING")
         .bind(&session_id)
         .bind(&body.tag_id)
         .bind(now_iso())
         .execute(&state.db)
+        .await
+        .ok()
+        .map(|r| r.rows_affected())
+        .unwrap_or(0);
+    if inserted > 0 {
+        let tag_name = sqlx::query_scalar::<_, String>(
+            "SELECT name FROM tags WHERE id = $1 AND tenant_id = $2",
+        )
+        .bind(&body.tag_id)
+        .bind(&tenant_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "Unknown tag".to_string());
+        let _ = add_message(
+            state.clone(),
+            &session_id,
+            "system",
+            &format!("{} added tag {}", actor.name, tag_name),
+            None,
+            None,
+            None,
+        )
         .await;
+    }
     (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
 }
 
@@ -9917,14 +10093,43 @@ async fn remove_session_tag(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
-        return err.into_response();
-    }
-    let _ = sqlx::query("DELETE FROM conversation_tags WHERE session_id = $1 AND tag_id = $2")
+    let actor = match auth_agent_from_headers(&state, &headers).await {
+        Ok(agent) => agent,
+        Err(err) => return err.into_response(),
+    };
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let tag_name = sqlx::query_scalar::<_, String>("SELECT name FROM tags WHERE id = $1 AND tenant_id = $2")
+        .bind(&tag_id)
+        .bind(&tenant_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "Unknown tag".to_string());
+    let removed = sqlx::query("DELETE FROM conversation_tags WHERE session_id = $1 AND tag_id = $2")
         .bind(&session_id)
         .bind(&tag_id)
         .execute(&state.db)
+        .await
+        .ok()
+        .map(|r| r.rows_affected())
+        .unwrap_or(0);
+    if removed > 0 {
+        let _ = add_message(
+            state.clone(),
+            &session_id,
+            "system",
+            &format!("{} removed tag {}", actor.name, tag_name),
+            None,
+            None,
+            None,
+        )
         .await;
+    }
     (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
 }
 
