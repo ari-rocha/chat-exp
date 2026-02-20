@@ -607,6 +607,51 @@ export default function WorkspaceLayout({
           ) : (
             <div className="flex h-full min-h-0 flex-col bg-white">
               <div className="border-b border-slate-200 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-slate-900">Conversations</p>
+                  <div className="relative" ref={statusFilterMenuRef}>
+                    <button
+                      type="button"
+                      onClick={() => setStatusFilterMenuOpen((prev) => !prev)}
+                      className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] text-slate-700 hover:bg-slate-50"
+                    >
+                      <span
+                        className={`h-2 w-2 rounded-full ${activeStatusFilter.color}`}
+                      />
+                      <span>{activeStatusFilter.label}</span>
+                      <ChevronDown size={12} className="text-slate-500" />
+                    </button>
+                    {statusFilterMenuOpen ? (
+                      <div className="absolute right-0 z-30 mt-1 w-44 rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
+                        {STATUS_FILTER_OPTIONS.map((option) => (
+                          <button
+                            key={option.id}
+                            type="button"
+                            onClick={() => {
+                              setConversationFilter(option.id);
+                              setStatusFilterMenuOpen(false);
+                            }}
+                            className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
+                              option.id === activeStatusFilter.id
+                                ? "bg-blue-50 text-blue-700"
+                                : "text-slate-700 hover:bg-slate-50"
+                            }`}
+                          >
+                            <span className="flex items-center gap-2">
+                              <span
+                                className={`h-2.5 w-2.5 rounded-full ${option.color}`}
+                              />
+                              {option.label}
+                            </span>
+                            {option.id === activeStatusFilter.id ? (
+                              <span className="text-[10px] font-medium">Selected</span>
+                            ) : null}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
                 <div className="relative">
                   <Search
                     className="pointer-events-none absolute left-3 top-2.5 text-slate-400"
