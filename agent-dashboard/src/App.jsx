@@ -303,6 +303,7 @@ export default function App() {
   const [text, setText] = useState("");
   const [conversationSearch, setConversationSearch] = useState("");
   const [conversationFilter, setConversationFilter] = useState("active");
+  const [inboxScope, setInboxScope] = useState("mine");
   const [visitorDraftBySession, setVisitorDraftBySession] = useState({});
   const [cannedReplies, setCannedReplies] = useState([]);
   const [cannedPanelOpen, setCannedPanelOpen] = useState(false);
@@ -394,9 +395,8 @@ export default function App() {
     return session.lastMessage?.text ?? "No messages yet";
   };
 
-  const filteredSessions = useMemo(() => {
-    const query = conversationSearch.trim().toLowerCase();
-    const byStatus = sessions.filter((session) => {
+  const sessionsByStatus = useMemo(() => {
+    return sessions.filter((session) => {
       const status = session.status || "open";
       if (conversationFilter === "active") {
         return status !== "closed";
@@ -404,8 +404,38 @@ export default function App() {
       if (conversationFilter === "all") return true;
       return status === conversationFilter;
     });
-    if (!query) return byStatus;
-    return byStatus.filter((session) => {
+  }, [sessions, conversationFilter]);
+
+  const unreadMentionSessionIds = useMemo(() => {
+    return new Set(
+      (notifications || [])
+        .filter((item) => item.kind === "mention" && !item.readAt && item.sessionId)
+        .map((item) => item.sessionId),
+    );
+  }, [notifications]);
+
+  const sessionsByInboxScope = useMemo(() => {
+    const myAgentId = String(agent?.id || "").trim();
+    return sessionsByStatus.filter((session) => {
+      const assignee = String(session.assigneeAgentId || "").trim();
+      const isUnassigned = !assignee || assignee === "__bot__";
+      if (inboxScope === "mine") {
+        return Boolean(myAgentId) && assignee === myAgentId;
+      }
+      if (inboxScope === "unassigned") {
+        return isUnassigned;
+      }
+      if (inboxScope === "mentions") {
+        return unreadMentionSessionIds.has(session.id);
+      }
+      return true;
+    });
+  }, [sessionsByStatus, inboxScope, agent?.id, unreadMentionSessionIds]);
+
+  const filteredSessions = useMemo(() => {
+    const query = conversationSearch.trim().toLowerCase();
+    if (!query) return sessionsByInboxScope;
+    return sessionsByInboxScope.filter((session) => {
       const draft = visitorDraftBySession[session.id];
       const preview = (
         draft
@@ -416,11 +446,30 @@ export default function App() {
       return id.includes(query) || preview.includes(query);
     });
   }, [
-    sessions,
+    sessionsByInboxScope,
     conversationSearch,
-    conversationFilter,
     visitorDraftBySession,
   ]);
+
+  const inboxCounts = useMemo(() => {
+    const myAgentId = String(agent?.id || "").trim();
+    const mine = sessionsByStatus.filter(
+      (session) => String(session.assigneeAgentId || "").trim() === myAgentId,
+    ).length;
+    const unassigned = sessionsByStatus.filter((session) => {
+      const assignee = String(session.assigneeAgentId || "").trim();
+      return !assignee || assignee === "__bot__";
+    }).length;
+    const mentions = sessionsByStatus.filter((session) =>
+      unreadMentionSessionIds.has(session.id),
+    ).length;
+    return {
+      mine,
+      unassigned,
+      mentions,
+      all: sessionsByStatus.length,
+    };
+  }, [sessionsByStatus, unreadMentionSessionIds, agent?.id]);
 
   const openCount = useMemo(
     () =>
@@ -1708,6 +1757,9 @@ export default function App() {
           closedCount={closedCount}
           conversationFilter={conversationFilter}
           setConversationFilter={setConversationFilter}
+          inboxScope={inboxScope}
+          setInboxScope={setInboxScope}
+          inboxCounts={inboxCounts}
           agent={agent}
           updateAgentStatus={updateAgentStatus}
           channelCounts={channelCounts}

@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  AtSign,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -16,6 +17,7 @@ import {
   Search,
   Settings,
   Smile,
+  UserMinus,
   UserRound,
   Workflow,
   X,
@@ -37,6 +39,13 @@ const STATUS_ITEMS = [
   { id: "open", label: "Agent" },
   { id: "awaiting", label: "Awaiting agent" },
   { id: "closed", label: "Paused" },
+];
+
+const AGENT_INBOX_ITEMS = [
+  { id: "mine", label: "Mine", icon: MessageSquare },
+  { id: "unassigned", label: "Unassigned", icon: UserMinus },
+  { id: "mentions", label: "Mentions", icon: AtSign },
+  { id: "all", label: "All", icon: Inbox },
 ];
 
 function titleCase(value) {
@@ -97,6 +106,9 @@ export default function WorkspaceLayout({
   closedCount,
   conversationFilter,
   setConversationFilter,
+  inboxScope = "mine",
+  setInboxScope,
+  inboxCounts = {},
   agent,
   updateAgentStatus,
   channelCounts,
@@ -117,7 +129,8 @@ export default function WorkspaceLayout({
   });
   const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false);
   const [sidebarSections, setSidebarSections] = useState({
-    status: true,
+    inbox: true,
+    status: false,
     channel: true,
     agent: true,
   });
@@ -175,6 +188,37 @@ export default function WorkspaceLayout({
   const toggleDesktopPanel = (key) => {
     setCollapsedPanels((prev) => ({ ...prev, [key]: !prev[key] }));
   };
+  const renderInboxScopeTabs = (className = "") => (
+    <div className={`flex items-center gap-1 overflow-x-auto py-1 ${className}`.trim()}>
+      {AGENT_INBOX_ITEMS.map((item) => {
+        const count =
+          Number(inboxCounts?.[item.id] ?? 0) ||
+          (item.id === "all" ? sessions.length : 0);
+        const isActive = inboxScope === item.id;
+        return (
+          <button
+            key={`scope-tab-${item.id}`}
+            type="button"
+            onClick={() => setInboxScope?.(item.id)}
+            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition ${
+              isActive
+                ? "border-blue-200 bg-blue-50 text-blue-700"
+                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            <span>{item.label}</span>
+            <span
+              className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                isActive ? "bg-white/80 text-blue-700" : "bg-slate-100 text-slate-500"
+              }`}
+            >
+              {count}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
 
   return (
     <div className="conversation-workspace h-full w-full">
@@ -224,7 +268,7 @@ export default function WorkspaceLayout({
         </aside>
 
         {showDesktopSidebar ? (
-          <aside className="crm-sidebar-panel relative flex min-h-0 flex-col border-r border-slate-200 bg-[#fbfcfe]">
+          <aside className="crm-sidebar-panel relative flex min-h-0 flex-col border-r border-slate-200 bg-white">
             {viewportWidth > 1280 ? (
               <button
                 type="button"
@@ -258,6 +302,52 @@ export default function WorkspaceLayout({
             </div>
 
             <div className="space-y-4 p-4">
+              <div>
+                <button
+                  type="button"
+                  className="mb-2 flex w-full items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-slate-500"
+                  onClick={() => toggleSidebarSection("inbox")}
+                >
+                  <span>Inbox</span>
+                  {sidebarSections.inbox ? (
+                    <ChevronDown size={14} className="text-slate-400" />
+                  ) : (
+                    <ChevronRight size={14} className="text-slate-400" />
+                  )}
+                </button>
+                {sidebarSections.inbox ? (
+                  <div className="space-y-1.5">
+                    {AGENT_INBOX_ITEMS.map((item) => {
+                      const Icon = item.icon;
+                      const count =
+                        Number(inboxCounts?.[item.id] ?? 0) ||
+                        (item.id === "all" ? sessions.length : 0);
+                      const isActive = inboxScope === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => setInboxScope?.(item.id)}
+                          className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-left text-xs ${
+                            isActive
+                              ? "border-blue-200 bg-blue-50 text-blue-700"
+                              : "border-slate-200 bg-white text-slate-600"
+                          }`}
+                        >
+                          <span className="flex items-center gap-1.5">
+                            <Icon size={12} />
+                            {item.label}
+                          </span>
+                          <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
+                            {count}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+
               <div>
                 <button
                   type="button"
@@ -411,6 +501,7 @@ export default function WorkspaceLayout({
                     className="h-9 rounded-lg border-slate-200 bg-white pl-8"
                   />
                 </div>
+                {renderInboxScopeTabs("mt-2")}
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-2">
                 <div className="space-y-1.5">
@@ -489,6 +580,9 @@ export default function WorkspaceLayout({
                           ))}
                         </select>
                       </div>
+                      <div className="border-b border-slate-200 px-3 py-2">
+                        {renderInboxScopeTabs()}
+                      </div>
 
                       <ScrollArea className="h-full p-2">
                         <div className="space-y-1.5">
@@ -499,7 +593,7 @@ export default function WorkspaceLayout({
                                 key={session.id}
                                 type="button"
                                 onClick={() => setActiveId(session.id)}
-                                className={`w-full rounded-xl border px-3 py-2 text-left transition ${
+                                className={`crm-session-item w-full rounded-xl border px-3 py-2 text-left transition ${
                                   isActive
                                     ? "border-blue-200 bg-blue-50"
                                     : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"

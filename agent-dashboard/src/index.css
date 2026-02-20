@@ -464,7 +464,7 @@
     font-weight: 700;
 }
 
-.crm-list button {
+.crm-list .crm-session-item {
     min-height: 74px;
 }
 
