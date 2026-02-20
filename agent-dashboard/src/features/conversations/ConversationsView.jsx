@@ -1019,7 +1019,7 @@ export default function ConversationsView({
                             <ChevronRight size={13} />
                           </button>
                           {snoozeMenuOpen ? (
-                            <div className="absolute left-full top-0 z-50 ml-1 w-56 rounded-md border border-slate-200 bg-white p-1 shadow-xl">
+                            <div className="absolute left-full top-0 z-50 ml-1 w-56 rounded-md border border-slate-200 bg-white p-1 shadow-xl max-[1024px]:left-auto max-[1024px]:right-0 max-[1024px]:top-full max-[1024px]:ml-0 max-[1024px]:mt-1">
                               <p className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-400">
                                 Snooze until
                               </p>
