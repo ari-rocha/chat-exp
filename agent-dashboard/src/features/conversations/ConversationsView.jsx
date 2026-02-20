@@ -376,7 +376,6 @@ export default function ConversationsView({
   });
   const fileInputRef = useRef(null);
   const emojiPanelRef = useRef(null);
-  const templatePanelRef = useRef(null);
   const mentionPanelRef = useRef(null);
   const textareaRef = useRef(null);
   const statusMenuRef = useRef(null);
@@ -406,12 +405,6 @@ export default function ConversationsView({
         !emojiPanelRef.current.contains(event.target)
       ) {
         setEmojiOpen(false);
-      }
-      if (
-        templatePanelRef.current &&
-        !templatePanelRef.current.contains(event.target)
-      ) {
-        setWaTemplatesOpen(false);
       }
       if (
         statusMenuRef.current &&
@@ -943,6 +936,9 @@ export default function ConversationsView({
       return String(value || `{{${raw}}}`);
     });
   })();
+  const hasMissingTemplateParams =
+    waTemplateParams.length > 0 &&
+    waTemplateParams.some((value) => !String(value || "").trim());
 
   const toggleSidebarPanel = (key) =>
     setSidebarPanels((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -1750,140 +1746,23 @@ export default function ConversationsView({
 
                   <div className="flex items-center gap-1.5">
                     {canUseTemplates ? (
-                      <div className="relative" ref={templatePanelRef}>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          className="h-8 rounded-lg px-2 text-[11px]"
-                          onClick={() => {
-                            if (waTemplatesOpen) {
-                              setWaTemplatesOpen(false);
-                            } else {
-                              void openWaTemplates();
-                            }
-                          }}
-                          disabled={!activeId || waTemplateSending}
-                        >
-                          <ClipboardList size={13} className="mr-1" />
-                          WhatsApp Template
-                        </Button>
-                        {waTemplatesOpen ? (
-                          <div className="absolute bottom-10 right-0 z-50 w-80 rounded-lg border border-slate-200 bg-white p-2 shadow-xl">
-                            <Input
-                              value={waTemplateQuery}
-                              onChange={(e) =>
-                                setWaTemplateQuery(e.target.value)
-                              }
-                              placeholder="Search templates"
-                              className="h-8 text-xs"
-                            />
-                            <div className="mt-2 max-h-64 space-y-1 overflow-y-auto pr-1">
-                              {waTemplatesLoading ? (
-                                <p className="text-xs text-slate-500">
-                                  Loading templates...
-                                </p>
-                              ) : null}
-                              {waTemplatesError ? (
-                                <p className="text-xs text-red-600">
-                                  {waTemplatesError}
-                                </p>
-                              ) : null}
-                              {!waTemplatesLoading &&
-                              filteredWaTemplates.length === 0 ? (
-                                <p className="text-xs text-slate-500">
-                                  No templates found.
-                                </p>
-                              ) : null}
-                              {filteredWaTemplates.map((tpl) => (
-                                <button
-                                  key={`${tpl.name}-${tpl.language || "lang"}`}
-                                  type="button"
-                                  className="w-full rounded-md border border-slate-200 p-2 text-left hover:bg-slate-50"
-                                  onClick={() => selectTemplateForParams(tpl)}
-                                  disabled={waTemplateSending}
-                                >
-                                  <p className="text-xs font-semibold text-slate-800">
-                                    {tpl.name}
-                                  </p>
-                                  <p className="text-[10px] text-slate-500">
-                                    {(tpl.language || "en_US").toUpperCase()} •{" "}
-                                    {tpl.status || "UNKNOWN"}
-                                  </p>
-                                  {tpl.bodyPreview ? (
-                                    <p className="mt-1 line-clamp-2 text-[11px] text-slate-600">
-                                      {tpl.bodyPreview}
-                                    </p>
-                                  ) : null}
-                                </button>
-                              ))}
-                            </div>
-                            {waSelectedTemplate ? (
-                              <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-2">
-                                <p className="text-xs font-semibold text-slate-800">
-                                  {waSelectedTemplate.name}
-                                </p>
-                                {waTemplateParams.length > 0 ? (
-                                  <div className="mt-2 space-y-1.5">
-                                    {waTemplateParams.map((value, idx) => (
-                                      <Input
-                                        key={`${waSelectedTemplate.name}-param-${idx}`}
-                                        value={value}
-                                        onChange={(e) =>
-                                          setWaTemplateParams((prev) =>
-                                            prev.map((v, i) =>
-                                              i === idx ? e.target.value : v,
-                                            ),
-                                          )
-                                        }
-                                        placeholder={`Parameter ${idx + 1}`}
-                                        className="h-8 text-xs"
-                                      />
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <p className="mt-1 text-[11px] text-slate-500">
-                                    No parameters required.
-                                  </p>
-                                )}
-                                {renderedWaPreview ? (
-                                  <p className="mt-2 rounded border border-slate-200 bg-white p-1.5 text-[11px] text-slate-700">
-                                    {renderedWaPreview}
-                                  </p>
-                                ) : null}
-                                <div className="mt-2 flex items-center justify-end gap-1.5">
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    className="h-7 px-2 text-[11px]"
-                                    onClick={() => {
-                                      setWaSelectedTemplate(null);
-                                      setWaTemplateParams([]);
-                                    }}
-                                    disabled={waTemplateSending}
-                                  >
-                                    Cancel
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    className="h-7 px-2 text-[11px]"
-                                    onClick={() =>
-                                      void sendTemplate(waSelectedTemplate)
-                                    }
-                                    disabled={waTemplateSending}
-                                  >
-                                    {waTemplateSending
-                                      ? "Sending..."
-                                      : "Send Template"}
-                                  </Button>
-                                </div>
-                              </div>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-8 rounded-lg px-2 text-[11px]"
+                        onClick={() => {
+                          if (waTemplatesOpen) {
+                            setWaTemplatesOpen(false);
+                          } else {
+                            void openWaTemplates();
+                          }
+                        }}
+                        disabled={!activeId || waTemplateSending}
+                      >
+                        <ClipboardList size={13} className="mr-1" />
+                        WhatsApp Template
+                      </Button>
                     ) : null}
                     <Button
                       type="submit"
@@ -2303,6 +2182,198 @@ export default function ConversationsView({
           </aside>
         }
       />
+      {waTemplatesOpen ? (
+        <div className="fixed inset-0 z-[120] flex items-end bg-black/35 p-0 min-[768px]:items-center min-[768px]:justify-center min-[768px]:p-4">
+          <div className="flex h-[84vh] w-full flex-col rounded-t-2xl border border-slate-200 bg-white shadow-2xl min-[768px]:h-[min(84vh,760px)] min-[768px]:max-w-5xl min-[768px]:rounded-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">
+                  WhatsApp Templates
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  Choose a template and fill required parameters.
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-8 w-8 rounded-md p-0 text-slate-500"
+                onClick={() => {
+                  setWaTemplatesOpen(false);
+                  setWaSelectedTemplate(null);
+                  setWaTemplateParams([]);
+                  setWaTemplateQuery("");
+                  setWaTemplatesError("");
+                }}
+              >
+                <X size={14} />
+              </Button>
+            </div>
+
+            <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] min-[900px]:grid-cols-[340px_minmax(0,1fr)] min-[900px]:grid-rows-[minmax(0,1fr)]">
+              <section className="min-h-0 border-b border-slate-200 p-3 min-[900px]:border-b-0 min-[900px]:border-r">
+                <Input
+                  value={waTemplateQuery}
+                  onChange={(e) => setWaTemplateQuery(e.target.value)}
+                  placeholder="Search templates..."
+                  className="h-9 text-xs"
+                />
+                <div className="mt-2 h-[calc(100%-44px)] overflow-y-auto pr-1">
+                  {waTemplatesLoading ? (
+                    <p className="px-1 py-2 text-xs text-slate-500">
+                      Loading templates...
+                    </p>
+                  ) : null}
+                  {waTemplatesError ? (
+                    <p className="px-1 py-2 text-xs text-red-600">{waTemplatesError}</p>
+                  ) : null}
+                  {!waTemplatesLoading && filteredWaTemplates.length === 0 ? (
+                    <p className="px-1 py-2 text-xs text-slate-500">
+                      No templates found.
+                    </p>
+                  ) : null}
+                  <div className="space-y-1.5">
+                    {filteredWaTemplates.map((tpl) => {
+                      const selected =
+                        waSelectedTemplate?.name === tpl.name &&
+                        waSelectedTemplate?.language === tpl.language;
+                      return (
+                        <button
+                          key={`${tpl.name}-${tpl.language || "lang"}`}
+                          type="button"
+                          className={`w-full rounded-md border p-2 text-left ${
+                            selected
+                              ? "border-blue-200 bg-blue-50"
+                              : "border-slate-200 hover:bg-slate-50"
+                          }`}
+                          onClick={() => selectTemplateForParams(tpl)}
+                          disabled={waTemplateSending}
+                        >
+                          <p className="text-xs font-semibold text-slate-800">
+                            {tpl.name}
+                          </p>
+                          <p className="text-[10px] text-slate-500">
+                            {(tpl.language || "en_US").toUpperCase()} •{" "}
+                            {tpl.status || "UNKNOWN"}
+                          </p>
+                          {tpl.bodyPreview ? (
+                            <p className="mt-1 line-clamp-2 text-[11px] text-slate-600">
+                              {tpl.bodyPreview}
+                            </p>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </section>
+
+              <section className="min-h-0 p-3">
+                {waSelectedTemplate ? (
+                  <div className="flex h-full min-h-0 flex-col">
+                    <div className="mb-2">
+                      <p className="text-sm font-semibold text-slate-900">
+                        {waSelectedTemplate.name}
+                      </p>
+                      <p className="text-[11px] text-slate-500">
+                        {(waSelectedTemplate.language || "en_US").toUpperCase()}
+                      </p>
+                    </div>
+                    <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+                      {waTemplateParams.length > 0 ? (
+                        <div className="space-y-2">
+                          {waTemplateParams.map((value, idx) => (
+                            <div
+                              key={`${waSelectedTemplate.name}-param-${idx}`}
+                              className="space-y-1"
+                            >
+                              <label className="block text-[11px] font-medium text-slate-600">
+                                Parameter {idx + 1}
+                              </label>
+                              <Input
+                                value={value}
+                                onChange={(e) =>
+                                  setWaTemplateParams((prev) =>
+                                    prev.map((v, i) =>
+                                      i === idx ? e.target.value : v,
+                                    ),
+                                  )
+                                }
+                                placeholder={`Enter parameter ${idx + 1}`}
+                                className="h-9 text-xs"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-500">
+                          This template has no parameters.
+                        </p>
+                      )}
+                      {renderedWaPreview ? (
+                        <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-2">
+                          <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">
+                            Preview
+                          </p>
+                          <p className="whitespace-pre-wrap text-xs text-slate-700">
+                            {renderedWaPreview}
+                          </p>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex h-full items-center justify-center rounded-md border border-dashed border-slate-200 bg-slate-50 text-xs text-slate-500">
+                    Select a template to continue.
+                  </div>
+                )}
+              </section>
+            </div>
+
+            <div className="flex items-center justify-between border-t border-slate-200 px-3 py-2">
+              <p className="text-[11px] text-slate-500">
+                {waSelectedTemplate
+                  ? hasMissingTemplateParams
+                    ? "Fill all parameters to send."
+                    : "Template ready to send."
+                  : "Choose a template first."}
+              </p>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-8 px-3 text-xs"
+                  onClick={() => {
+                    setWaTemplatesOpen(false);
+                    setWaSelectedTemplate(null);
+                    setWaTemplateParams([]);
+                    setWaTemplateQuery("");
+                    setWaTemplatesError("");
+                  }}
+                  disabled={waTemplateSending}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-8 px-3 text-xs"
+                  onClick={() => waSelectedTemplate && void sendTemplate(waSelectedTemplate)}
+                  disabled={
+                    waTemplateSending ||
+                    !waSelectedTemplate ||
+                    hasMissingTemplateParams
+                  }
+                >
+                  {waTemplateSending ? "Sending..." : "Send Template"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {lightbox?.url ? (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 p-5"
