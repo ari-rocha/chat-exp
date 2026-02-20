@@ -27,7 +27,7 @@ use chrono::{Duration as ChronoDuration, Utc};
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use hmac::{Hmac, Mac};
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::Sha256;
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
@@ -1658,6 +1658,186 @@ async fn emit_to_clients<T: Serialize + Clone>(
 
     for sender in senders {
         let _ = sender.send(payload.clone());
+    }
+}
+
+async fn agent_client_ids_for_agent(state: &Arc<AppState>, agent_id: &str) -> Vec<usize> {
+    let rt = state.realtime.lock().await;
+    rt.agent_profiles
+        .iter()
+        .filter_map(|(client_id, profile)| {
+            if profile.id == agent_id {
+                Some(*client_id)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>()
+}
+
+fn mention_handles_from_text(text: &str) -> Vec<String> {
+    let Ok(regex) = Regex::new(r"@([a-zA-Z0-9._-]{1,64})") else {
+        return Vec::new();
+    };
+    let mut handles = Vec::new();
+    let mut seen = HashSet::new();
+    for caps in regex.captures_iter(text) {
+        let Some(matched) = caps.get(1) else {
+            continue;
+        };
+        let handle = matched.as_str().trim().to_ascii_lowercase();
+        if handle.is_empty() || seen.contains(&handle) {
+            continue;
+        }
+        seen.insert(handle.clone());
+        handles.push(handle);
+    }
+    handles
+}
+
+fn mention_keys_for_agent(name: &str, email: &str) -> Vec<String> {
+    let mut keys = HashSet::new();
+    let normalized_email = normalize_email(email);
+    if !normalized_email.is_empty() {
+        keys.insert(normalized_email.clone());
+        if let Some(local) = normalized_email.split('@').next() {
+            if !local.is_empty() {
+                keys.insert(local.to_string());
+            }
+        }
+    }
+
+    let lower_name = name.trim().to_ascii_lowercase();
+    if !lower_name.is_empty() {
+        keys.insert(lower_name.clone());
+        keys.insert(lower_name.replace(' ', ""));
+        for part in lower_name.split_whitespace() {
+            if !part.is_empty() {
+                keys.insert(part.to_string());
+            }
+        }
+    }
+    keys.into_iter().collect::<Vec<_>>()
+}
+
+async fn resolve_mentioned_agent_ids(
+    state: &Arc<AppState>,
+    tenant_id: &str,
+    text: &str,
+) -> Vec<String> {
+    let handles = mention_handles_from_text(text);
+    if handles.is_empty() {
+        return Vec::new();
+    }
+    let handle_set = handles.into_iter().collect::<HashSet<_>>();
+    let rows = sqlx::query("SELECT id, name, email FROM agents WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+    let mut agent_ids = Vec::new();
+    let mut seen = HashSet::new();
+    for row in rows {
+        let agent_id: String = row.get("id");
+        let name: String = row.get("name");
+        let email: String = row.get("email");
+        let keys = mention_keys_for_agent(&name, &email);
+        if keys.iter().any(|key| handle_set.contains(key)) && !seen.contains(&agent_id) {
+            seen.insert(agent_id.clone());
+            agent_ids.push(agent_id);
+        }
+    }
+    agent_ids
+}
+
+async fn create_agent_notification(
+    state: Arc<AppState>,
+    tenant_id: &str,
+    agent_id: &str,
+    session_id: &str,
+    message_id: Option<&str>,
+    kind: &str,
+    title: &str,
+    body: &str,
+) -> Option<AgentNotification> {
+    let notification = AgentNotification {
+        id: Uuid::new_v4().to_string(),
+        tenant_id: tenant_id.to_string(),
+        agent_id: agent_id.to_string(),
+        session_id: session_id.to_string(),
+        message_id: message_id.map(|value| value.to_string()),
+        kind: kind.to_string(),
+        title: title.to_string(),
+        body: body.to_string(),
+        read_at: None,
+        created_at: now_iso(),
+    };
+    let inserted = sqlx::query(
+        "INSERT INTO agent_notifications (id, tenant_id, agent_id, session_id, message_id, kind, title, body, read_at, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+    )
+    .bind(&notification.id)
+    .bind(&notification.tenant_id)
+    .bind(&notification.agent_id)
+    .bind(&notification.session_id)
+    .bind(&notification.message_id)
+    .bind(&notification.kind)
+    .bind(&notification.title)
+    .bind(&notification.body)
+    .bind(&notification.read_at)
+    .bind(&notification.created_at)
+    .execute(&state.db)
+    .await
+    .is_ok();
+    if !inserted {
+        return None;
+    }
+
+    let unread_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(1) FROM agent_notifications WHERE agent_id = $1 AND read_at IS NULL",
+    )
+    .bind(agent_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
+    let payload = json!({
+        "notification": notification,
+        "unreadCount": unread_count
+    });
+    let targets = agent_client_ids_for_agent(&state, agent_id).await;
+    emit_to_clients(&state, &targets, "notification:new", payload).await;
+    Some(notification)
+}
+
+async fn dispatch_internal_note_mentions(
+    state: Arc<AppState>,
+    tenant_id: &str,
+    session_id: &str,
+    message: &ChatMessage,
+    author: &AgentProfile,
+) {
+    if message.sender != "team" || message.text.trim().is_empty() {
+        return;
+    }
+    let mentioned_ids = resolve_mentioned_agent_ids(&state, tenant_id, &message.text).await;
+    if mentioned_ids.is_empty() {
+        return;
+    }
+    let body = message.text.trim().to_string();
+    for target_agent_id in mentioned_ids {
+        if target_agent_id == author.id {
+            continue;
+        }
+        let _ = create_agent_notification(
+            state.clone(),
+            tenant_id,
+            &target_agent_id,
+            session_id,
+            Some(&message.id),
+            "mention",
+            &format!("{} mentioned you", author.name),
+            &body,
+        )
+        .await;
     }
 }
 
@@ -7690,6 +7870,126 @@ async fn get_notes(
     (StatusCode::OK, Json(json!({ "notes": notes }))).into_response()
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NotificationsQuery {
+    #[serde(default)]
+    unread_only: bool,
+}
+
+async fn get_notifications(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<NotificationsQuery>,
+) -> impl IntoResponse {
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(agent) => agent,
+        Err(err) => return err.into_response(),
+    };
+    let unread_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(1) FROM agent_notifications WHERE agent_id = $1 AND read_at IS NULL",
+    )
+    .bind(&agent.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
+
+    let rows = if query.unread_only {
+        sqlx::query(
+            "SELECT id, tenant_id, agent_id, session_id, message_id, kind, title, body, read_at, created_at
+             FROM agent_notifications
+             WHERE agent_id = $1 AND read_at IS NULL
+             ORDER BY created_at DESC
+             LIMIT 200",
+        )
+        .bind(&agent.id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+    } else {
+        sqlx::query(
+            "SELECT id, tenant_id, agent_id, session_id, message_id, kind, title, body, read_at, created_at
+             FROM agent_notifications
+             WHERE agent_id = $1
+             ORDER BY created_at DESC
+             LIMIT 400",
+        )
+        .bind(&agent.id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+    };
+    let notifications = rows
+        .into_iter()
+        .map(|row| AgentNotification {
+            id: row.get("id"),
+            tenant_id: row.get("tenant_id"),
+            agent_id: row.get("agent_id"),
+            session_id: row.get("session_id"),
+            message_id: row.get("message_id"),
+            kind: row.get("kind"),
+            title: row.get("title"),
+            body: row.get("body"),
+            read_at: row.get("read_at"),
+            created_at: row.get("created_at"),
+        })
+        .collect::<Vec<_>>();
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "notifications": notifications,
+            "unreadCount": unread_count
+        })),
+    )
+        .into_response()
+}
+
+async fn mark_notification_read(
+    Path(notification_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(agent) => agent,
+        Err(err) => return err.into_response(),
+    };
+    let _ = sqlx::query(
+        "UPDATE agent_notifications SET read_at = $1 WHERE id = $2 AND agent_id = $3 AND read_at IS NULL",
+    )
+    .bind(now_iso())
+    .bind(&notification_id)
+    .bind(&agent.id)
+    .execute(&state.db)
+    .await;
+    let unread_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(1) FROM agent_notifications WHERE agent_id = $1 AND read_at IS NULL",
+    )
+    .bind(&agent.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
+    (StatusCode::OK, Json(json!({ "ok": true, "unreadCount": unread_count }))).into_response()
+}
+
+async fn mark_all_notifications_read(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(agent) => agent,
+        Err(err) => return err.into_response(),
+    };
+    let _ = sqlx::query(
+        "UPDATE agent_notifications SET read_at = $1 WHERE agent_id = $2 AND read_at IS NULL",
+    )
+    .bind(now_iso())
+    .bind(&agent.id)
+    .execute(&state.db)
+    .await;
+    (StatusCode::OK, Json(json!({ "ok": true, "unreadCount": 0 }))).into_response()
+}
+
 async fn whatsapp_webhook_verify(
     Path(channel_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
@@ -10859,7 +11159,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         let rt = state.realtime.lock().await;
                         rt.agent_profiles.get(&client_id).cloned()
                     };
-                    let _ = add_message(
+                    let created = add_message(
                         state.clone(),
                         session_id,
                         sender,
@@ -10869,6 +11169,32 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         agent_profile.as_ref(),
                     )
                     .await;
+                    if internal {
+                        if let (Some(message), Some(author)) = (created.as_ref(), agent_profile.as_ref()) {
+                            let tenant_id = {
+                                let rt = state.realtime.lock().await;
+                                rt.agent_tenant_by_client
+                                    .get(&client_id)
+                                    .cloned()
+                                    .unwrap_or_default()
+                            };
+                            let resolved_tenant = if tenant_id.is_empty() {
+                                tenant_for_session(&state, session_id).await.unwrap_or_default()
+                            } else {
+                                tenant_id
+                            };
+                            if !resolved_tenant.is_empty() {
+                                dispatch_internal_note_mentions(
+                                    state.clone(),
+                                    &resolved_tenant,
+                                    session_id,
+                                    message,
+                                    author,
+                                )
+                                .await;
+                            }
+                        }
+                    }
                 }
             }
             "agent:attachment" => {
@@ -10937,7 +11263,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         let rt = state.realtime.lock().await;
                         rt.agent_profiles.get(&client_id).cloned()
                     };
-                    let _ = add_message(
+                    let created = add_message(
                         state.clone(),
                         session_id,
                         sender,
@@ -10947,6 +11273,32 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         agent_profile.as_ref(),
                     )
                     .await;
+                    if internal {
+                        if let (Some(message), Some(author)) = (created.as_ref(), agent_profile.as_ref()) {
+                            let tenant_id = {
+                                let rt = state.realtime.lock().await;
+                                rt.agent_tenant_by_client
+                                    .get(&client_id)
+                                    .cloned()
+                                    .unwrap_or_default()
+                            };
+                            let resolved_tenant = if tenant_id.is_empty() {
+                                tenant_for_session(&state, session_id).await.unwrap_or_default()
+                            } else {
+                                tenant_id
+                            };
+                            if !resolved_tenant.is_empty() {
+                                dispatch_internal_note_mentions(
+                                    state.clone(),
+                                    &resolved_tenant,
+                                    session_id,
+                                    message,
+                                    author,
+                                )
+                                .await;
+                            }
+                        }
+                    }
                 }
             }
             _ => {}
@@ -11083,6 +11435,15 @@ pub async fn run() {
         )
         .route("/api/agent/status", patch(patch_agent_status))
         .route("/api/agent/profile", patch(patch_agent_profile))
+        .route("/api/notifications", get(get_notifications))
+        .route(
+            "/api/notifications/read-all",
+            post(mark_all_notifications_read),
+        )
+        .route(
+            "/api/notifications/{notification_id}/read",
+            patch(mark_notification_read),
+        )
         .route("/api/contacts", get(get_contacts).post(create_contact))
         .route(
             "/api/contacts/{contact_id}",

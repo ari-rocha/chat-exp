@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleUserRound,
+  Inbox,
   MessageSquare,
   Search,
   Settings,
@@ -23,6 +24,7 @@ import { useEffect, useState } from "react";
 
 const NAV_ITEMS = [
   { id: "conversations", icon: MessageSquare, title: "Conversations" },
+  { id: "inbox", icon: Inbox, title: "Inbox" },
   { id: "flows", icon: Workflow, title: "Flow Builder" },
   { id: "contacts", icon: UserRound, title: "Contacts" },
   { id: "settings", icon: Settings, title: "Settings" },
@@ -107,6 +109,7 @@ export default function WorkspaceLayout({
   detailsPanel,
   showConversationPanels = true,
   onOpenSettings,
+  unreadNotificationsCount = 0,
 }) {
   const [viewportWidth, setViewportWidth] = useState(() => {
     if (typeof window === "undefined") return 1440;
@@ -197,10 +200,15 @@ export default function WorkspaceLayout({
                       setView(item.id);
                     }
                   }}
-                  className={`crm-rail-btn ${isActive ? "active" : ""}`}
+                  className={`crm-rail-btn relative ${isActive ? "active" : ""}`}
                   title={item.title}
                 >
                   <Icon size={16} />
+                  {item.id === "inbox" && unreadNotificationsCount > 0 ? (
+                    <span className="absolute -right-0.5 -top-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-semibold text-white">
+                      {Math.min(99, unreadNotificationsCount)}
+                    </span>
+                  ) : null}
                 </button>
               );
             })}

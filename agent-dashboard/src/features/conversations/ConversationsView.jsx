@@ -324,6 +324,7 @@ export default function ConversationsView({
   patchSessionContact,
   tenantSettings,
   onOpenSettings,
+  unreadNotificationsCount = 0,
   listWhatsappTemplates,
   sendWhatsappTemplate,
 }) {
@@ -340,6 +341,9 @@ export default function ConversationsView({
   const [waTemplateParams, setWaTemplateParams] = useStateReact([]);
   const [statusMenuOpen, setStatusMenuOpen] = useStateReact(false);
   const [moreMenuOpen, setMoreMenuOpen] = useStateReact(false);
+  const [mentionOpen, setMentionOpen] = useStateReact(false);
+  const [mentionQuery, setMentionQuery] = useStateReact("");
+  const [mentionStart, setMentionStart] = useStateReact(-1);
   const [sidebarPanels, setSidebarPanels] = useStateReact({
     actions: true,
     conversationInfo: false,
@@ -351,6 +355,7 @@ export default function ConversationsView({
   const fileInputRef = useRef(null);
   const emojiPanelRef = useRef(null);
   const templatePanelRef = useRef(null);
+  const mentionPanelRef = useRef(null);
   const textareaRef = useRef(null);
   const statusMenuRef = useRef(null);
   const moreMenuRef = useRef(null);
@@ -392,6 +397,12 @@ export default function ConversationsView({
       }
       if (moreMenuRef.current && !moreMenuRef.current.contains(event.target)) {
         setMoreMenuOpen(false);
+      }
+      if (
+        mentionPanelRef.current &&
+        !mentionPanelRef.current.contains(event.target)
+      ) {
+        setMentionOpen(false);
       }
     };
     document.addEventListener("mousedown", onDocPointer);
@@ -472,6 +483,34 @@ export default function ConversationsView({
     activeStatus === "closed"
       ? { value: "open", label: "Reopen" }
       : { value: "resolved", label: "Resolve" };
+  const mentionHandleForAgent = (item) => {
+    const email = String(item?.email || "").trim().toLowerCase();
+    const emailLocal = email.includes("@") ? email.split("@")[0] : "";
+    const candidate = emailLocal || String(item?.name || "").toLowerCase();
+    const normalized = candidate.replace(/[^a-z0-9._-]/g, "");
+    return normalized || "agent";
+  };
+  const mentionSuggestions = (agents || [])
+    .map((item) => ({
+      ...item,
+      mentionHandle: mentionHandleForAgent(item),
+    }))
+    .filter((item) => {
+      if (!mentionQuery.trim()) return true;
+      const q = mentionQuery.trim().toLowerCase();
+      return (
+        String(item.name || "")
+          .toLowerCase()
+          .includes(q) ||
+        String(item.email || "")
+          .toLowerCase()
+          .includes(q) ||
+        String(item.mentionHandle || "")
+          .toLowerCase()
+          .includes(q)
+      );
+    })
+    .slice(0, 6);
 
   const canSendNow =
     Boolean(activeId) &&
@@ -495,11 +534,18 @@ export default function ConversationsView({
       internal: messageAudience === "team",
     });
     setText("");
+    setMentionOpen(false);
+    setMentionQuery("");
+    setMentionStart(-1);
     setMessageAudience("user");
     setCannedPanelOpen(false);
   };
 
   const handleComposerKeyDown = (e) => {
+    if (mentionOpen && e.key === "Escape") {
+      setMentionOpen(false);
+      return;
+    }
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
       void submitComposerPayload();
@@ -588,6 +634,51 @@ export default function ConversationsView({
   const handleComposerSubmit = async (e) => {
     e.preventDefault();
     await submitComposerPayload();
+  };
+
+  const updateMentionContext = (nextText, cursorIndex, audience) => {
+    if (audience !== "team") {
+      setMentionOpen(false);
+      setMentionQuery("");
+      setMentionStart(-1);
+      return;
+    }
+    const cursor = Number.isFinite(cursorIndex) ? cursorIndex : nextText.length;
+    const before = String(nextText || "").slice(0, cursor);
+    const match = before.match(/(^|\s)@([a-zA-Z0-9._-]*)$/);
+    if (!match) {
+      setMentionOpen(false);
+      setMentionQuery("");
+      setMentionStart(-1);
+      return;
+    }
+    const atIndex = before.lastIndexOf("@");
+    if (atIndex < 0) {
+      setMentionOpen(false);
+      return;
+    }
+    setMentionQuery(match[2] || "");
+    setMentionStart(atIndex);
+    setMentionOpen(true);
+  };
+
+  const insertMention = (item) => {
+    const handle = mentionHandleForAgent(item);
+    if (!handle) return;
+    const el = textareaRef.current;
+    const cursor = el?.selectionStart ?? text.length;
+    const start = mentionStart >= 0 ? mentionStart : cursor;
+    const nextText = `${text.slice(0, start)}@${handle} ${text.slice(cursor)}`;
+    const nextCursor = start + handle.length + 2;
+    setText(nextText);
+    setMentionOpen(false);
+    setMentionQuery("");
+    setMentionStart(-1);
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(nextCursor, nextCursor);
+    });
   };
 
   const openWaTemplates = async () => {
@@ -686,6 +777,7 @@ export default function ConversationsView({
       formatTime={formatTime}
       sessionPreview={sessionPreview}
       onOpenSettings={onOpenSettings}
+      unreadNotificationsCount={unreadNotificationsCount}
       mainPanel={
         <section className="crm-main grid h-full min-h-0 overflow-hidden grid-rows-[56px_minmax(0,1fr)_auto] bg-[#f8f9fb]">
           <header className="flex items-center justify-between border-b border-slate-200 bg-white px-3 py-2">
@@ -1131,32 +1223,89 @@ export default function ConversationsView({
                   </p>
                 </div>
               ) : null}
-              <Textarea
-                ref={textareaRef}
-                placeholder={
-                  activeId
-                    ? isActiveSessionClosed && messageAudience === "user"
-                      ? "This conversation is closed. Reopen to send a user message."
-                      : isUserReplyBlockedByBot
-                        ? `${botName} is assigned. Change assignee to reply as an agent.`
-                      : "Type your message"
-                    : "Select a conversation"
-                }
-                value={text}
-                onChange={(e) => {
-                  setText(e.target.value);
-                  bumpTyping();
-                }}
-                onBlur={() => sendTypingState(false)}
-                onKeyDown={handleComposerKeyDown}
-                disabled={
-                  !activeId ||
-                  (isActiveSessionClosed && messageAudience === "user") ||
-                  isUserReplyBlockedByBot
-                }
-                rows={2}
-                className="min-h-20 resize-none border-0 bg-transparent px-1 py-1.5 text-[13px] shadow-none focus-visible:ring-0"
-              />
+              <div className="relative">
+                {mentionOpen && mentionSuggestions.length > 0 ? (
+                  <div
+                    ref={mentionPanelRef}
+                    className="absolute bottom-full left-0 right-0 z-40 mb-1 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"
+                  >
+                    {mentionSuggestions.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-slate-50"
+                        onClick={() => insertMention(item)}
+                      >
+                        {item.avatarUrl ? (
+                          <img
+                            src={item.avatarUrl}
+                            alt={item.name}
+                            className="h-5 w-5 rounded-full object-cover"
+                          />
+                        ) : (
+                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[10px] font-semibold text-slate-600">
+                            {String(item.name || "A").slice(0, 1).toUpperCase()}
+                          </span>
+                        )}
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-xs font-medium text-slate-800">
+                            {item.name}
+                          </span>
+                          <span className="block truncate text-[11px] text-slate-500">
+                            @{item.mentionHandle}
+                          </span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                <Textarea
+                  ref={textareaRef}
+                  placeholder={
+                    activeId
+                      ? isActiveSessionClosed && messageAudience === "user"
+                        ? "This conversation is closed. Reopen to send a user message."
+                        : isUserReplyBlockedByBot
+                          ? `${botName} is assigned. Change assignee to reply as an agent.`
+                        : "Type your message"
+                      : "Select a conversation"
+                  }
+                  value={text}
+                  onChange={(e) => {
+                    const nextValue = e.target.value;
+                    setText(nextValue);
+                    updateMentionContext(
+                      nextValue,
+                      e.target.selectionStart,
+                      messageAudience,
+                    );
+                    bumpTyping();
+                  }}
+                  onClick={(e) =>
+                    updateMentionContext(
+                      text,
+                      e.currentTarget.selectionStart,
+                      messageAudience,
+                    )
+                  }
+                  onKeyUp={(e) =>
+                    updateMentionContext(
+                      text,
+                      e.currentTarget.selectionStart,
+                      messageAudience,
+                    )
+                  }
+                  onBlur={() => sendTypingState(false)}
+                  onKeyDown={handleComposerKeyDown}
+                  disabled={
+                    !activeId ||
+                    (isActiveSessionClosed && messageAudience === "user") ||
+                    isUserReplyBlockedByBot
+                  }
+                  rows={2}
+                  className="min-h-20 resize-none border-0 bg-transparent px-1 py-1.5 text-[13px] shadow-none focus-visible:ring-0"
+                />
+              </div>
 
               <div className="mt-1 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1">

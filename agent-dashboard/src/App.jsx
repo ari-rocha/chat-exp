@@ -5,6 +5,7 @@ import ConversationsView from "@/features/conversations/ConversationsView";
 import CsatView from "@/features/csat/CsatView";
 import CustomizationView from "@/features/customization/CustomizationView";
 import FlowsView from "@/features/flows/FlowsView";
+import InboxView from "@/features/inbox/InboxView";
 import { addEdge, useEdgesState, useNodesState } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -342,6 +343,8 @@ export default function App() {
   const [conversationAttrs, setConversationAttrs] = useState([]);
   const [newConvAttrKey, setNewConvAttrKey] = useState("");
   const [newConvAttrValue, setNewConvAttrValue] = useState("");
+  const [notifications, setNotifications] = useState([]);
+  const [notificationsUnreadCount, setNotificationsUnreadCount] = useState(0);
 
   const [flows, setFlows] = useState([]);
   const [activeFlowId, setActiveFlowId] = useState("");
@@ -553,6 +556,7 @@ export default function App() {
       csatRes,
       tagsRes,
       attrDefsRes,
+      notificationsRes,
     ] = await Promise.all([
       apiFetch("/api/auth/me", authToken),
       apiFetch("/api/sessions", authToken),
@@ -567,6 +571,7 @@ export default function App() {
       apiFetch("/api/reports/csat", authToken),
       apiFetch("/api/tags", authToken),
       apiFetch("/api/attribute-definitions", authToken),
+      apiFetch("/api/notifications", authToken),
     ]);
 
     setAgent(meRes.agent ?? null);
@@ -586,6 +591,8 @@ export default function App() {
     });
     setTags(tagsRes.tags ?? []);
     setAttributeDefs(attrDefsRes.attributeDefinitions ?? []);
+    setNotifications(notificationsRes.notifications ?? []);
+    setNotificationsUnreadCount(notificationsRes.unreadCount ?? 0);
 
     const nextFlows = flowsRes.flows ?? [];
     setFlows(nextFlows);
@@ -685,6 +692,21 @@ export default function App() {
             }
             return next;
           });
+        }
+
+        if (envelope?.event === "notification:new") {
+          const payload = envelope.data ?? {};
+          const notification = payload.notification;
+          const unreadCount = Number(payload.unreadCount ?? 0);
+          if (notification?.id) {
+            setNotifications((prev) => {
+              const next = prev.filter((item) => item.id !== notification.id);
+              return [notification, ...next];
+            });
+          }
+          if (Number.isFinite(unreadCount)) {
+            setNotificationsUnreadCount(unreadCount);
+          }
         }
       });
 
@@ -1017,6 +1039,53 @@ export default function App() {
     });
     setNotes((prev) => [...prev, payload.note]);
     setNoteText("");
+  };
+
+  const markNotificationRead = async (notificationId) => {
+    if (!token || !notificationId) return;
+    try {
+      const payload = await apiFetch(
+        `/api/notifications/${notificationId}/read`,
+        token,
+        { method: "PATCH" },
+      );
+      const unreadCount = Number(payload.unreadCount ?? 0);
+      setNotifications((prev) =>
+        prev.map((item) =>
+          item.id === notificationId
+            ? { ...item, readAt: item.readAt || new Date().toISOString() }
+            : item,
+        ),
+      );
+      if (Number.isFinite(unreadCount)) {
+        setNotificationsUnreadCount(unreadCount);
+      }
+    } catch (error) {
+      console.error("failed to mark notification as read", error);
+    }
+  };
+
+  const markAllNotificationsRead = async () => {
+    if (!token) return;
+    try {
+      await apiFetch("/api/notifications/read-all", token, { method: "POST" });
+      const now = new Date().toISOString();
+      setNotifications((prev) =>
+        prev.map((item) => ({ ...item, readAt: item.readAt || now })),
+      );
+      setNotificationsUnreadCount(0);
+    } catch (error) {
+      console.error("failed to mark all notifications as read", error);
+    }
+  };
+
+  const openConversationFromNotification = async (notification) => {
+    if (!notification?.sessionId) return;
+    setView("conversations");
+    setActiveId(notification.sessionId);
+    if (!notification.readAt) {
+      await markNotificationRead(notification.id);
+    }
   };
 
   const updateAgentStatus = async (status) => {
@@ -1650,6 +1719,7 @@ export default function App() {
           setNewConvAttrValue={setNewConvAttrValue}
           tenantSettings={tenantSettings}
           onOpenSettings={() => setSettingsOpen(true)}
+          unreadNotificationsCount={notificationsUnreadCount}
         />
 
         <CustomizationView
@@ -1679,7 +1749,16 @@ export default function App() {
   }
 
   const mainPanel =
-    view === "flows" ? (
+    view === "inbox" ? (
+      <InboxView
+        notifications={notifications}
+        unreadCount={notificationsUnreadCount}
+        markNotificationRead={markNotificationRead}
+        markAllNotificationsRead={markAllNotificationsRead}
+        openConversationFromNotification={openConversationFromNotification}
+        formatTime={formatTime}
+      />
+    ) : view === "flows" ? (
       <section className="crm-main h-full min-h-0 bg-[#f8f9fb]">
         <FlowsView
           flows={flows}
@@ -1766,6 +1845,7 @@ export default function App() {
         mainPanel={mainPanel}
         showConversationPanels={false}
         onOpenSettings={() => setSettingsOpen(true)}
+        unreadNotificationsCount={notificationsUnreadCount}
       />
 
       <CustomizationView

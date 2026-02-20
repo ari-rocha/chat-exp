@@ -347,6 +347,21 @@ pub struct CsatSurvey {
     pub submitted_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentNotification {
+    pub id: String,
+    pub tenant_id: String,
+    pub agent_id: String,
+    pub session_id: String,
+    pub message_id: Option<String>,
+    pub kind: String,
+    pub title: String,
+    pub body: String,
+    pub read_at: Option<String>,
+    pub created_at: String,
+}
+
 #[derive(Default)]
 pub struct RealtimeState {
     pub clients: HashMap<usize, mpsc::UnboundedSender<String>>,
