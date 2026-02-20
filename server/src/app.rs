@@ -10743,11 +10743,22 @@ async fn get_tags(State(state): State<Arc<AppState>>, headers: HeaderMap) -> imp
         Ok(id) => id,
         Err(err) => return err.into_response(),
     };
-    let rows = sqlx::query("SELECT id, tenant_id, name, color, description, created_at FROM tags WHERE tenant_id = $1 ORDER BY name ASC")
-        .bind(&tenant_id)
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
+    let rows = match sqlx::query(
+        "SELECT id, tenant_id, name, color, description, created_at FROM tags WHERE tenant_id = $1 ORDER BY name ASC",
+    )
+    .bind(&tenant_id)
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("failed to load tags: {err}") })),
+            )
+                .into_response();
+        }
+    };
     let tags: Vec<Tag> = rows
         .into_iter()
         .map(|r| Tag {
@@ -10774,23 +10785,46 @@ async fn create_tag(
         Ok(id) => id,
         Err(err) => return err.into_response(),
     };
-    let tag = Tag {
-        id: Uuid::new_v4().to_string(),
-        tenant_id,
-        name: body.name.trim().to_string(),
-        color: body.color,
-        description: body.description,
-        created_at: now_iso(),
+    let tag_id = Uuid::new_v4().to_string();
+    let now = now_iso();
+    let name = body.name.trim().to_string();
+    let color = body.color;
+    let description = body.description;
+
+    let row = match sqlx::query(
+        "INSERT INTO tags (id, tenant_id, name, color, description, created_at) \
+         VALUES ($1,$2,$3,$4,$5,$6) \
+         ON CONFLICT (tenant_id, name) DO UPDATE \
+         SET color = EXCLUDED.color, description = EXCLUDED.description \
+         RETURNING id, tenant_id, name, color, description, created_at",
+    )
+    .bind(&tag_id)
+    .bind(&tenant_id)
+    .bind(&name)
+    .bind(&color)
+    .bind(&description)
+    .bind(&now)
+    .fetch_one(&state.db)
+    .await
+    {
+        Ok(row) => row,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("failed to create tag: {err}") })),
+            )
+                .into_response();
+        }
     };
-    let _ = sqlx::query("INSERT INTO tags (id, tenant_id, name, color, description, created_at) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (tenant_id, name) DO NOTHING")
-        .bind(&tag.id)
-        .bind(&tag.tenant_id)
-        .bind(&tag.name)
-        .bind(&tag.color)
-        .bind(&tag.description)
-        .bind(&tag.created_at)
-        .execute(&state.db)
-        .await;
+
+    let tag = Tag {
+        id: row.get("id"),
+        tenant_id: row.get("tenant_id"),
+        name: row.get("name"),
+        color: row.get("color"),
+        description: row.get("description"),
+        created_at: row.get("created_at"),
+    };
     (StatusCode::CREATED, Json(json!({ "tag": tag }))).into_response()
 }
 
