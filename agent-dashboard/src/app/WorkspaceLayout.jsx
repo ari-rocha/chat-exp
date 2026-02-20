@@ -297,6 +297,23 @@ export default function WorkspaceLayout({
                             {sessionPreview(session) ||
                               getSessionSubtitle(session)}
                           </p>
+                          {(session.tags || []).length > 0 ? (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {session.tags.slice(0, 3).map((tag) => (
+                                <span
+                                  key={`${session.id}-tag-${tag.id}`}
+                                  className="rounded-full border px-1.5 py-0.5 text-[10px] font-medium"
+                                  style={{
+                                    borderColor: tag.color || "#cbd5e1",
+                                    color: tag.color || "#475569",
+                                    backgroundColor: `${tag.color || "#cbd5e1"}15`,
+                                  }}
+                                >
+                                  {tag.name}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
                           <div className="mt-1.5 flex items-center justify-between">
                             <p className="text-[10px] uppercase tracking-wide text-slate-400">
                               {titleCase(session.channel)} •{" "}

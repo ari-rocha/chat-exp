@@ -338,6 +338,7 @@ export default function App() {
   const [attributeDefs, setAttributeDefs] = useState([]);
   const [sessionTags, setSessionTags] = useState([]);
   const [sessionContact, setSessionContact] = useState(null);
+  const [previousConversations, setPreviousConversations] = useState([]);
   const [conversationAttrs, setConversationAttrs] = useState([]);
   const [newConvAttrKey, setNewConvAttrKey] = useState("");
   const [newConvAttrValue, setNewConvAttrValue] = useState("");
@@ -738,6 +739,7 @@ export default function App() {
       setNotes([]);
       setSessionTags([]);
       setSessionContact(null);
+      setPreviousConversations([]);
       setConversationAttrs([]);
       setNewConvAttrKey("");
       setNewConvAttrValue("");
@@ -769,12 +771,24 @@ export default function App() {
     const cid = activeSession?.contactId;
     if (!cid || !token) {
       setSessionContact(null);
+      setPreviousConversations([]);
       return;
     }
     apiFetch(`/api/contacts/${cid}`, token)
       .then((payload) => setSessionContact(payload.contact ?? null))
       .catch(() => setSessionContact(null));
   }, [activeSession?.contactId, token]);
+
+  useEffect(() => {
+    const cid = sessionContact?.id;
+    if (!cid || !token) {
+      setPreviousConversations([]);
+      return;
+    }
+    apiFetch(`/api/contacts/${cid}/conversations`, token)
+      .then((payload) => setPreviousConversations(payload.conversations ?? []))
+      .catch(() => setPreviousConversations([]));
+  }, [sessionContact?.id, token]);
 
   const loginAuth = async (e) => {
     e.preventDefault();
@@ -911,6 +925,7 @@ export default function App() {
     setTags([]);
     setSessionTags([]);
     setSessionContact(null);
+    setPreviousConversations([]);
     setConversationAttrs([]);
     setContacts([]);
     setChannelRecords([]);
@@ -1622,6 +1637,7 @@ export default function App() {
           tags={tags}
           sessionTags={sessionTags}
           sessionContact={sessionContact}
+          previousConversations={previousConversations}
           conversationAttrs={conversationAttrs}
           addSessionTag={addSessionTag}
           removeSessionTag={removeSessionTag}

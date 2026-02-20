@@ -1345,6 +1345,26 @@ async fn get_session_summary_db(pool: &PgPool, session_id: &str) -> Option<Sessi
             .unwrap_or_default(),
     });
 
+    let tag_rows = sqlx::query(
+        "SELECT t.id, t.name, t.color \
+         FROM tags t \
+         INNER JOIN conversation_tags ct ON ct.tag_id = t.id \
+         WHERE ct.session_id = $1 \
+         ORDER BY t.name ASC",
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    let tags = tag_rows
+        .into_iter()
+        .map(|row| SessionTagSummary {
+            id: row.get("id"),
+            name: row.get("name"),
+            color: row.get("color"),
+        })
+        .collect::<Vec<_>>();
+
     Some(SessionSummary {
         tenant_id: session_row.get("tenant_id"),
         id: session_row.get("id"),
@@ -1360,6 +1380,7 @@ async fn get_session_summary_db(pool: &PgPool, session_id: &str) -> Option<Sessi
         contact_name: session_row.get("contact_name"),
         contact_email: session_row.get("contact_email"),
         contact_phone: session_row.get("contact_phone"),
+        tags,
         visitor_id: session_row
             .get::<Option<String>, _>("visitor_id")
             .unwrap_or_default(),

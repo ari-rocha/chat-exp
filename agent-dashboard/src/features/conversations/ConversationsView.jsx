@@ -3,17 +3,21 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import {
   AtSign,
+  Building2,
+  ChevronDown,
+  ChevronRight,
   CirclePause,
   ClipboardList,
-  House,
   Image,
+  Mail,
+  MapPin,
   MessageCircle,
   Paperclip,
   Phone,
+  Plus,
   Send,
   Smile,
   Tag,
@@ -197,6 +201,7 @@ export default function ConversationsView({
   tags,
   sessionTags,
   sessionContact,
+  previousConversations,
   addSessionTag,
   removeSessionTag,
   patchSessionContact,
@@ -216,6 +221,15 @@ export default function ConversationsView({
   const [waTemplateSending, setWaTemplateSending] = useStateReact(false);
   const [waSelectedTemplate, setWaSelectedTemplate] = useStateReact(null);
   const [waTemplateParams, setWaTemplateParams] = useStateReact([]);
+  const [sidebarPanels, setSidebarPanels] = useStateReact({
+    actions: true,
+    macros: false,
+    conversationInfo: false,
+    contactAttrs: false,
+    previousConversations: false,
+    conversationNotes: false,
+    participants: false,
+  });
   const fileInputRef = useRef(null);
   const emojiPanelRef = useRef(null);
   const templatePanelRef = useRef(null);
@@ -463,6 +477,9 @@ export default function ConversationsView({
       return String(value || `{{${raw}}}`);
     });
   })();
+
+  const toggleSidebarPanel = (key) =>
+    setSidebarPanels((prev) => ({ ...prev, [key]: !prev[key] }));
 
   return (
     <>
@@ -1105,80 +1122,70 @@ export default function ConversationsView({
         </section>
       }
       detailsPanel={
-        <aside className="crm-details flex min-h-0 flex-col border-l border-slate-200 bg-white max-[1500px]:hidden">
+        <aside className="crm-details flex min-h-0 flex-col border-l border-slate-200 bg-white text-slate-900 max-[1500px]:hidden">
           <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-            <div className="flex items-center gap-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-fuchsia-100 text-[10px] font-semibold text-fuchsia-700">
-                {sessionInitials(activeSession, sessionContact)}
-              </div>
-              <p className="text-sm font-semibold text-slate-900">
-                {getSessionTitle(activeSession, sessionContact)}
-              </p>
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 rounded-md px-2 text-[11px]"
-              disabled={!activeId}
-            >
-              Edit
-            </Button>
+            <p className="text-sm font-semibold">Contact</p>
+            <span className="text-[10px] text-slate-500">
+              {activeSession?.id ? activeSession.id.slice(0, 8) : ""}
+            </span>
           </div>
 
-          <ScrollArea className="h-full p-4">
-            <div className="space-y-4">
-              {/* ── Quick routing ─────────────────────────── */}
-              <div>
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Quick Routing
-                </p>
-                <div className="space-y-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-400">
-                        Status
-                      </label>
-                      <select
-                        className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
-                        value={activeSession?.status || "open"}
-                        onChange={(e) =>
-                          patchSessionMeta({ status: e.target.value })
-                        }
-                        disabled={!activeId}
-                      >
-                        <option value="open">open</option>
-                        <option value="awaiting">awaiting</option>
-                        <option value="snoozed">snoozed</option>
-                        <option value="resolved">resolved</option>
-                        <option value="closed">closed</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-400">
-                        Priority
-                      </label>
-                      <select
-                        className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
-                        value={activeSession?.priority || "normal"}
-                        onChange={(e) =>
-                          patchSessionMeta({ priority: e.target.value })
-                        }
-                        disabled={!activeId}
-                      >
-                        <option value="low">low</option>
-                        <option value="normal">normal</option>
-                        <option value="high">high</option>
-                        <option value="urgent">urgent</option>
-                      </select>
-                    </div>
+          <ScrollArea className="min-h-0 flex-1 p-3">
+            <div className="space-y-2.5">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-start gap-2.5">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-fuchsia-100 text-xs font-semibold text-fuchsia-700">
+                    {sessionInitials(activeSession, sessionContact)}
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-slate-900">
+                      {getSessionTitle(activeSession, sessionContact)}
+                    </p>
+                    <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
+                      <Mail size={11} className="text-slate-400" />
+                      <span className="truncate">
+                        {sessionContact?.email || "Unavailable"}
+                      </span>
+                    </p>
+                    <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
+                      <Phone size={11} className="text-slate-400" />
+                      <span className="truncate">
+                        {sessionContact?.phone || activeSession?.phone || "Unavailable"}
+                      </span>
+                    </p>
+                    <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
+                      <Building2 size={11} className="text-slate-400" />
+                      <span className="truncate">
+                        {sessionContact?.company || "Unavailable"}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <section className="rounded-lg border border-slate-200 bg-white">
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between px-3 py-2.5 text-left"
+                  onClick={() => toggleSidebarPanel("actions")}
+                >
+                  <span className="text-xs font-semibold text-slate-900">
+                    Conversation Actions
+                  </span>
+                  {sidebarPanels.actions ? (
+                    <ChevronDown size={14} className="text-slate-400" />
+                  ) : (
+                    <ChevronRight size={14} className="text-slate-400" />
+                  )}
+                </button>
+                {sidebarPanels.actions ? (
+                  <div className="space-y-2 border-t border-slate-200 px-3 pb-3 pt-2">
                     <div>
-                      <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-400">
+                      <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
                         Assignee
                       </label>
                       <select
-                        className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
+                        className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
                         value={activeSession?.assigneeAgentId || botAssigneeId}
                         onChange={(e) =>
                           patchActiveSession("assignee", {
@@ -1196,11 +1203,11 @@ export default function ConversationsView({
                       </select>
                     </div>
                     <div>
-                      <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-400">
+                      <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
                         Team
                       </label>
                       <select
-                        className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
+                        className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
                         value={activeSession?.teamId || ""}
                         onChange={(e) =>
                           patchActiveSession("team", {
@@ -1209,7 +1216,7 @@ export default function ConversationsView({
                         }
                         disabled={!activeId}
                       >
-                        <option value="">No team</option>
+                        <option value="">None</option>
                         {teams.map((team) => (
                           <option key={team.id} value={team.id}>
                             {team.name}
@@ -1217,229 +1224,294 @@ export default function ConversationsView({
                         ))}
                       </select>
                     </div>
-                  </div>
-                </div>
-              </div>
-
-              <Separator />
-
-              {/* ── Contact info ──────────────────────────── */}
-              <div>
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Contact
-                </p>
-                {sessionContact ? (
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
-                    <div className="flex items-center gap-2">
-                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[10px] font-semibold text-indigo-700">
-                        {(
-                          sessionContact.displayName ||
-                          sessionContact.email ||
-                          "?"
-                        )
-                          .slice(0, 2)
-                          .toUpperCase()}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
+                          Status
+                        </label>
+                        <select
+                          className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
+                          value={activeSession?.status || "open"}
+                          onChange={(e) =>
+                            patchSessionMeta({ status: e.target.value })
+                          }
+                          disabled={!activeId}
+                        >
+                          <option value="open">open</option>
+                          <option value="awaiting">awaiting</option>
+                          <option value="snoozed">snoozed</option>
+                          <option value="resolved">resolved</option>
+                          <option value="closed">closed</option>
+                        </select>
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-medium text-slate-900">
-                          {sessionContact.displayName || "Unnamed"}
-                        </p>
-                        <p className="truncate text-[10px] text-slate-500">
-                          {sessionContact.email || sessionContact.phone || "-"}
-                        </p>
+                      <div>
+                        <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
+                          Priority
+                        </label>
+                        <select
+                          className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
+                          value={activeSession?.priority || "normal"}
+                          onChange={(e) =>
+                            patchSessionMeta({ priority: e.target.value })
+                          }
+                          disabled={!activeId}
+                        >
+                          <option value="low">low</option>
+                          <option value="normal">normal</option>
+                          <option value="high">high</option>
+                          <option value="urgent">urgent</option>
+                        </select>
                       </div>
-                      <button
-                        className="text-slate-400 hover:text-red-500"
-                        onClick={() => patchSessionContact(null)}
-                        title="Unlink contact"
-                      >
-                        <X size={13} />
-                      </button>
                     </div>
-                    {sessionContact.company && (
-                      <p className="mt-1 text-[10px] text-slate-500">
-                        🏢 {sessionContact.company}
+                    <div>
+                      <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">
+                        Conversation Tags
                       </p>
-                    )}
+                      <div className="mb-1.5 flex flex-wrap gap-1">
+                        {(sessionTags || []).map((tag) => (
+                          <Badge
+                            key={tag.id}
+                            variant="outline"
+                            className="gap-1 text-[10px]"
+                            style={{
+                              borderColor: tag.color || "#cbd5e1",
+                              color: tag.color || "#334155",
+                              backgroundColor: `${tag.color || "#cbd5e1"}15`,
+                            }}
+                          >
+                            <Tag size={10} />
+                            {tag.name}
+                            <button
+                              onClick={() => removeSessionTag(tag.id)}
+                              className="ml-0.5 hover:opacity-70"
+                            >
+                              <X size={10} />
+                            </button>
+                          </Badge>
+                        ))}
+                      </div>
+                      <select
+                        className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-500"
+                        value=""
+                        onChange={(e) =>
+                          e.target.value && addSessionTag(e.target.value)
+                        }
+                        disabled={!activeId}
+                      >
+                        <option value="">+ Add tag</option>
+                        {(tags || [])
+                          .filter(
+                            (t) =>
+                              !(sessionTags || []).find((st) => st.id === t.id),
+                          )
+                          .map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
                   </div>
-                ) : (
-                  <select
-                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
-                    value=""
-                    onChange={(e) =>
-                      e.target.value && patchSessionContact(e.target.value)
-                    }
-                    disabled={!activeId}
+                ) : null}
+              </section>
+
+              {[
+                ["macros", "Macros"],
+                ["conversationInfo", "Conversation Information"],
+                ["contactAttrs", "Contact Attributes"],
+                ["previousConversations", "Previous Conversations"],
+                ["conversationNotes", "Conversation Notes"],
+                ["participants", "Conversation Participants"],
+              ].map(([key, title]) => (
+                <section
+                  key={key}
+                  className="rounded-lg border border-slate-200 bg-white"
+                >
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between px-3 py-2.5 text-left"
+                    onClick={() => toggleSidebarPanel(key)}
                   >
-                    <option value="">Link a contact…</option>
-                    {(contacts || []).map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.displayName || c.email || c.id.slice(0, 8)}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-
-              <Separator />
-
-              {/* ── Tags ─────────────────────────────────── */}
-              <div>
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Tags
-                </p>
-                <div className="flex flex-wrap gap-1">
-                  {(sessionTags || []).map((tag) => (
-                    <Badge
-                      key={tag.id}
-                      variant="outline"
-                      className="gap-1 text-[10px]"
-                      style={{ borderColor: tag.color, color: tag.color }}
-                    >
-                      <Tag size={10} />
-                      {tag.name}
-                      <button
-                        onClick={() => removeSessionTag(tag.id)}
-                        className="ml-0.5 hover:opacity-70"
-                      >
-                        <X size={10} />
-                      </button>
-                    </Badge>
-                  ))}
-                </div>
-                <select
-                  className="mt-2 w-full rounded-lg border border-dashed border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-500"
-                  value=""
-                  onChange={(e) =>
-                    e.target.value && addSessionTag(e.target.value)
-                  }
-                  disabled={!activeId}
-                >
-                  <option value="">+ Add tag…</option>
-                  {(tags || [])
-                    .filter(
-                      (t) => !(sessionTags || []).find((st) => st.id === t.id),
-                    )
-                    .map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
-                    ))}
-                </select>
-              </div>
-
-              <Separator />
-
-              <div className="space-y-2 text-xs text-slate-600">
-                <div className="flex items-start gap-2">
-                  <MessageCircle size={13} className="mt-0.5 text-slate-400" />
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wide text-slate-400">
-                      Channel
-                    </p>
-                    <p className="text-slate-900">
-                      {(activeSession?.channel || "web").toUpperCase()}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-2">
-                  <AtSign size={13} className="mt-0.5 text-slate-400" />
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wide text-slate-400">
-                      ID
-                    </p>
-                    <p className="break-all text-slate-900">
-                      {activeSession?.id || "-"}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Phone size={13} className="mt-0.5 text-slate-400" />
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wide text-slate-400">
-                      Phone number
-                    </p>
-                    <p className="text-slate-900">
-                      {activeSession?.phone || "-"}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-2">
-                  <House size={13} className="mt-0.5 text-slate-400" />
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wide text-slate-400">
-                      Assignee
-                    </p>
-                    <div className="mt-0.5 flex items-center gap-1.5">
-                      {assigneeAvatarUrl ? (
-                        <img
-                          src={assigneeAvatarUrl}
-                          alt={assigneeName}
-                          className="h-4 w-4 rounded-full object-cover"
-                        />
-                      ) : (
-                        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-slate-200 text-[9px] font-semibold text-slate-600">
-                          {(assigneeName || "?").slice(0, 1).toUpperCase()}
-                        </span>
-                      )}
-                      <p className="text-slate-900">{assigneeName}</p>
+                    <span className="text-xs font-semibold text-slate-900">
+                      {title}
+                    </span>
+                    {sidebarPanels[key] ? (
+                      <ChevronDown size={14} className="text-slate-400" />
+                    ) : (
+                      <Plus size={14} className="text-slate-400" />
+                    )}
+                  </button>
+                  {sidebarPanels[key] ? (
+                    <div className="border-t border-slate-200 px-3 pb-3 pt-2">
+                      {key === "macros" ? (
+                        <div className="space-y-2">
+                          <p className="text-xs text-slate-500">
+                            No macros found.
+                          </p>
+                          <button
+                            type="button"
+                            className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-blue-600 hover:bg-slate-50"
+                          >
+                            + Add a new macro
+                          </button>
+                        </div>
+                      ) : null}
+                      {key === "conversationInfo" ? (
+                        <div className="space-y-2 text-xs text-slate-700">
+                          <div className="flex items-start gap-2">
+                            <MessageCircle size={12} className="mt-0.5 text-slate-500" />
+                            <span>{(activeSession?.channel || "web").toUpperCase()}</span>
+                          </div>
+                          <div className="flex items-start gap-2">
+                            <AtSign size={12} className="mt-0.5 text-slate-500" />
+                            <span className="break-all">{activeSession?.id || "-"}</span>
+                          </div>
+                          <div className="flex items-start gap-2">
+                            <Phone size={12} className="mt-0.5 text-slate-500" />
+                            <span>{activeSession?.phone || sessionContact?.phone || "-"}</span>
+                          </div>
+                        </div>
+                      ) : null}
+                      {key === "contactAttrs" ? (
+                        <div className="space-y-2">
+                          {sessionContact ? (
+                            <>
+                              <div className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-2 py-1.5">
+                                <p className="truncate text-xs text-slate-700">
+                                  {sessionContact.displayName || "Unnamed"}
+                                </p>
+                                <button
+                                  className="text-slate-400 hover:text-red-500"
+                                  onClick={() => patchSessionContact(null)}
+                                  title="Unlink contact"
+                                >
+                                  <X size={12} />
+                                </button>
+                              </div>
+                              <div className="space-y-1 text-xs text-slate-400">
+                                <p className="flex items-center gap-1.5">
+                                  <Mail size={11} />
+                                  {sessionContact.email || "Unavailable"}
+                                </p>
+                                <p className="flex items-center gap-1.5">
+                                  <Building2 size={11} />
+                                  {sessionContact.company || "Unavailable"}
+                                </p>
+                                <p className="flex items-center gap-1.5">
+                                  <MapPin size={11} />
+                                  {sessionContact.location || "Unavailable"}
+                                </p>
+                              </div>
+                            </>
+                          ) : (
+                            <select
+                              className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-500"
+                              value=""
+                              onChange={(e) =>
+                                e.target.value && patchSessionContact(e.target.value)
+                              }
+                              disabled={!activeId}
+                            >
+                              <option value="">Link a contact…</option>
+                              {(contacts || []).map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.displayName || c.email || c.id.slice(0, 8)}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+                      ) : null}
+                      {key === "previousConversations" ? (
+                        (() => {
+                          const items = (previousConversations || []).filter(
+                            (conv) => conv.id !== activeId,
+                          );
+                          if (items.length === 0) {
+                            return (
+                              <p className="text-xs text-slate-500">
+                                No previous conversations found.
+                              </p>
+                            );
+                          }
+                          return (
+                            <div className="space-y-1.5">
+                              {items.slice(0, 8).map((conv) => (
+                                <button
+                                  key={`prev-conv-${conv.id}`}
+                                  type="button"
+                                  onClick={() => setActiveId(conv.id)}
+                                  className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-left hover:bg-slate-50"
+                                >
+                                  <p className="truncate text-xs font-medium text-slate-800">
+                                    {conv.contactName ||
+                                      conv.contactEmail ||
+                                      conv.contactPhone ||
+                                      `Conversation ${String(conv.id || "").slice(0, 6)}`}
+                                  </p>
+                                  <p className="truncate text-[10px] text-slate-500">
+                                    {conv.lastMessage?.text || "No messages"}
+                                  </p>
+                                  <p className="mt-0.5 text-[10px] uppercase tracking-wide text-slate-400">
+                                    {(conv.status || "open").toUpperCase()} •{" "}
+                                    {formatTime(conv.updatedAt)}
+                                  </p>
+                                </button>
+                              ))}
+                            </div>
+                          );
+                        })()
+                      ) : null}
+                      {key === "conversationNotes" ? (
+                        <div className="space-y-2">
+                          <Textarea
+                            value={noteText}
+                            onChange={(e) => setNoteText(e.target.value)}
+                            placeholder="Write a note"
+                            rows={3}
+                            disabled={!activeId}
+                            className="rounded-md border-slate-200 bg-white text-xs text-slate-800"
+                          />
+                          <Button
+                            className="h-7 w-full rounded-md bg-slate-100 text-xs text-slate-800 hover:bg-slate-200"
+                            onClick={saveNote}
+                            disabled={!activeId || !noteText.trim()}
+                          >
+                            Save note
+                          </Button>
+                          <div className="space-y-1.5">
+                            {notes.map((note) => (
+                              <div
+                                key={note.id}
+                                className="rounded-md border border-slate-200 bg-white p-2"
+                              >
+                                <p className="text-xs text-slate-700">{note.text}</p>
+                                <p className="mt-1 text-[10px] text-slate-500">
+                                  {formatTime(note.createdAt)}
+                                </p>
+                              </div>
+                            ))}
+                            {notes.length === 0 ? (
+                              <p className="text-xs text-slate-500">No notes yet.</p>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
+                      {key === "participants" ? (
+                        <div className="space-y-1.5 text-xs text-slate-700">
+                          <p>Assignee: {assigneeName}</p>
+                          <p>
+                            Team:{" "}
+                            {teams.find((item) => item.id === activeSession?.teamId)
+                              ?.name || "None"}
+                          </p>
+                          <p>Bot: {botName}</p>
+                        </div>
+                      ) : null}
                     </div>
-                  </div>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Users size={13} className="mt-0.5 text-slate-400" />
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wide text-slate-400">
-                      Team
-                    </p>
-                    <p className="text-slate-900">
-                      {teams.find((item) => item.id === activeSession?.teamId)
-                        ?.name || "No team"}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <Separator />
-
-              <div>
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Notes
-                </p>
-                <Textarea
-                  value={noteText}
-                  onChange={(e) => setNoteText(e.target.value)}
-                  placeholder="Write a note"
-                  rows={3}
-                  disabled={!activeId}
-                  className="rounded-xl border-slate-200"
-                />
-                <Button
-                  className="mt-2 h-8 w-full rounded-lg"
-                  variant="secondary"
-                  onClick={saveNote}
-                  disabled={!activeId || !noteText.trim()}
-                >
-                  Save note
-                </Button>
-
-                <div className="mt-3 space-y-2">
-                  {notes.map((note) => (
-                    <div
-                      key={note.id}
-                      className="rounded-lg border border-slate-200 bg-slate-50 p-2"
-                    >
-                      <p className="text-xs text-slate-700">{note.text}</p>
-                      <p className="mt-1 text-[10px] text-slate-400">
-                        {formatTime(note.createdAt)}
-                      </p>
-                    </div>
-                  ))}
-                  {notes.length === 0 ? (
-                    <p className="text-xs text-slate-400">No notes yet.</p>
                   ) : null}
-                </div>
-              </div>
+                </section>
+              ))}
             </div>
           </ScrollArea>
         </aside>

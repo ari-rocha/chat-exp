@@ -64,10 +64,20 @@ pub struct SessionSummary {
     pub contact_name: Option<String>,
     pub contact_email: Option<String>,
     pub contact_phone: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<SessionTagSummary>,
     pub visitor_id: String,
     pub handover_active: bool,
     pub status: String,
     pub priority: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionTagSummary {
+    pub id: String,
+    pub name: String,
+    pub color: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
