@@ -36,19 +36,19 @@ const NAV_ITEMS = [
 const STATUS_ITEMS = [
   { id: "active", label: "Active" },
   { id: "all", label: "All" },
-  { id: "open", label: "Agent" },
-  { id: "awaiting", label: "Awaiting agent" },
+  { id: "open", label: "Open" },
+  { id: "awaiting", label: "Pending" },
+  { id: "resolved", label: "Resolved" },
   { id: "snoozed", label: "Snoozed" },
-  { id: "closed", label: "Paused" },
 ];
 
 const STATUS_FILTER_OPTIONS = [
   { id: "active", label: "Active", color: "bg-blue-500" },
   { id: "all", label: "All", color: "bg-slate-500" },
-  { id: "open", label: "Agent", color: "bg-emerald-500" },
-  { id: "awaiting", label: "Awaiting agent", color: "bg-amber-500" },
+  { id: "open", label: "Open", color: "bg-emerald-500" },
+  { id: "awaiting", label: "Pending", color: "bg-amber-500" },
+  { id: "resolved", label: "Resolved", color: "bg-teal-500" },
   { id: "snoozed", label: "Snoozed", color: "bg-violet-500" },
-  { id: "closed", label: "Paused", color: "bg-slate-400" },
 ];
 
 const AGENT_INBOX_ITEMS = [

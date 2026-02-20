@@ -376,7 +376,9 @@ export default function App() {
     () => sessions.find((session) => session.id === activeId) ?? null,
     [sessions, activeId],
   );
-  const isActiveSessionClosed = (activeSession?.status || "open") === "closed";
+  const isActiveSessionClosed = ["closed", "resolved"].includes(
+    String(activeSession?.status || "open").toLowerCase(),
+  );
 
   const activeFlow = useMemo(
     () => flows.find((flow) => flow.id === activeFlowId) ?? null,
@@ -400,9 +402,9 @@ export default function App() {
 
   const sessionsByStatus = useMemo(() => {
     return sessions.filter((session) => {
-      const status = session.status || "open";
+      const status = String(session.status || "open").toLowerCase();
       if (conversationFilter === "active") {
-        return status !== "closed" && status !== "snoozed";
+        return status === "open" || status === "awaiting";
       }
       if (conversationFilter === "all") return true;
       return status === conversationFilter;
@@ -1164,9 +1166,10 @@ export default function App() {
 
   const sendMessage = (e) => {
     e.preventDefault();
+    const status = String(activeSession?.status || "open").toLowerCase();
     if (
       messageAudience === "user" &&
-      (activeSession?.status || "open") === "closed"
+      (status === "closed" || status === "resolved")
     ) {
       return;
     }
@@ -1183,9 +1186,10 @@ export default function App() {
   };
 
   const sendAttachment = async (file, text = "") => {
+    const status = String(activeSession?.status || "open").toLowerCase();
     if (
       messageAudience === "user" &&
-      (activeSession?.status || "open") === "closed"
+      (status === "closed" || status === "resolved")
     ) {
       return;
     }

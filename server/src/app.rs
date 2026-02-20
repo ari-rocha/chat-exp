@@ -1029,6 +1029,7 @@ async fn find_or_create_whatsapp_session(
          WHERE tenant_id = $1 \
            AND channel = 'whatsapp' \
            AND visitor_id = $2 \
+           AND status <> 'resolved' \
            AND status <> 'closed' \
          ORDER BY updated_at DESC",
     )
@@ -1048,7 +1049,7 @@ async fn find_or_create_whatsapp_session(
                 .collect::<Vec<_>>();
             if !duplicate_ids.is_empty() {
                 let _ = sqlx::query(
-                    "UPDATE sessions SET status = 'closed', updated_at = $1 \
+                    "UPDATE sessions SET status = 'resolved', updated_at = $1 \
                      WHERE id = ANY($2::text[])",
                 )
                 .bind(now_iso())
@@ -2740,7 +2741,7 @@ async fn resolve_visitor_target_session(
         .unwrap_or_default();
     let old_contact_id: Option<String> = old_row.get("contact_id");
 
-    if old_status != "closed" {
+    if old_status != "resolved" && old_status != "closed" {
         return (requested_session_id.to_string(), false);
     }
 
@@ -4528,7 +4529,7 @@ async fn execute_flow_from(
                     send_flow_agent_message(state.clone(), &session_id, msg, 300, None, None).await;
                 }
                 if let Some((summary, changed)) =
-                    set_session_status(&state, &session_id, "closed").await
+                    set_session_status(&state, &session_id, "resolved").await
                 {
                     emit_session_update(&state, summary).await;
                     if changed {
@@ -4536,7 +4537,7 @@ async fn execute_flow_from(
                             state.clone(),
                             &session_id,
                             "system",
-                            "Conversation closed by bot",
+                            "Conversation resolved by bot",
                             None,
                             None,
                             None,
@@ -4855,7 +4856,7 @@ async fn execute_flow_from(
                 }
                 if decision.close_chat {
                     if let Some((summary, changed)) =
-                        set_session_status(&state, &session_id, "closed").await
+                        set_session_status(&state, &session_id, "resolved").await
                     {
                         emit_session_update(&state, summary).await;
                         if changed {
@@ -4863,7 +4864,7 @@ async fn execute_flow_from(
                                 state.clone(),
                                 &session_id,
                                 "system",
-                                "Conversation closed by bot",
+                                "Conversation resolved by bot",
                                 None,
                                 None,
                                 None,
@@ -5158,7 +5159,7 @@ async fn execute_flow_from(
                             .await;
                         }
                         if let Some((summary, changed)) =
-                            set_session_status(&state, &session_id, "closed").await
+                            set_session_status(&state, &session_id, "resolved").await
                         {
                             emit_session_update(&state, summary).await;
                             if changed {
@@ -5166,7 +5167,7 @@ async fn execute_flow_from(
                                     state.clone(),
                                     &session_id,
                                     "system",
-                                    "Conversation closed by bot",
+                                    "Conversation resolved by bot",
                                     None,
                                     None,
                                     None,
@@ -5370,7 +5371,7 @@ async fn execute_flow_from(
                     send_flow_agent_message(state.clone(), &session_id, msg, 300, None, None).await;
                 }
                 if let Some((summary, changed)) =
-                    set_session_status(&state, &session_id, "closed").await
+                    set_session_status(&state, &session_id, "resolved").await
                 {
                     emit_session_update(&state, summary).await;
                     if changed {
@@ -5378,7 +5379,7 @@ async fn execute_flow_from(
                             state.clone(),
                             &session_id,
                             "system",
-                            "Conversation closed by bot",
+                            "Conversation resolved by bot",
                             None,
                             None,
                             None,
@@ -6017,7 +6018,7 @@ async fn run_flow_for_visitor_message(
             }
             if decision.close_chat {
                 if let Some((summary, changed)) =
-                    set_session_status(&state, &session_id, "closed").await
+                    set_session_status(&state, &session_id, "resolved").await
                 {
                     emit_session_update(&state, summary).await;
                     if changed {
@@ -6025,7 +6026,7 @@ async fn run_flow_for_visitor_message(
                             state.clone(),
                             &session_id,
                             "system",
-                            "Conversation closed by bot",
+                            "Conversation resolved by bot",
                             None,
                             None,
                             None,
@@ -6114,14 +6115,14 @@ async fn run_flow_for_visitor_message(
             }
         }
         if decision.close_chat {
-            if let Some((summary, changed)) = set_session_status(&state, &session_id, "closed").await {
+            if let Some((summary, changed)) = set_session_status(&state, &session_id, "resolved").await {
                 emit_session_update(&state, summary).await;
                 if changed {
                     let _ = add_message(
                         state.clone(),
                         &session_id,
                         "system",
-                        "Conversation closed by bot",
+                        "Conversation resolved by bot",
                         None,
                         None,
                         None,
@@ -6532,7 +6533,7 @@ async fn close_session_by_visitor(
     Path(session_id): Path<String>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let Some((summary, changed)) = set_session_status(&state, &session_id, "closed").await else {
+    let Some((summary, changed)) = set_session_status(&state, &session_id, "resolved").await else {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "session not found" })),
@@ -7718,7 +7719,7 @@ async fn patch_session_meta(
     if let Some(status) = body.status {
         let normalized = status.trim().to_ascii_lowercase();
         match normalized.as_str() {
-            "open" | "resolved" | "awaiting" | "snoozed" | "closed" => next_status = normalized,
+            "open" | "resolved" | "awaiting" | "snoozed" => next_status = normalized,
             _ => {
                 return (
                     StatusCode::BAD_REQUEST,
@@ -7826,8 +7827,9 @@ async fn patch_session_meta(
     .bind(&session_id)
     .execute(&state.db)
     .await;
-    let changed_to_closed = previous_status != "closed" && next_status == "closed";
-    let changed_from_closed_to_open = previous_status == "closed" && next_status == "open";
+    let was_terminal = previous_status == "resolved" || previous_status == "closed";
+    let changed_to_resolved = !was_terminal && next_status == "resolved";
+    let changed_from_terminal_to_open = was_terminal && next_status == "open";
     let Some(summary) = get_session_summary_db(&state.db, &session_id).await else {
         return (
             StatusCode::NOT_FOUND,
@@ -7838,12 +7840,12 @@ async fn patch_session_meta(
 
     emit_session_update(&state, summary.clone()).await;
 
-    if changed_to_closed {
+    if changed_to_resolved {
         let _ = add_message(
             state.clone(),
             &session_id,
             "system",
-            "Conversation closed by agent",
+            "Conversation resolved by agent",
             None,
             None,
             None,
@@ -7856,7 +7858,7 @@ async fn patch_session_meta(
         tokio::spawn(async move {
             run_lifecycle_trigger(st, sid, "conversation_closed".into()).await;
         });
-    } else if changed_from_closed_to_open {
+    } else if changed_from_terminal_to_open {
         let _ = add_message(
             state.clone(),
             &session_id,

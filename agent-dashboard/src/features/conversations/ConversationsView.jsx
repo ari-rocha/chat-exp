@@ -480,10 +480,9 @@ export default function ConversationsView({
   ];
   const statusOptions = [
     { value: "open", label: "Open" },
-    { value: "awaiting", label: "Awaiting" },
+    { value: "awaiting", label: "Pending" },
     { value: "snoozed", label: "Snoozed" },
     { value: "resolved", label: "Resolved" },
-    { value: "closed", label: "Closed" },
   ];
   const priorityOptions = [
     { value: "low", label: "Low" },
@@ -502,11 +501,11 @@ export default function ConversationsView({
   const statusMenuOptions = [
     { value: "open", label: "Open" },
     { value: "awaiting", label: "Pending" },
+    { value: "snoozed", label: "Snoozed" },
     { value: "resolved", label: "Resolve" },
-    { value: "closed", label: "Close" },
   ].filter((option) => option.value !== activeStatus);
   const quickAction =
-    activeStatus === "closed"
+    activeStatus === "closed" || activeStatus === "resolved"
       ? { value: "open", label: "Reopen" }
       : activeStatus === "snoozed"
         ? { value: "open", label: "Unsnooze" }
@@ -1572,7 +1571,7 @@ export default function ConversationsView({
                   placeholder={
                     activeId
                       ? isActiveSessionClosed && messageAudience === "user"
-                        ? "This conversation is closed. Reopen to send a user message."
+                        ? "This conversation is resolved. Reopen to send a user message."
                         : isUserReplyBlockedByBot
                           ? `${botName} is assigned. Change assignee to reply as an agent.`
                         : "Type your message"
