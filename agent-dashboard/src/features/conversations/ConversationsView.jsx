@@ -359,6 +359,7 @@ export default function ConversationsView({
   const [snoozeMenuOpen, setSnoozeMenuOpen] = useStateReact(false);
   const [customSnoozeOpen, setCustomSnoozeOpen] = useStateReact(false);
   const [customSnoozeAt, setCustomSnoozeAt] = useStateReact("");
+  const [snoozeMenuPos, setSnoozeMenuPos] = useStateReact({ top: 0, left: 0 });
   const [moreMenuOpen, setMoreMenuOpen] = useStateReact(false);
   const [waBlocked, setWaBlocked] = useStateReact(false);
   const [waBlockLoading, setWaBlockLoading] = useStateReact(false);
@@ -380,6 +381,7 @@ export default function ConversationsView({
   const textareaRef = useRef(null);
   const statusMenuRef = useRef(null);
   const snoozeMenuRef = useRef(null);
+  const snoozeMenuPanelRef = useRef(null);
   const moreMenuRef = useRef(null);
 
   const clearPendingAttachment = () => {
@@ -421,7 +423,9 @@ export default function ConversationsView({
       }
       if (
         snoozeMenuRef.current &&
-        !snoozeMenuRef.current.contains(event.target)
+        !snoozeMenuRef.current.contains(event.target) &&
+        !(snoozeMenuPanelRef.current &&
+          snoozeMenuPanelRef.current.contains(event.target))
       ) {
         setSnoozeMenuOpen(false);
         setCustomSnoozeOpen(false);
@@ -615,6 +619,42 @@ export default function ConversationsView({
     if (Number.isNaN(target.getTime())) return;
     await applySnooze({ mode: "until_time", until: target.toISOString() });
   };
+
+  const updateSnoozeMenuPosition = () => {
+    if (typeof window === "undefined") return;
+    const anchor = snoozeMenuRef.current;
+    if (!anchor) return;
+    const rect = anchor.getBoundingClientRect();
+    const menuWidth = 224; // w-56
+    const menuHeightEstimate = customSnoozeOpen ? 380 : 300;
+    const gap = 8;
+    let left = rect.right + gap;
+    if (window.innerWidth <= 1024) {
+      left = Math.min(
+        Math.max(gap, rect.right - menuWidth),
+        window.innerWidth - menuWidth - gap,
+      );
+    } else if (left + menuWidth > window.innerWidth - gap) {
+      left = Math.max(gap, rect.left - menuWidth - gap);
+    }
+    let top = rect.top;
+    if (top + menuHeightEstimate > window.innerHeight - gap) {
+      top = Math.max(gap, window.innerHeight - menuHeightEstimate - gap);
+    }
+    setSnoozeMenuPos({ top, left });
+  };
+
+  useEffect(() => {
+    if (!snoozeMenuOpen) return;
+    updateSnoozeMenuPosition();
+    const onViewportChange = () => updateSnoozeMenuPosition();
+    window.addEventListener("resize", onViewportChange);
+    window.addEventListener("scroll", onViewportChange, true);
+    return () => {
+      window.removeEventListener("resize", onViewportChange);
+      window.removeEventListener("scroll", onViewportChange, true);
+    };
+  }, [snoozeMenuOpen, customSnoozeOpen]);
 
   const submitComposerPayload = async () => {
     if (!canSendNow) return;
@@ -1009,7 +1049,15 @@ export default function ConversationsView({
                             className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
                             onClick={() => {
                               setCustomSnoozeOpen(false);
-                              setSnoozeMenuOpen((prev) => !prev);
+                              setSnoozeMenuOpen((prev) => {
+                                const next = !prev;
+                                if (next) {
+                                  requestAnimationFrame(() =>
+                                    updateSnoozeMenuPosition(),
+                                  );
+                                }
+                                return next;
+                              });
                             }}
                           >
                             <span className="inline-flex items-center gap-2">
@@ -1018,104 +1066,6 @@ export default function ConversationsView({
                             </span>
                             <ChevronRight size={13} />
                           </button>
-                          {snoozeMenuOpen ? (
-                            <div className="absolute left-full top-0 z-50 ml-1 w-56 rounded-md border border-slate-200 bg-white p-1 shadow-xl max-[1024px]:left-auto max-[1024px]:right-0 max-[1024px]:top-full max-[1024px]:ml-0 max-[1024px]:mt-1">
-                              <p className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-400">
-                                Snooze until
-                              </p>
-                              <button
-                                type="button"
-                                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
-                                onClick={() =>
-                                  void handleSnoozePreset("until_reply")
-                                }
-                              >
-                                <Clock3 size={13} />
-                                Until next reply
-                              </button>
-                              <button
-                                type="button"
-                                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
-                                onClick={() => void handleSnoozePreset("in_1h")}
-                              >
-                                <Clock3 size={13} />
-                                In one hour
-                              </button>
-                              <button
-                                type="button"
-                                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
-                                onClick={() =>
-                                  void handleSnoozePreset("tomorrow")
-                                }
-                              >
-                                <Clock3 size={13} />
-                                Until tomorrow
-                              </button>
-                              <button
-                                type="button"
-                                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
-                                onClick={() =>
-                                  void handleSnoozePreset("next_week")
-                                }
-                              >
-                                <Clock3 size={13} />
-                                Until next week
-                              </button>
-                              <button
-                                type="button"
-                                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
-                                onClick={() =>
-                                  void handleSnoozePreset("next_month")
-                                }
-                              >
-                                <Clock3 size={13} />
-                                Until next month
-                              </button>
-                              <button
-                                type="button"
-                                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
-                                onClick={() =>
-                                  void handleSnoozePreset("custom")
-                                }
-                              >
-                                <Clock3 size={13} />
-                                Custom...
-                              </button>
-                              {customSnoozeOpen ? (
-                                <div className="mt-1 rounded-md border border-slate-200 bg-slate-50 p-2">
-                                  <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
-                                    Date and time
-                                  </label>
-                                  <Input
-                                    type="datetime-local"
-                                    value={customSnoozeAt}
-                                    onChange={(e) =>
-                                      setCustomSnoozeAt(e.target.value)
-                                    }
-                                    className="h-8 text-xs"
-                                  />
-                                  <div className="mt-2 flex justify-end gap-1.5">
-                                    <button
-                                      type="button"
-                                      className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700"
-                                      onClick={() => setCustomSnoozeOpen(false)}
-                                    >
-                                      Cancel
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="rounded-md bg-slate-900 px-2 py-1 text-[11px] text-white"
-                                      onClick={() =>
-                                        void handleApplyCustomSnooze()
-                                      }
-                                    >
-                                      Apply
-                                    </button>
-                                  </div>
-                                </div>
-                              ) : null}
-                            </div>
-                          ) : null}
                         </div>
                         <button
                           type="button"
@@ -1130,6 +1080,97 @@ export default function ConversationsView({
                           <CircleDashed size={13} className="text-slate-500" />
                           Mark as pending
                         </button>
+                      </div>
+                    ) : null}
+                    {snoozeMenuOpen ? (
+                      <div
+                        ref={snoozeMenuPanelRef}
+                        className="fixed z-[140] w-56 rounded-md border border-slate-200 bg-white p-1 shadow-xl"
+                        style={{
+                          top: `${snoozeMenuPos.top}px`,
+                          left: `${snoozeMenuPos.left}px`,
+                        }}
+                      >
+                        <p className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-400">
+                          Snooze until
+                        </p>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                          onClick={() => void handleSnoozePreset("until_reply")}
+                        >
+                          <Clock3 size={13} />
+                          Until next reply
+                        </button>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                          onClick={() => void handleSnoozePreset("in_1h")}
+                        >
+                          <Clock3 size={13} />
+                          In one hour
+                        </button>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                          onClick={() => void handleSnoozePreset("tomorrow")}
+                        >
+                          <Clock3 size={13} />
+                          Until tomorrow
+                        </button>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                          onClick={() => void handleSnoozePreset("next_week")}
+                        >
+                          <Clock3 size={13} />
+                          Until next week
+                        </button>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                          onClick={() => void handleSnoozePreset("next_month")}
+                        >
+                          <Clock3 size={13} />
+                          Until next month
+                        </button>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                          onClick={() => void handleSnoozePreset("custom")}
+                        >
+                          <Clock3 size={13} />
+                          Custom...
+                        </button>
+                        {customSnoozeOpen ? (
+                          <div className="mt-1 rounded-md border border-slate-200 bg-slate-50 p-2">
+                            <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
+                              Date and time
+                            </label>
+                            <Input
+                              type="datetime-local"
+                              value={customSnoozeAt}
+                              onChange={(e) => setCustomSnoozeAt(e.target.value)}
+                              className="h-8 text-xs"
+                            />
+                            <div className="mt-2 flex justify-end gap-1.5">
+                              <button
+                                type="button"
+                                className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700"
+                                onClick={() => setCustomSnoozeOpen(false)}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded-md bg-slate-900 px-2 py-1 text-[11px] text-white"
+                                onClick={() => void handleApplyCustomSnooze()}
+                              >
+                                Apply
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
