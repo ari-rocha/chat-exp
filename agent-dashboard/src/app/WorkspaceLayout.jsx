@@ -354,7 +354,7 @@ export default function WorkspaceLayout({
                 <button
                   type="button"
                   onClick={() => setMobileDetailsOpen(true)}
-                  className="absolute right-3 top-1/2 z-30 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-lg"
+                  className="absolute right-3 top-16 z-30 inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-lg"
                   title="Open contact panel"
                   aria-label="Open contact panel"
                 >

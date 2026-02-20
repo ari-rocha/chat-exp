@@ -9,19 +9,21 @@ import {
   AtSign,
   Building2,
   Check,
+  CheckCircle2,
   ChevronDown,
   ChevronsUpDown,
   ChevronRight,
-  CirclePause,
   ClipboardList,
   Mail,
   MapPin,
   MessageCircle,
+  MoreVertical,
   Paperclip,
   Phone,
   Plus,
   Send,
   Smile,
+  Clock3,
   Tag,
   Users,
   X,
@@ -336,6 +338,8 @@ export default function ConversationsView({
   const [waTemplateSending, setWaTemplateSending] = useStateReact(false);
   const [waSelectedTemplate, setWaSelectedTemplate] = useStateReact(null);
   const [waTemplateParams, setWaTemplateParams] = useStateReact([]);
+  const [statusMenuOpen, setStatusMenuOpen] = useStateReact(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useStateReact(false);
   const [sidebarPanels, setSidebarPanels] = useStateReact({
     actions: true,
     conversationInfo: false,
@@ -348,6 +352,8 @@ export default function ConversationsView({
   const emojiPanelRef = useRef(null);
   const templatePanelRef = useRef(null);
   const textareaRef = useRef(null);
+  const statusMenuRef = useRef(null);
+  const moreMenuRef = useRef(null);
 
   const clearPendingAttachment = () => {
     if (pendingAttachment?.previewUrl?.startsWith("blob:")) {
@@ -377,6 +383,15 @@ export default function ConversationsView({
         !templatePanelRef.current.contains(event.target)
       ) {
         setWaTemplatesOpen(false);
+      }
+      if (
+        statusMenuRef.current &&
+        !statusMenuRef.current.contains(event.target)
+      ) {
+        setStatusMenuOpen(false);
+      }
+      if (moreMenuRef.current && !moreMenuRef.current.contains(event.target)) {
+        setMoreMenuOpen(false);
       }
     };
     document.addEventListener("mousedown", onDocPointer);
@@ -445,6 +460,18 @@ export default function ConversationsView({
       label: t.name,
       color: t.color || "#94a3b8",
     }));
+  const activeStatus = String(activeSession?.status || "open").toLowerCase();
+  const statusMenuOptions = [
+    { value: "open", label: "Open" },
+    { value: "awaiting", label: "Pending" },
+    { value: "snoozed", label: "Snooze" },
+    { value: "resolved", label: "Resolve" },
+    { value: "closed", label: "Close" },
+  ].filter((option) => option.value !== activeStatus);
+  const quickAction =
+    activeStatus === "closed"
+      ? { value: "open", label: "Reopen" }
+      : { value: "resolved", label: "Resolve" };
 
   const canSendNow =
     Boolean(activeId) &&
@@ -661,7 +688,7 @@ export default function ConversationsView({
       onOpenSettings={onOpenSettings}
       mainPanel={
         <section className="crm-main grid h-full min-h-0 overflow-hidden grid-rows-[56px_minmax(0,1fr)_auto] bg-[#f8f9fb]">
-          <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4">
+          <header className="flex items-center justify-between border-b border-slate-200 bg-white px-3 py-2">
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -674,53 +701,112 @@ export default function ConversationsView({
               <div className="flex h-7 w-7 items-center justify-center rounded-full bg-fuchsia-100 text-[10px] font-semibold text-fuchsia-700">
                 {sessionInitials(activeSession, sessionContact)}
               </div>
-              <div>
-                <p className="text-sm font-semibold text-slate-900">
-                  {getSessionTitle(activeSession, sessionContact)}
-                </p>
-                <p className="text-[11px] text-slate-500">
-                  {activeSession
-                    ? `Status: ${String(activeSession.status || "open")}`
-                    : "No conversation selected"}
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <p className="truncate text-sm font-semibold text-slate-900">
+                    {getSessionTitle(activeSession, sessionContact)}
+                  </p>
+                  {activeSession ? (
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium capitalize text-slate-600">
+                      {String(activeSession.status || "open")}
+                    </span>
+                  ) : null}
+                </div>
+                <p className="truncate text-[11px] text-slate-500 capitalize">
+                  {String(activeSession?.channel || "conversation")}
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 rounded-md px-2 text-[11px]"
-                onClick={() =>
-                  patchActiveSession("assignee", { agentId: agent?.id || "" })
-                }
-                disabled={
-                  !activeId ||
-                  !agent?.id ||
-                  activeSession?.assigneeAgentId === agent?.id
-                }
-              >
-                Assign to me
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 rounded-md px-2 text-[11px]"
-                onClick={() => patchSessionMeta({ status: "awaiting" })}
-                disabled={!activeId}
-              >
-                <CirclePause size={13} /> Pause
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 rounded-md px-2 text-[11px]"
-                onClick={() => patchSessionMeta({ status: "closed" })}
-                disabled={!activeId}
-              >
-                <X size={13} /> Close
-              </Button>
-            </div>
+            {activeId ? (
+              <div className="flex items-center gap-1.5">
+                <div className="relative" ref={statusMenuRef}>
+                  <div className="inline-flex items-center overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
+                    <button
+                      type="button"
+                      className="inline-flex h-8 items-center px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      onClick={() => patchSessionMeta({ status: quickAction.value })}
+                    >
+                      {quickAction.label}
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex h-8 w-8 items-center justify-center border-l border-slate-200 text-slate-500 hover:bg-slate-50"
+                      onClick={() => {
+                        setStatusMenuOpen((prev) => !prev);
+                        setMoreMenuOpen(false);
+                      }}
+                      aria-label="More status actions"
+                    >
+                      <ChevronDown size={13} />
+                    </button>
+                  </div>
+                  {statusMenuOpen ? (
+                    <div className="absolute right-0 z-40 mt-1 w-44 rounded-md border border-slate-200 bg-white p-1 shadow-lg">
+                      <p className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-400">
+                        Status actions
+                      </p>
+                      {statusMenuOptions.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                          onClick={() => {
+                            patchSessionMeta({ status: option.value });
+                            setStatusMenuOpen(false);
+                          }}
+                        >
+                          {option.value === "resolved" ? (
+                            <CheckCircle2 size={13} className="text-slate-500" />
+                          ) : option.value === "snoozed" ? (
+                            <Clock3 size={13} className="text-slate-500" />
+                          ) : (
+                            <span className="inline-block h-1.5 w-1.5 rounded-full bg-slate-400" />
+                          )}
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="relative" ref={moreMenuRef}>
+                  <button
+                    type="button"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                    onClick={() => {
+                      setMoreMenuOpen((prev) => !prev);
+                      setStatusMenuOpen(false);
+                    }}
+                    aria-label="More conversation options"
+                  >
+                    <MoreVertical size={14} />
+                  </button>
+                  {moreMenuOpen ? (
+                    <div className="absolute right-0 z-40 mt-1 w-56 rounded-md border border-slate-200 bg-white p-1 shadow-lg">
+                      <p className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-400">
+                        More options
+                      </p>
+                      <button
+                        type="button"
+                        className="flex w-full cursor-not-allowed items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-400"
+                        disabled
+                        title="Coming soon"
+                      >
+                        Block contact (soon)
+                      </button>
+                      <button
+                        type="button"
+                        className="flex w-full cursor-not-allowed items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-400"
+                        disabled
+                        title="Coming soon"
+                      >
+                        Send transcript by email (soon)
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
           </header>
 
           <ScrollArea className="conversation-thread h-full min-h-0 px-5 py-4">
