@@ -396,9 +396,16 @@ export default function App() {
   }, [theme]);
 
   const sessionPreview = (session) => {
+    const PREVIEW_CHAR_LIMIT = 120;
+    const trimPreview = (value) => {
+      const normalized = String(value ?? "").replace(/\s+/g, " ").trim();
+      if (!normalized) return "";
+      if (normalized.length <= PREVIEW_CHAR_LIMIT) return normalized;
+      return `${normalized.slice(0, PREVIEW_CHAR_LIMIT - 1)}…`;
+    };
     const draft = visitorDraftBySession[session.id];
-    if (draft) return `Typing: ${draft}`;
-    return session.lastMessage?.text ?? "No messages yet";
+    if (draft) return trimPreview(`Typing: ${draft}`);
+    return trimPreview(session.lastMessage?.text) || "No messages yet";
   };
 
   const sessionsByStatus = useMemo(() => {

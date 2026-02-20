@@ -675,10 +675,10 @@ export default function WorkspaceLayout({
                       key={session.id}
                       type="button"
                       onClick={() => setActiveId(session.id)}
-                      className="w-full rounded-xl border border-transparent bg-white px-3 py-2 text-left transition hover:border-slate-200 hover:bg-slate-50"
+                      className="w-full min-w-0 overflow-hidden rounded-xl border border-transparent bg-white px-3 py-2 text-left transition hover:border-slate-200 hover:bg-slate-50"
                     >
-                      <div className="mb-1 flex items-start justify-between gap-3">
-                        <p className="truncate text-sm font-medium text-slate-900">
+                      <div className="mb-1 flex min-w-0 items-start justify-between gap-3">
+                        <p className="min-w-0 truncate text-sm font-medium text-slate-900">
                           {getSessionTitle(session)}
                         </p>
                         <span className="shrink-0 text-[10px] text-slate-400">
@@ -791,14 +791,14 @@ export default function WorkspaceLayout({
                                 key={session.id}
                                 type="button"
                                 onClick={() => setActiveId(session.id)}
-                                className={`crm-session-item w-full rounded-xl border px-3 py-2 text-left transition ${
+                                className={`crm-session-item w-full min-w-0 overflow-hidden rounded-xl border px-3 py-2 text-left transition ${
                                   isActive
                                     ? "border-blue-200 bg-blue-50"
                                     : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"
                                 }`}
                               >
-                                <div className="mb-1 flex items-start justify-between gap-3">
-                                  <p className="truncate text-sm font-medium text-slate-900">
+                                <div className="mb-1 flex min-w-0 items-start justify-between gap-3">
+                                  <p className="min-w-0 truncate text-sm font-medium text-slate-900">
                                     {getSessionTitle(session)}
                                   </p>
                                   <span className="shrink-0 text-[10px] text-slate-400">
@@ -826,13 +826,13 @@ export default function WorkspaceLayout({
                                     ))}
                                   </div>
                                 ) : null}
-                                <div className="mt-1.5 flex items-center justify-between">
-                                  <p className="text-[10px] uppercase tracking-wide text-slate-400">
+                                <div className="mt-1.5 flex min-w-0 items-center justify-between gap-2">
+                                  <p className="min-w-0 truncate text-[10px] uppercase tracking-wide text-slate-400">
                                     {titleCase(session.channel)} •{" "}
                                     {session.status || "open"}
                                   </p>
                                   {(session.unreadCount || 0) > 0 ? (
-                                    <span className="rounded-full bg-orange-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                                    <span className="shrink-0 rounded-full bg-orange-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">
                                       {session.unreadCount}
                                     </span>
                                   ) : null}
