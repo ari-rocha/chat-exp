@@ -1501,7 +1501,6 @@ function SettingsPanel({
                                 <option value="priority">Priority</option>
                                 <option value="assignee">Assignee</option>
                                 <option value="team">Team</option>
-                                <option value="inbox">Inbox</option>
                               </optgroup>
                               <optgroup label="Contact">
                                 <option value="contact.identified">

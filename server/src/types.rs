@@ -38,7 +38,6 @@ pub struct Session {
     pub messages: Vec<ChatMessage>,
     pub channel: String,
     pub assignee_agent_id: Option<String>,
-    pub inbox_id: Option<String>,
     pub team_id: Option<String>,
     pub flow_id: Option<String>,
     pub contact_id: Option<String>,
@@ -59,7 +58,6 @@ pub struct SessionSummary {
     pub message_count: usize,
     pub channel: String,
     pub assignee_agent_id: Option<String>,
-    pub inbox_id: Option<String>,
     pub team_id: Option<String>,
     pub flow_id: Option<String>,
     pub contact_id: Option<String>,
@@ -95,7 +93,6 @@ pub struct AgentProfile {
     pub role: String,
     pub avatar_url: String,
     pub team_ids: Vec<String>,
-    pub inbox_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,27 +131,9 @@ pub struct Team {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Inbox {
-    pub tenant_id: String,
-    pub id: String,
-    pub name: String,
-    pub channels: Vec<String>,
-    pub agent_ids: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdateInboxBody {
-    pub name: Option<String>,
-    pub channel_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Channel {
     pub id: String,
     pub tenant_id: String,
-    pub inbox_id: Option<String>,
     pub channel_type: String,
     pub name: String,
     pub config: Value,
@@ -469,17 +448,9 @@ pub struct CreateTeamBody {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CreateInboxBody {
-    pub name: String,
-    pub channels: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CreateChannelBody {
     pub channel_type: String,
     pub name: Option<String>,
-    pub inbox_id: Option<String>,
     #[serde(default)]
     pub config: Option<Value>,
 }
@@ -510,12 +481,6 @@ pub struct SessionAssigneeBody {
 #[serde(rename_all = "camelCase")]
 pub struct SessionChannelBody {
     pub channel: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionInboxBody {
-    pub inbox_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

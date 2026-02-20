@@ -302,7 +302,6 @@ export default function App() {
   const [text, setText] = useState("");
   const [conversationSearch, setConversationSearch] = useState("");
   const [conversationFilter, setConversationFilter] = useState("active");
-  const [inboxFilter, setInboxFilter] = useState("all");
   const [visitorDraftBySession, setVisitorDraftBySession] = useState({});
   const [cannedReplies, setCannedReplies] = useState([]);
   const [cannedPanelOpen, setCannedPanelOpen] = useState(false);
@@ -317,7 +316,6 @@ export default function App() {
 
   const [agents, setAgents] = useState([]);
   const [teams, setTeams] = useState([]);
-  const [inboxes, setInboxes] = useState([]);
   const [channels, setChannels] = useState([]);
   const [channelRecords, setChannelRecords] = useState([]);
   const [notes, setNotes] = useState([]);
@@ -401,12 +399,8 @@ export default function App() {
       if (conversationFilter === "all") return true;
       return status === conversationFilter;
     });
-    const byInbox =
-      inboxFilter === "all"
-        ? byStatus
-        : byStatus.filter((session) => session.inboxId === inboxFilter);
-    if (!query) return byInbox;
-    return byInbox.filter((session) => {
+    if (!query) return byStatus;
+    return byStatus.filter((session) => {
       const draft = visitorDraftBySession[session.id];
       const preview = (
         draft
@@ -420,7 +414,6 @@ export default function App() {
     sessions,
     conversationSearch,
     conversationFilter,
-    inboxFilter,
     visitorDraftBySession,
   ]);
 
@@ -553,7 +546,6 @@ export default function App() {
       meRes,
       sessionsRes,
       teamsRes,
-      inboxesRes,
       channelsRes,
       agentsRes,
       flowsRes,
@@ -568,7 +560,6 @@ export default function App() {
       apiFetch("/api/auth/me", authToken),
       apiFetch("/api/sessions", authToken),
       apiFetch("/api/teams", authToken),
-      apiFetch("/api/inboxes", authToken),
       apiFetch("/api/channels", authToken),
       apiFetch("/api/agents", authToken),
       apiFetch("/api/flows", authToken),
@@ -584,7 +575,6 @@ export default function App() {
     setAgent(meRes.agent ?? null);
     setSessions(sessionsRes.sessions ?? []);
     setTeams(teamsRes.teams ?? []);
-    setInboxes(inboxesRes.inboxes ?? []);
     setChannels(channelsRes.channels ?? []);
     setChannelRecords(channelsRes.channelRecords ?? []);
     setAgents(agentsRes.agents ?? []);
@@ -1585,8 +1575,6 @@ export default function App() {
           closedCount={closedCount}
           conversationFilter={conversationFilter}
           setConversationFilter={setConversationFilter}
-          inboxFilter={inboxFilter}
-          setInboxFilter={setInboxFilter}
           agent={agent}
           updateAgentStatus={updateAgentStatus}
           channelCounts={channelCounts}
@@ -1622,7 +1610,6 @@ export default function App() {
           resolveTemplate={resolveTemplate}
           agents={agents}
           teams={teams}
-          inboxes={inboxes}
           channels={channels}
           flows={flows}
           patchActiveSession={patchActiveSession}
@@ -1665,8 +1652,6 @@ export default function App() {
           agents={agents}
           teams={teams}
           setTeams={setTeams}
-          inboxes={inboxes}
-          setInboxes={setInboxes}
           channels={channels}
           setChannels={setChannels}
           channelRecords={channelRecords}
@@ -1759,9 +1744,6 @@ export default function App() {
         closedCount={closedCount}
         conversationFilter={conversationFilter}
         setConversationFilter={setConversationFilter}
-        inboxFilter={inboxFilter}
-        setInboxFilter={setInboxFilter}
-        inboxes={inboxes}
         agent={agent}
         updateAgentStatus={updateAgentStatus}
         channelCounts={channelCounts}
@@ -1786,8 +1768,6 @@ export default function App() {
         agents={agents}
         teams={teams}
         setTeams={setTeams}
-        inboxes={inboxes}
-        setInboxes={setInboxes}
         channels={channels}
         setChannels={setChannels}
         channelRecords={channelRecords}

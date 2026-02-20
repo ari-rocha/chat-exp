@@ -15,7 +15,6 @@ import {
   ChevronRight,
   CircleUserRound,
   Globe,
-  Inbox,
   MessageSquareText,
   Pencil,
   Settings2,
@@ -66,8 +65,6 @@ export default function CustomizationView({
   agents,
   teams,
   setTeams,
-  inboxes,
-  setInboxes,
   channels,
   setChannels,
   channelRecords,
@@ -93,7 +90,6 @@ export default function CustomizationView({
   const [profileSaved, setProfileSaved] = useState(false);
   const [workspaceSaving, setWorkspaceSaving] = useState(false);
   const [teamName, setTeamName] = useState("");
-  const [inboxName, setInboxName] = useState("");
   const [editingChannel, setEditingChannel] = useState(null);
   const [routingError, setRoutingError] = useState("");
   const [routingSaving, setRoutingSaving] = useState(false);
@@ -163,25 +159,6 @@ export default function CustomizationView({
     }
   };
 
-  const createInbox = async (e) => {
-    e.preventDefault();
-    if (!inboxName.trim()) return;
-    setRoutingError("");
-    setRoutingSaving(true);
-    try {
-      const res = await apiFetch("/api/inboxes", token, {
-        method: "POST",
-        body: JSON.stringify({ name: inboxName.trim(), channels: [] }),
-      });
-      if (res.inbox) setInboxes((prev) => [...prev, res.inbox]);
-      setInboxName("");
-    } catch (err) {
-      setRoutingError(err.message);
-    } finally {
-      setRoutingSaving(false);
-    }
-  };
-
   const saveChannelFromModal = async (channelData) => {
     setRoutingError("");
     setRoutingSaving(true);
@@ -228,22 +205,6 @@ export default function CustomizationView({
     }
   };
 
-  const deleteInbox = async (inboxId) => {
-    if (!confirm("Delete this inbox and unlink all its channels?")) return;
-    setRoutingError("");
-    try {
-      await apiFetch(`/api/inboxes/${inboxId}`, token, { method: "DELETE" });
-      setInboxes((prev) => prev.filter((ib) => ib.id !== inboxId));
-      setChannelRecords((prev) =>
-        prev.map((ch) =>
-          ch.inboxId === inboxId ? { ...ch, inboxId: null } : ch,
-        ),
-      );
-    } catch (err) {
-      setRoutingError(err.message);
-    }
-  };
-
   const assignAgentToTeam = async (teamId, agentId) => {
     if (!teamId || !agentId) return;
     setRoutingError("");
@@ -262,31 +223,6 @@ export default function CustomizationView({
                 ),
               }
             : team,
-        ),
-      );
-    } catch (err) {
-      setRoutingError(err.message);
-    }
-  };
-
-  const assignAgentToInbox = async (inboxId, agentId) => {
-    if (!inboxId || !agentId) return;
-    setRoutingError("");
-    try {
-      await apiFetch(`/api/inboxes/${inboxId}/assign`, token, {
-        method: "POST",
-        body: JSON.stringify({ agentId }),
-      });
-      setInboxes((prev) =>
-        prev.map((inbox) =>
-          inbox.id === inboxId
-            ? {
-                ...inbox,
-                agentIds: Array.from(
-                  new Set([...(inbox.agentIds || []), agentId]),
-                ),
-              }
-            : inbox,
         ),
       );
     } catch (err) {
@@ -826,186 +762,65 @@ export default function CustomizationView({
       <div className="flex items-center justify-between mb-1">
         <h2 className="text-base font-semibold text-slate-900">Channels</h2>
         <Button
-          type="submit"
-          form="add-inbox-form"
+          type="button"
+          onClick={() => openChannelEditor()}
           disabled={routingSaving}
           size="sm"
           className={`${PRIMARY_BUTTON_CLASS} shrink-0`}
         >
-          <Inbox size={14} className="mr-1.5" />
-          Add Inbox
+          Add Channel
         </Button>
       </div>
       <p className="mb-6 text-sm text-slate-500">
-        Configure inboxes and the channels that feed into them.
+        Configure each channel directly. Teams handle assignment.
       </p>
-
-      {/* Add inbox */}
-      <form
-        id="add-inbox-form"
-        onSubmit={createInbox}
-        className="mb-6 flex gap-2 max-w-md"
-      >
-        <Input
-          value={inboxName}
-          onChange={(e) => setInboxName(e.target.value)}
-          placeholder="New inbox name…"
-          className="flex-1"
-        />
-      </form>
 
       {routingError && (
         <p className="mb-4 text-xs text-red-600">{routingError}</p>
       )}
 
-      {(inboxes || []).length === 0 ? (
+      {(channelRecords || []).length === 0 ? (
         <div className="rounded-lg border border-dashed border-slate-300 p-8 text-center">
-          <Inbox size={28} className="mx-auto mb-2 text-slate-300" />
+          <Globe size={28} className="mx-auto mb-2 text-slate-300" />
           <p className="text-sm text-slate-500">
-            No inboxes yet. Create one to start receiving conversations.
+            No channels yet. Add your first channel to start receiving conversations.
           </p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {(inboxes || []).map((inbox) => {
-            const inboxChannels = (channelRecords || []).filter(
-              (ch) => ch.inboxId === inbox.id,
-            );
-            const assignedAgents = (agents || []).filter((a) =>
-              (inbox.agentIds || []).includes(a.id),
-            );
-            return (
-              <div
-                key={inbox.id}
-                className="rounded-lg border border-slate-200 bg-white"
-              >
-                {/* Inbox header */}
-                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
-                  <div className="flex items-center gap-2.5">
-                    <div className="flex h-7 w-7 items-center justify-center rounded-md bg-slate-100">
-                      <Inbox size={14} className="text-slate-500" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-slate-900">
-                        {inbox.name}
-                      </p>
-                      <p className="text-[11px] text-slate-400">
-                        {inboxChannels.length} channel
-                        {inboxChannels.length !== 1 ? "s" : ""} ·{" "}
-                        {assignedAgents.length} agent
-                        {assignedAgents.length !== 1 ? "s" : ""}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <select
-                      defaultValue=""
-                      onChange={(e) => {
-                        assignAgentToInbox(inbox.id, e.target.value);
-                        e.target.value = "";
-                      }}
-                      className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600"
-                    >
-                      <option value="" disabled>
-                        + Agent
-                      </option>
-                      {(agents || [])
-                        .filter((a) => !(inbox.agentIds || []).includes(a.id))
-                        .map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {a.name}
-                          </option>
-                        ))}
-                    </select>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 px-2 text-xs"
-                          onClick={() =>
-                            openChannelEditor({
-                              channelType: "web",
-                              name: "",
-                              inboxId: inbox.id,
-                              config: {
-                                domain: "",
-                                phoneNumberId: "",
-                                businessAccountId: "",
-                                verifyToken: "",
-                                appSecret: "",
-                                accessToken: "",
-                              },
-                            })
-                          }
-                    >
-                      + Channel
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 w-7 p-0 text-slate-400 hover:text-red-600"
-                      onClick={() => deleteInbox(inbox.id)}
-                    >
-                      <Trash2 size={13} />
-                    </Button>
-                  </div>
+        <div className="space-y-2">
+          {(channelRecords || []).map((channel) => (
+            <button
+              key={channel.id}
+              type="button"
+              onClick={() => openChannelEditor(channel)}
+              className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-3 text-left transition-colors hover:bg-slate-50"
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="text-base">
+                  {channel.channelType === "web"
+                    ? "🌐"
+                    : channel.channelType === "whatsapp"
+                      ? "💬"
+                      : "🔌"}
+                </span>
+                <div>
+                  <p className="text-sm font-medium text-slate-800">
+                    {channel.name}
+                  </p>
+                  <p className="text-[11px] text-slate-400 capitalize">
+                    {channel.channelType}
+                    {channel.channelType === "web" && channel.config?.domain
+                      ? ` · ${channel.config.domain}`
+                      : channel.channelType === "whatsapp" &&
+                          channel.config?.phoneNumberId
+                        ? ` · ${channel.config.phoneNumberId}`
+                        : ""}
+                  </p>
                 </div>
-
-                {/* Channels */}
-                {inboxChannels.length > 0 && (
-                  <div className="divide-y divide-slate-50">
-                    {inboxChannels.map((channel) => (
-                      <button
-                        key={channel.id}
-                        type="button"
-                        onClick={() => openChannelEditor(channel)}
-                        className="flex w-full items-center justify-between px-4 py-2.5 text-left hover:bg-slate-50 transition-colors"
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <span className="text-base">
-                            {channel.channelType === "web"
-                              ? "🌐"
-                              : channel.channelType === "whatsapp"
-                                ? "💬"
-                                : "🔌"}
-                          </span>
-                          <div>
-                            <p className="text-sm font-medium text-slate-800">
-                              {channel.name}
-                            </p>
-                            <p className="text-[11px] text-slate-400 capitalize">
-                              {channel.channelType}
-                              {channel.channelType === "web" &&
-                              channel.config?.domain
-                                ? ` · ${channel.config.domain}`
-                                : channel.channelType === "whatsapp" &&
-                                    channel.config?.phoneNumberId
-                                  ? ` · ${channel.config.phoneNumberId}`
-                                  : ""}
-                            </p>
-                          </div>
-                        </div>
-                        <ChevronRight size={14} className="text-slate-300" />
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {/* Assigned agents */}
-                {assignedAgents.length > 0 && (
-                  <div className="flex flex-wrap gap-1 px-4 py-2 border-t border-slate-50">
-                    {assignedAgents.map((a) => (
-                      <span
-                        key={a.id}
-                        className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600"
-                      >
-                        {a.name}
-                      </span>
-                    ))}
-                  </div>
-                )}
               </div>
-            );
-          })}
+              <ChevronRight size={14} className="text-slate-300" />
+            </button>
+          ))}
         </div>
       )}
     </div>
@@ -1085,30 +900,6 @@ export default function CustomizationView({
                 placeholder="e.g. My Website"
               />
             </div>
-            {!editingChannel.id && (
-              <div>
-                <label className="mb-1.5 block text-xs font-medium text-slate-700">
-                  Inbox
-                </label>
-                <select
-                  value={editingChannel.inboxId || ""}
-                  onChange={(e) =>
-                    setEditingChannel({
-                      ...editingChannel,
-                      inboxId: e.target.value,
-                    })
-                  }
-                  className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
-                >
-                  <option value="">Select inbox…</option>
-                  {(inboxes || []).map((ib) => (
-                    <option key={ib.id} value={ib.id}>
-                      {ib.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
           </fieldset>
 
           {isWeb && (
@@ -1387,7 +1178,6 @@ export default function CustomizationView({
                     name:
                       editingChannel.name ||
                       `${editingChannel.channelType} Channel`,
-                    inboxId: editingChannel.inboxId,
                     config: editingChannel.config || {},
                   };
                   await saveChannelFromModal(payload);

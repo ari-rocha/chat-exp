@@ -9,7 +9,6 @@ import {
   AtSign,
   CirclePause,
   ClipboardList,
-  Globe,
   House,
   Image,
   MessageCircle,
@@ -153,8 +152,6 @@ export default function ConversationsView({
   closedCount,
   conversationFilter,
   setConversationFilter,
-  inboxFilter,
-  setInboxFilter,
   agent,
   updateAgentStatus,
   channelCounts,
@@ -188,7 +185,6 @@ export default function ConversationsView({
   resolveTemplate,
   agents,
   teams,
-  inboxes,
   channels,
   patchActiveSession,
   setHandover,
@@ -460,9 +456,6 @@ export default function ConversationsView({
       closedCount={closedCount}
       conversationFilter={conversationFilter}
       setConversationFilter={setConversationFilter}
-      inboxFilter={inboxFilter}
-      setInboxFilter={setInboxFilter}
-      inboxes={inboxes}
       agent={agent}
       updateAgentStatus={updateAgentStatus}
       channelCounts={channelCounts}
@@ -1127,28 +1120,6 @@ export default function ConversationsView({
                   Quick Routing
                 </p>
                 <div className="space-y-2">
-                  <div>
-                    <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-400">
-                      Inbox
-                    </label>
-                    <select
-                      className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
-                      value={activeSession?.inboxId || ""}
-                      onChange={(e) =>
-                        patchActiveSession("inbox", {
-                          inboxId: e.target.value || null,
-                        })
-                      }
-                      disabled={!activeId}
-                    >
-                      <option value="">No inbox</option>
-                      {inboxes.map((inbox) => (
-                        <option key={inbox.id} value={inbox.id}>
-                          {inbox.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-400">
@@ -1394,18 +1365,14 @@ export default function ConversationsView({
                   </div>
                 </div>
                 <div className="flex items-start gap-2">
-                  <Globe size={13} className="mt-0.5 text-slate-400" />
+                  <Users size={13} className="mt-0.5 text-slate-400" />
                   <div>
                     <p className="text-[10px] uppercase tracking-wide text-slate-400">
-                      Routing
+                      Team
                     </p>
                     <p className="text-slate-900">
                       {teams.find((item) => item.id === activeSession?.teamId)
                         ?.name || "No team"}
-                      {" • "}
-                      {inboxes.find(
-                        (item) => item.id === activeSession?.inboxId,
-                      )?.name || "No inbox"}
                     </p>
                   </div>
                 </div>
