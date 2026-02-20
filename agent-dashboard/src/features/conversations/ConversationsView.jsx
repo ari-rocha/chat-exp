@@ -8,7 +8,9 @@ import {
   ArrowLeft,
   AtSign,
   Building2,
+  Check,
   ChevronDown,
+  ChevronsUpDown,
   ChevronRight,
   CirclePause,
   ClipboardList,
@@ -144,6 +146,119 @@ function getSessionTitle(session, linkedContact = null) {
     session.phone;
   if (base) return base;
   return `Visitor ${String(session.id || "").slice(0, 6)}`;
+}
+
+function AvatarOption({ label, avatarUrl, fallback = "?" }) {
+  if (avatarUrl) {
+    return (
+      <img
+        src={avatarUrl}
+        alt={label}
+        className="h-5 w-5 rounded-full object-cover"
+      />
+    );
+  }
+  return (
+    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[10px] font-semibold text-slate-600">
+      {fallback}
+    </span>
+  );
+}
+
+function RichCombobox({
+  value,
+  options,
+  onSelect,
+  placeholder = "Select...",
+  searchPlaceholder = "Search...",
+  disabled = false,
+  renderOptionIcon,
+}) {
+  const [open, setOpen] = useStateReact(false);
+  const [query, setQuery] = useStateReact("");
+  const rootRef = useRef(null);
+  const inputRef = useRef(null);
+
+  const selected = options.find((option) => option.value === value) || null;
+  const filtered = options.filter((option) =>
+    String(option.label || "")
+      .toLowerCase()
+      .includes(query.trim().toLowerCase()),
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    inputRef.current?.focus();
+    const onDocClick = (event) => {
+      if (!rootRef.current) return;
+      if (!rootRef.current.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) setQuery("");
+  }, [open]);
+
+  return (
+    <div className="relative" ref={rootRef}>
+      <button
+        type="button"
+        className="flex w-full items-center justify-between rounded-md border border-slate-200 bg-white px-2 py-1.5 text-left text-xs text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+        onClick={() => !disabled && setOpen((prev) => !prev)}
+        disabled={disabled}
+      >
+        <span className="flex min-w-0 items-center gap-1.5">
+          {selected && renderOptionIcon ? renderOptionIcon(selected) : null}
+          <span className="truncate">
+            {selected ? selected.label : placeholder}
+          </span>
+        </span>
+        <ChevronsUpDown size={13} className="shrink-0 text-slate-400" />
+      </button>
+
+      {open ? (
+        <div className="absolute z-20 mt-1 w-full rounded-md border border-slate-200 bg-white shadow-lg">
+          <div className="border-b border-slate-100 p-1.5">
+            <Input
+              ref={inputRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={searchPlaceholder}
+              className="h-7 border-slate-200 text-xs"
+            />
+          </div>
+          <div className="max-h-52 overflow-y-auto py-1">
+            {filtered.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className="flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                onClick={() => {
+                  onSelect(option.value);
+                  setOpen(false);
+                }}
+              >
+                <span className="flex min-w-0 items-center gap-1.5">
+                  {renderOptionIcon ? renderOptionIcon(option) : null}
+                  <span className="truncate">{option.label}</span>
+                </span>
+                {value === option.value ? (
+                  <Check size={12} className="shrink-0 text-slate-500" />
+                ) : null}
+              </button>
+            ))}
+            {filtered.length === 0 ? (
+              <p className="px-2 py-2 text-xs text-slate-400">No results</p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export default function ConversationsView({
@@ -289,6 +404,48 @@ export default function ConversationsView({
       : assigneeAgent?.name || "Unassigned";
   const assigneeAvatarUrl =
     assigneeName === botName ? botAvatarUrl : assigneeAgent?.avatarUrl || "";
+  const assigneeOptions = [
+    {
+      value: botAssigneeId,
+      label: botName,
+      avatarUrl: botAvatarUrl,
+      fallback: "B",
+    },
+    ...agents.map((item) => ({
+      value: item.id,
+      label: item.name,
+      avatarUrl: item.avatarUrl || "",
+      fallback: String(item.name || "A").slice(0, 1).toUpperCase(),
+    })),
+  ];
+  const teamOptions = [
+    { value: "", label: "None", fallback: "-" },
+    ...teams.map((team) => ({
+      value: team.id,
+      label: team.name,
+      fallback: String(team.name || "T").slice(0, 1).toUpperCase(),
+    })),
+  ];
+  const statusOptions = [
+    { value: "open", label: "Open" },
+    { value: "awaiting", label: "Awaiting" },
+    { value: "snoozed", label: "Snoozed" },
+    { value: "resolved", label: "Resolved" },
+    { value: "closed", label: "Closed" },
+  ];
+  const priorityOptions = [
+    { value: "low", label: "Low" },
+    { value: "normal", label: "Normal" },
+    { value: "high", label: "High" },
+    { value: "urgent", label: "Urgent" },
+  ];
+  const addableTagOptions = (tags || [])
+    .filter((t) => !(sessionTags || []).find((st) => st.id === t.id))
+    .map((t) => ({
+      value: t.id,
+      label: t.name,
+      color: t.color || "#94a3b8",
+    }));
 
   const canSendNow =
     Boolean(activeId) &&
@@ -1207,83 +1364,75 @@ export default function ConversationsView({
                       <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
                         Assignee
                       </label>
-                      <select
-                        className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
+                      <RichCombobox
                         value={activeSession?.assigneeAgentId || botAssigneeId}
-                        onChange={(e) =>
-                          patchActiveSession("assignee", {
-                            agentId: e.target.value || botAssigneeId,
-                          })
+                        options={assigneeOptions}
+                        onSelect={(agentId) =>
+                          patchActiveSession("assignee", { agentId })
                         }
+                        placeholder="Select assignee..."
+                        searchPlaceholder="Search assignee..."
                         disabled={!activeId}
-                      >
-                        <option value={botAssigneeId}>{botName}</option>
-                        {agents.map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.name}
-                          </option>
-                        ))}
-                      </select>
+                        renderOptionIcon={(option) => (
+                          <AvatarOption
+                            label={option.label}
+                            avatarUrl={option.avatarUrl}
+                            fallback={option.fallback}
+                          />
+                        )}
+                      />
                     </div>
                     <div>
                       <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
                         Team
                       </label>
-                      <select
-                        className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
+                      <RichCombobox
                         value={activeSession?.teamId || ""}
-                        onChange={(e) =>
+                        options={teamOptions}
+                        onSelect={(teamId) =>
                           patchActiveSession("team", {
-                            teamId: e.target.value || null,
+                            teamId: teamId || null,
                           })
                         }
+                        placeholder="Select team..."
+                        searchPlaceholder="Search team..."
                         disabled={!activeId}
-                      >
-                        <option value="">None</option>
-                        {teams.map((team) => (
-                          <option key={team.id} value={team.id}>
-                            {team.name}
-                          </option>
-                        ))}
-                      </select>
+                        renderOptionIcon={(option) => (
+                          <AvatarOption
+                            label={option.label}
+                            fallback={option.fallback}
+                          />
+                        )}
+                      />
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
                           Status
                         </label>
-                        <select
-                          className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
+                        <RichCombobox
                           value={activeSession?.status || "open"}
-                          onChange={(e) =>
-                            patchSessionMeta({ status: e.target.value })
-                          }
+                          options={statusOptions}
+                          onSelect={(status) => patchSessionMeta({ status })}
+                          placeholder="Select status..."
+                          searchPlaceholder="Search status..."
                           disabled={!activeId}
-                        >
-                          <option value="open">open</option>
-                          <option value="awaiting">awaiting</option>
-                          <option value="snoozed">snoozed</option>
-                          <option value="resolved">resolved</option>
-                          <option value="closed">closed</option>
-                        </select>
+                        />
                       </div>
                       <div>
                         <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">
                           Priority
                         </label>
-                        <select
-                          className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
+                        <RichCombobox
                           value={activeSession?.priority || "normal"}
-                          onChange={(e) =>
-                            patchSessionMeta({ priority: e.target.value })
+                          options={priorityOptions}
+                          onSelect={(priority) =>
+                            patchSessionMeta({ priority })
                           }
+                          placeholder="Select priority..."
+                          searchPlaceholder="Search priority..."
                           disabled={!activeId}
-                        >
-                          <option value="low">low</option>
-                          <option value="normal">normal</option>
-                          <option value="high">high</option>
-                          <option value="urgent">urgent</option>
-                        </select>
+                        />
                       </div>
                     </div>
                     <div>
@@ -1313,26 +1462,20 @@ export default function ConversationsView({
                           </Badge>
                         ))}
                       </div>
-                      <select
-                        className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-500"
+                      <RichCombobox
                         value=""
-                        onChange={(e) =>
-                          e.target.value && addSessionTag(e.target.value)
-                        }
+                        options={addableTagOptions}
+                        onSelect={(tagId) => tagId && addSessionTag(tagId)}
+                        placeholder="+ Add tag"
+                        searchPlaceholder="Search tags..."
                         disabled={!activeId}
-                      >
-                        <option value="">+ Add tag</option>
-                        {(tags || [])
-                          .filter(
-                            (t) =>
-                              !(sessionTags || []).find((st) => st.id === t.id),
-                          )
-                          .map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.name}
-                            </option>
-                          ))}
-                      </select>
+                        renderOptionIcon={(option) => (
+                          <span
+                            className="inline-block h-2.5 w-2.5 rounded-full"
+                            style={{ backgroundColor: option.color }}
+                          />
+                        )}
+                      />
                     </div>
                   </div>
                 ) : null}
