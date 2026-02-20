@@ -29,7 +29,7 @@ use hmac::{Hmac, Mac};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 use tokio::sync::{mpsc, Mutex};
 use tower_http::cors::CorsLayer;
@@ -89,6 +89,68 @@ fn normalize_email(value: &str) -> String {
 
 fn normalize_canned_shortcut(value: &str) -> String {
     value.trim().replace('/', "")
+}
+
+fn markdown_to_plain_text(markdown: &str) -> String {
+    let code_fence_re = Regex::new(r"(?s)```.*?```").ok();
+    let inline_code_re = Regex::new(r"`([^`]+)`").ok();
+    let links_re = Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").ok();
+    let md_tokens_re = Regex::new(r"(?m)^#{1,6}\s*|[*_>#-]").ok();
+
+    let mut text = markdown.to_string();
+    if let Some(re) = code_fence_re.as_ref() {
+        text = re.replace_all(&text, " ").to_string();
+    }
+    if let Some(re) = inline_code_re.as_ref() {
+        text = re.replace_all(&text, "$1").to_string();
+    }
+    if let Some(re) = links_re.as_ref() {
+        text = re.replace_all(&text, "$1").to_string();
+    }
+    if let Some(re) = md_tokens_re.as_ref() {
+        text = re.replace_all(&text, "").to_string();
+    }
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn sha256_hex(input: &str) -> String {
+    let digest = Sha256::digest(input.as_bytes());
+    hex::encode(digest)
+}
+
+fn approximate_token_count(text: &str) -> usize {
+    text.split_whitespace().count()
+}
+
+fn chunk_text(text: &str, target_tokens: usize, overlap_tokens: usize) -> Vec<String> {
+    let words = text
+        .split_whitespace()
+        .filter(|item| !item.is_empty())
+        .collect::<Vec<_>>();
+    if words.is_empty() {
+        return vec![];
+    }
+    let mut chunks = Vec::new();
+    let mut start = 0usize;
+    while start < words.len() {
+        let end = (start + target_tokens).min(words.len());
+        chunks.push(words[start..end].join(" "));
+        if end == words.len() {
+            break;
+        }
+        let step = target_tokens.saturating_sub(overlap_tokens).max(1);
+        start = start.saturating_add(step);
+    }
+    chunks
+}
+
+fn embedding_to_pgvector(embedding: &[f64]) -> String {
+    let items = embedding
+        .iter()
+        .map(|v| format!("{:.8}", v))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{items}]")
 }
 
 async fn issue_login_ticket(state: &Arc<AppState>, user_id: &str) -> Option<String> {
@@ -10786,6 +10848,1085 @@ async fn update_tag(
     }
 }
 
+fn parse_kb_collection_row(row: sqlx::postgres::PgRow) -> KbCollection {
+    KbCollection {
+        id: row.get("id"),
+        tenant_id: row.get("tenant_id"),
+        name: row.get("name"),
+        description: row.get("description"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    }
+}
+
+fn parse_kb_article_row(row: sqlx::postgres::PgRow) -> KbArticle {
+    KbArticle {
+        id: row.get("id"),
+        tenant_id: row.get("tenant_id"),
+        collection_id: row.get("collection_id"),
+        title: row.get("title"),
+        slug: row.get("slug"),
+        markdown: row.get("markdown"),
+        plain_text: row.get("plain_text"),
+        status: row.get("status"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+        published_at: row.get("published_at"),
+    }
+}
+
+async fn ensure_kb_collection_in_tenant(
+    state: &Arc<AppState>,
+    tenant_id: &str,
+    collection_id: &str,
+) -> bool {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(1) FROM kb_collections WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(tenant_id)
+    .bind(collection_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0)
+        > 0
+}
+
+async fn openai_embeddings(
+    state: &Arc<AppState>,
+    inputs: &[String],
+) -> Result<Vec<Vec<f64>>, String> {
+    if inputs.is_empty() {
+        return Ok(vec![]);
+    }
+    let api_key = env::var("OPENAI_API_KEY").unwrap_or_default();
+    if api_key.trim().is_empty() {
+        return Err("OPENAI_API_KEY not configured".to_string());
+    }
+    let model =
+        env::var("OPENAI_EMBEDDING_MODEL").unwrap_or_else(|_| "text-embedding-3-large".to_string());
+    let response = state
+        .ai_client
+        .post("https://api.openai.com/v1/embeddings")
+        .bearer_auth(api_key)
+        .json(&json!({
+            "model": model,
+            "input": inputs,
+        }))
+        .send()
+        .await
+        .map_err(|err| format!("embedding request failed: {err}"))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("embedding provider returned {status}: {body}"));
+    }
+    let payload = response
+        .json::<Value>()
+        .await
+        .map_err(|err| format!("embedding parse failed: {err}"))?;
+    let data = payload
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "embedding provider response missing data".to_string())?;
+    let mut out = Vec::with_capacity(data.len());
+    for item in data {
+        let embedding = item
+            .get("embedding")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "embedding provider item missing embedding".to_string())?
+            .iter()
+            .filter_map(Value::as_f64)
+            .collect::<Vec<_>>();
+        if embedding.len() != 3072 {
+            return Err(format!(
+                "embedding dimension mismatch: expected 3072 got {}",
+                embedding.len()
+            ));
+        }
+        out.push(embedding);
+    }
+    Ok(out)
+}
+
+async fn reindex_kb_article(state: &Arc<AppState>, article: &KbArticle) -> Result<usize, String> {
+    let _ = sqlx::query("DELETE FROM kb_chunks WHERE article_id = $1")
+        .bind(&article.id)
+        .execute(&state.db)
+        .await
+        .map_err(|err| format!("failed clearing old chunks: {err}"))?;
+
+    if article.status != "published" || article.plain_text.trim().is_empty() {
+        return Ok(0);
+    }
+
+    let chunks = chunk_text(&article.plain_text, 600, 80);
+    if chunks.is_empty() {
+        return Ok(0);
+    }
+
+    let mut embeddings = Vec::<Vec<f64>>::new();
+    for batch in chunks.chunks(32) {
+        let batch_inputs = batch.iter().map(|item| item.to_string()).collect::<Vec<_>>();
+        let mut batch_embeds = openai_embeddings(state, &batch_inputs).await?;
+        embeddings.append(&mut batch_embeds);
+    }
+    if embeddings.len() != chunks.len() {
+        return Err("embedding count mismatch".to_string());
+    }
+
+    let created_at = now_iso();
+    for (idx, chunk) in chunks.iter().enumerate() {
+        let vector_text = embedding_to_pgvector(&embeddings[idx]);
+        let token_count = approximate_token_count(chunk) as i32;
+        sqlx::query(
+            "INSERT INTO kb_chunks (id, tenant_id, article_id, chunk_index, content_text, token_count, embedding, tsv, created_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7::vector,to_tsvector('english', $5),$8)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(&article.tenant_id)
+        .bind(&article.id)
+        .bind(idx as i32)
+        .bind(chunk)
+        .bind(token_count)
+        .bind(vector_text)
+        .bind(&created_at)
+        .execute(&state.db)
+        .await
+        .map_err(|err| format!("failed inserting chunk: {err}"))?;
+    }
+
+    Ok(chunks.len())
+}
+
+// ── Knowledge Base: Collections ─────────────────────────────────────
+async fn get_kb_collections(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(value) => value,
+        Err(err) => return err.into_response(),
+    };
+    let rows = sqlx::query(
+        "SELECT id, tenant_id, name, description, created_at, updated_at \
+         FROM kb_collections WHERE tenant_id = $1 ORDER BY name ASC",
+    )
+    .bind(&tenant_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let collections = rows
+        .into_iter()
+        .map(parse_kb_collection_row)
+        .collect::<Vec<_>>();
+    (StatusCode::OK, Json(json!({ "collections": collections }))).into_response()
+}
+
+async fn create_kb_collection(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<CreateKbCollectionBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(value) => value,
+        Err(err) => return err.into_response(),
+    };
+    let now = now_iso();
+    let collection = KbCollection {
+        id: Uuid::new_v4().to_string(),
+        tenant_id,
+        name: body.name.trim().to_string(),
+        description: body.description.trim().to_string(),
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    let result = sqlx::query(
+        "INSERT INTO kb_collections (id, tenant_id, name, description, created_at, updated_at) \
+         VALUES ($1,$2,$3,$4,$5,$6)",
+    )
+    .bind(&collection.id)
+    .bind(&collection.tenant_id)
+    .bind(&collection.name)
+    .bind(&collection.description)
+    .bind(&collection.created_at)
+    .bind(&collection.updated_at)
+    .execute(&state.db)
+    .await;
+    match result {
+        Ok(_) => (StatusCode::CREATED, Json(json!({ "collection": collection }))).into_response(),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": format!("failed to create collection: {err}") })),
+        )
+            .into_response(),
+    }
+}
+
+async fn patch_kb_collection(
+    Path(collection_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateKbCollectionBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(value) => value,
+        Err(err) => return err.into_response(),
+    };
+    let mut sets = vec![];
+    let mut idx = 3u32;
+    if body.name.is_some() {
+        sets.push(format!("name = ${idx}"));
+        idx += 1;
+    }
+    if body.description.is_some() {
+        sets.push(format!("description = ${idx}"));
+        idx += 1;
+    }
+    sets.push(format!("updated_at = ${idx}"));
+    let sql = format!(
+        "UPDATE kb_collections SET {} WHERE id = $1 AND tenant_id = $2 \
+         RETURNING id, tenant_id, name, description, created_at, updated_at",
+        sets.join(", ")
+    );
+    let mut q = sqlx::query(&sql).bind(&collection_id).bind(&tenant_id);
+    if let Some(name) = body.name.as_ref() {
+        q = q.bind(name.trim());
+    }
+    if let Some(desc) = body.description.as_ref() {
+        q = q.bind(desc.trim());
+    }
+    q = q.bind(now_iso());
+    match q.fetch_optional(&state.db).await {
+        Ok(Some(row)) => {
+            let collection = parse_kb_collection_row(row);
+            (StatusCode::OK, Json(json!({ "collection": collection }))).into_response()
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "collection not found" })),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": err.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn delete_kb_collection(
+    Path(collection_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(value) => value,
+        Err(err) => return err.into_response(),
+    };
+    let affected = sqlx::query("DELETE FROM kb_collections WHERE id = $1 AND tenant_id = $2")
+        .bind(&collection_id)
+        .bind(&tenant_id)
+        .execute(&state.db)
+        .await
+        .ok()
+        .map(|res| res.rows_affected())
+        .unwrap_or(0);
+    if affected == 0 {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "collection not found" })),
+        )
+            .into_response();
+    }
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
+// ── Knowledge Base: Articles ────────────────────────────────────────
+async fn get_kb_articles(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<ListKbArticlesQuery>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(value) => value,
+        Err(err) => return err.into_response(),
+    };
+    let rows = sqlx::query(
+        "SELECT id, tenant_id, collection_id, title, slug, markdown, plain_text, status, created_at, updated_at, published_at \
+         FROM kb_articles \
+         WHERE tenant_id = $1 \
+           AND ($2 = '' OR collection_id = $2) \
+           AND ($3 = '' OR status = $3) \
+         ORDER BY updated_at DESC",
+    )
+    .bind(&tenant_id)
+    .bind(query.collection_id.trim())
+    .bind(query.status.trim())
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let articles = rows.into_iter().map(parse_kb_article_row).collect::<Vec<_>>();
+    (StatusCode::OK, Json(json!({ "articles": articles }))).into_response()
+}
+
+async fn get_kb_article(
+    Path(article_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(value) => value,
+        Err(err) => return err.into_response(),
+    };
+    match sqlx::query(
+        "SELECT id, tenant_id, collection_id, title, slug, markdown, plain_text, status, created_at, updated_at, published_at \
+         FROM kb_articles WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(&tenant_id)
+    .bind(&article_id)
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(Some(row)) => {
+            let article = parse_kb_article_row(row);
+            (StatusCode::OK, Json(json!({ "article": article }))).into_response()
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "article not found" })),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": err.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn create_kb_article(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<CreateKbArticleBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(value) => value,
+        Err(err) => return err.into_response(),
+    };
+    if !ensure_kb_collection_in_tenant(&state, &tenant_id, &body.collection_id).await {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "collection not found in workspace" })),
+        )
+            .into_response();
+    }
+    let now = now_iso();
+    let status = if body.status.trim().eq_ignore_ascii_case("published") {
+        "published".to_string()
+    } else {
+        "draft".to_string()
+    };
+    let plain_text = markdown_to_plain_text(&body.markdown);
+    let content_hash = sha256_hex(&plain_text);
+    let slug = format!("{}-{}", slugify(&body.title), Uuid::new_v4().simple());
+    let article = KbArticle {
+        id: Uuid::new_v4().to_string(),
+        tenant_id,
+        collection_id: body.collection_id.clone(),
+        title: body.title.trim().to_string(),
+        slug,
+        markdown: body.markdown.clone(),
+        plain_text,
+        status: status.clone(),
+        created_at: now.clone(),
+        updated_at: now.clone(),
+        published_at: if status == "published" {
+            Some(now.clone())
+        } else {
+            None
+        },
+    };
+    let result = sqlx::query(
+        "INSERT INTO kb_articles (id, tenant_id, collection_id, title, slug, markdown, plain_text, content_hash, status, published_at, created_at, updated_at) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+    )
+    .bind(&article.id)
+    .bind(&article.tenant_id)
+    .bind(&article.collection_id)
+    .bind(&article.title)
+    .bind(&article.slug)
+    .bind(&article.markdown)
+    .bind(&article.plain_text)
+    .bind(content_hash)
+    .bind(&article.status)
+    .bind(&article.published_at)
+    .bind(&article.created_at)
+    .bind(&article.updated_at)
+    .execute(&state.db)
+    .await;
+    if let Err(err) = result {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": err.to_string() })),
+        )
+            .into_response();
+    }
+    if article.status == "published" {
+        if let Err(err) = reindex_kb_article(&state, &article).await {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": err })),
+            )
+                .into_response();
+        }
+    }
+    (StatusCode::CREATED, Json(json!({ "article": article }))).into_response()
+}
+
+async fn patch_kb_article(
+    Path(article_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateKbArticleBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(value) => value,
+        Err(err) => return err.into_response(),
+    };
+    let existing = sqlx::query(
+        "SELECT id, tenant_id, collection_id, title, slug, markdown, plain_text, status, created_at, updated_at, published_at \
+         FROM kb_articles WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(&tenant_id)
+    .bind(&article_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let Some(row) = existing else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "article not found" })),
+        )
+            .into_response();
+    };
+    let mut article = parse_kb_article_row(row);
+    if let Some(collection_id) = body.collection_id.as_ref() {
+        if !ensure_kb_collection_in_tenant(&state, &tenant_id, collection_id).await {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "collection not found in workspace" })),
+            )
+                .into_response();
+        }
+        article.collection_id = collection_id.clone();
+    }
+    if let Some(title) = body.title.as_ref() {
+        article.title = title.trim().to_string();
+        article.slug = format!("{}-{}", slugify(&article.title), Uuid::new_v4().simple());
+    }
+    if let Some(markdown) = body.markdown.as_ref() {
+        article.markdown = markdown.clone();
+        article.plain_text = markdown_to_plain_text(&article.markdown);
+    }
+    article.updated_at = now_iso();
+    let content_hash = sha256_hex(&article.plain_text);
+    let result = sqlx::query(
+        "UPDATE kb_articles \
+         SET collection_id = $1, title = $2, slug = $3, markdown = $4, plain_text = $5, content_hash = $6, updated_at = $7 \
+         WHERE id = $8 AND tenant_id = $9",
+    )
+    .bind(&article.collection_id)
+    .bind(&article.title)
+    .bind(&article.slug)
+    .bind(&article.markdown)
+    .bind(&article.plain_text)
+    .bind(content_hash)
+    .bind(&article.updated_at)
+    .bind(&article.id)
+    .bind(&tenant_id)
+    .execute(&state.db)
+    .await;
+    if let Err(err) = result {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": err.to_string() })),
+        )
+            .into_response();
+    }
+    if article.status == "published" {
+        if let Err(err) = reindex_kb_article(&state, &article).await {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": err })),
+            )
+                .into_response();
+        }
+    }
+    (StatusCode::OK, Json(json!({ "article": article }))).into_response()
+}
+
+async fn delete_kb_article(
+    Path(article_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(value) => value,
+        Err(err) => return err.into_response(),
+    };
+    let affected = sqlx::query("DELETE FROM kb_articles WHERE id = $1 AND tenant_id = $2")
+        .bind(&article_id)
+        .bind(&tenant_id)
+        .execute(&state.db)
+        .await
+        .ok()
+        .map(|res| res.rows_affected())
+        .unwrap_or(0);
+    if affected == 0 {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "article not found" })),
+        )
+            .into_response();
+    }
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
+async fn publish_kb_article(
+    Path(article_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(value) => value,
+        Err(err) => return err.into_response(),
+    };
+    let now = now_iso();
+    let row = sqlx::query(
+        "UPDATE kb_articles SET status = 'published', published_at = $1, updated_at = $1 \
+         WHERE id = $2 AND tenant_id = $3 \
+         RETURNING id, tenant_id, collection_id, title, slug, markdown, plain_text, status, created_at, updated_at, published_at",
+    )
+    .bind(&now)
+    .bind(&article_id)
+    .bind(&tenant_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let Some(row) = row else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "article not found" })),
+        )
+            .into_response();
+    };
+    let article = parse_kb_article_row(row);
+    if let Err(err) = reindex_kb_article(&state, &article).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": err })),
+        )
+            .into_response();
+    }
+    (StatusCode::OK, Json(json!({ "article": article }))).into_response()
+}
+
+async fn unpublish_kb_article(
+    Path(article_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(value) => value,
+        Err(err) => return err.into_response(),
+    };
+    let row = sqlx::query(
+        "UPDATE kb_articles SET status = 'draft', published_at = NULL, updated_at = $1 \
+         WHERE id = $2 AND tenant_id = $3 \
+         RETURNING id, tenant_id, collection_id, title, slug, markdown, plain_text, status, created_at, updated_at, published_at",
+    )
+    .bind(now_iso())
+    .bind(&article_id)
+    .bind(&tenant_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let Some(row) = row else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "article not found" })),
+        )
+            .into_response();
+    };
+    let article = parse_kb_article_row(row);
+    let _ = sqlx::query("DELETE FROM kb_chunks WHERE article_id = $1")
+        .bind(&article.id)
+        .execute(&state.db)
+        .await;
+    (StatusCode::OK, Json(json!({ "article": article }))).into_response()
+}
+
+// ── Knowledge Base: Tags ────────────────────────────────────────────
+async fn get_kb_tags(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(value) => value,
+        Err(err) => return err.into_response(),
+    };
+    let rows = sqlx::query(
+        "SELECT id, tenant_id, name, color, description, created_at \
+         FROM kb_tags WHERE tenant_id = $1 ORDER BY name ASC",
+    )
+    .bind(&tenant_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let tags = rows
+        .into_iter()
+        .map(|row| KbTag {
+            id: row.get("id"),
+            tenant_id: row.get("tenant_id"),
+            name: row.get("name"),
+            color: row.get("color"),
+            description: row.get("description"),
+            created_at: row.get("created_at"),
+        })
+        .collect::<Vec<_>>();
+    (StatusCode::OK, Json(json!({ "tags": tags }))).into_response()
+}
+
+async fn create_kb_tag(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<CreateKbTagBody>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(value) => value,
+        Err(err) => return err.into_response(),
+    };
+    let tag = KbTag {
+        id: Uuid::new_v4().to_string(),
+        tenant_id,
+        name: body.name.trim().to_string(),
+        color: body.color,
+        description: body.description,
+        created_at: now_iso(),
+    };
+    match sqlx::query(
+        "INSERT INTO kb_tags (id, tenant_id, name, color, description, created_at) \
+         VALUES ($1,$2,$3,$4,$5,$6)",
+    )
+    .bind(&tag.id)
+    .bind(&tag.tenant_id)
+    .bind(&tag.name)
+    .bind(&tag.color)
+    .bind(&tag.description)
+    .bind(&tag.created_at)
+    .execute(&state.db)
+    .await
+    {
+        Ok(_) => (StatusCode::CREATED, Json(json!({ "tag": tag }))).into_response(),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": err.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn attach_kb_collection_tag(
+    Path((collection_id, tag_id)): Path<(String, String)>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(value) => value,
+        Err(err) => return err.into_response(),
+    };
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(1) FROM kb_collections c, kb_tags t \
+         WHERE c.id = $1 AND c.tenant_id = $3 AND t.id = $2 AND t.tenant_id = $3",
+    )
+    .bind(&collection_id)
+    .bind(&tag_id)
+    .bind(&tenant_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
+    if exists == 0 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invalid collection or tag" })),
+        )
+            .into_response();
+    }
+    let _ = sqlx::query(
+        "INSERT INTO kb_collection_tags (collection_id, tag_id, created_at) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+    )
+    .bind(&collection_id)
+    .bind(&tag_id)
+    .bind(now_iso())
+    .execute(&state.db)
+    .await;
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
+async fn detach_kb_collection_tag(
+    Path((collection_id, tag_id)): Path<(String, String)>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let _ = sqlx::query("DELETE FROM kb_collection_tags WHERE collection_id = $1 AND tag_id = $2")
+        .bind(&collection_id)
+        .bind(&tag_id)
+        .execute(&state.db)
+        .await;
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
+async fn attach_kb_article_tag(
+    Path((article_id, tag_id)): Path<(String, String)>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(value) => value,
+        Err(err) => return err.into_response(),
+    };
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(1) FROM kb_articles a, kb_tags t \
+         WHERE a.id = $1 AND a.tenant_id = $3 AND t.id = $2 AND t.tenant_id = $3",
+    )
+    .bind(&article_id)
+    .bind(&tag_id)
+    .bind(&tenant_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
+    if exists == 0 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invalid article or tag" })),
+        )
+            .into_response();
+    }
+    let _ = sqlx::query(
+        "INSERT INTO kb_article_tags (article_id, tag_id, created_at) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+    )
+    .bind(&article_id)
+    .bind(&tag_id)
+    .bind(now_iso())
+    .execute(&state.db)
+    .await;
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
+async fn detach_kb_article_tag(
+    Path((article_id, tag_id)): Path<(String, String)>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let _ = sqlx::query("DELETE FROM kb_article_tags WHERE article_id = $1 AND tag_id = $2")
+        .bind(&article_id)
+        .bind(&tag_id)
+        .execute(&state.db)
+        .await;
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
+// ── Knowledge Base: Search ──────────────────────────────────────────
+async fn kb_search(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<KbSearchRequest>,
+) -> impl IntoResponse {
+    if let Err(err) = auth_agent_from_headers(&state, &headers).await {
+        return err.into_response();
+    }
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(value) => value,
+        Err(err) => return err.into_response(),
+    };
+    let query_text = body.query.trim().to_string();
+    if query_text.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "query is required" })),
+        )
+            .into_response();
+    }
+    let top_k = body.top_k.clamp(1, 20) as usize;
+    let ann_limit = 80i64;
+    let bm25_limit = 80i64;
+    let collection_ids = body.collection_ids.clone();
+    let tag_ids = body.tag_ids.clone();
+
+    let query_embedding = openai_embeddings(&state, &[query_text.clone()]).await;
+    let mut vector_rows = vec![];
+    if let Ok(embeddings) = query_embedding {
+        if let Some(embedding) = embeddings.first() {
+            let vector = embedding_to_pgvector(embedding);
+            vector_rows = sqlx::query(
+                "SELECT ch.id AS chunk_id, ch.chunk_index, ch.content_text, a.id AS article_id, a.title AS article_title, a.slug AS article_slug, \
+                        c.id AS collection_id, c.name AS collection_name, (1 - (ch.embedding <=> $2::vector)) AS score \
+                 FROM kb_chunks ch \
+                 INNER JOIN kb_articles a ON a.id = ch.article_id \
+                 INNER JOIN kb_collections c ON c.id = a.collection_id \
+                 WHERE ch.tenant_id = $1 \
+                   AND a.status = 'published' \
+                   AND (cardinality($3::text[]) = 0 OR a.collection_id = ANY($3)) \
+                   AND (cardinality($4::text[]) = 0 OR EXISTS (SELECT 1 FROM kb_article_tags kat WHERE kat.article_id = a.id AND kat.tag_id = ANY($4)) OR EXISTS (SELECT 1 FROM kb_collection_tags kct WHERE kct.collection_id = c.id AND kct.tag_id = ANY($4))) \
+                   AND ch.embedding IS NOT NULL \
+                 ORDER BY ch.embedding <=> $2::vector \
+                 LIMIT $5",
+            )
+            .bind(&tenant_id)
+            .bind(vector)
+            .bind(&collection_ids)
+            .bind(&tag_ids)
+            .bind(ann_limit)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
+        }
+    }
+
+    let bm25_rows = sqlx::query(
+        "SELECT ch.id AS chunk_id, ch.chunk_index, ch.content_text, a.id AS article_id, a.title AS article_title, a.slug AS article_slug, \
+                c.id AS collection_id, c.name AS collection_name, \
+                ts_rank_cd(ch.tsv, plainto_tsquery('english', $2)) AS score \
+         FROM kb_chunks ch \
+         INNER JOIN kb_articles a ON a.id = ch.article_id \
+         INNER JOIN kb_collections c ON c.id = a.collection_id \
+         WHERE ch.tenant_id = $1 \
+           AND a.status = 'published' \
+           AND (cardinality($3::text[]) = 0 OR a.collection_id = ANY($3)) \
+           AND (cardinality($4::text[]) = 0 OR EXISTS (SELECT 1 FROM kb_article_tags kat WHERE kat.article_id = a.id AND kat.tag_id = ANY($4)) OR EXISTS (SELECT 1 FROM kb_collection_tags kct WHERE kct.collection_id = c.id AND kct.tag_id = ANY($4))) \
+           AND ch.tsv @@ plainto_tsquery('english', $2) \
+         ORDER BY score DESC \
+         LIMIT $5",
+    )
+    .bind(&tenant_id)
+    .bind(&query_text)
+    .bind(&collection_ids)
+    .bind(&tag_ids)
+    .bind(bm25_limit)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    #[derive(Clone)]
+    struct Candidate {
+        chunk_id: String,
+        chunk_index: i32,
+        snippet: String,
+        article_id: String,
+        article_title: String,
+        article_slug: String,
+        collection_id: String,
+        collection_name: String,
+        vector_rank: Option<usize>,
+        bm25_rank: Option<usize>,
+        vector_score: f64,
+        bm25_score: f64,
+        fused_score: f64,
+        rerank_score: f64,
+    }
+
+    let mut merged = HashMap::<String, Candidate>::new();
+    for (rank, row) in vector_rows.iter().enumerate() {
+        let chunk_id: String = row.get("chunk_id");
+        let entry = merged.entry(chunk_id.clone()).or_insert(Candidate {
+            chunk_id: chunk_id.clone(),
+            chunk_index: row.get("chunk_index"),
+            snippet: row.get::<String, _>("content_text"),
+            article_id: row.get("article_id"),
+            article_title: row.get("article_title"),
+            article_slug: row.get("article_slug"),
+            collection_id: row.get("collection_id"),
+            collection_name: row.get("collection_name"),
+            vector_rank: None,
+            bm25_rank: None,
+            vector_score: 0.0,
+            bm25_score: 0.0,
+            fused_score: 0.0,
+            rerank_score: 0.0,
+        });
+        entry.vector_rank = Some(rank);
+        entry.vector_score = row.get::<f64, _>("score");
+    }
+    for (rank, row) in bm25_rows.iter().enumerate() {
+        let chunk_id: String = row.get("chunk_id");
+        let entry = merged.entry(chunk_id.clone()).or_insert(Candidate {
+            chunk_id: chunk_id.clone(),
+            chunk_index: row.get("chunk_index"),
+            snippet: row.get::<String, _>("content_text"),
+            article_id: row.get("article_id"),
+            article_title: row.get("article_title"),
+            article_slug: row.get("article_slug"),
+            collection_id: row.get("collection_id"),
+            collection_name: row.get("collection_name"),
+            vector_rank: None,
+            bm25_rank: None,
+            vector_score: 0.0,
+            bm25_score: 0.0,
+            fused_score: 0.0,
+            rerank_score: 0.0,
+        });
+        entry.bm25_rank = Some(rank);
+        entry.bm25_score = row.get::<f64, _>("score");
+    }
+
+    let rrf_k = 60.0f64;
+    let query_terms = query_text
+        .to_ascii_lowercase()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let mut candidates = merged.into_values().collect::<Vec<_>>();
+    for candidate in &mut candidates {
+        let mut fused = 0.0f64;
+        if let Some(rank) = candidate.vector_rank {
+            fused += 1.0 / (rrf_k + rank as f64 + 1.0);
+        }
+        if let Some(rank) = candidate.bm25_rank {
+            fused += 1.0 / (rrf_k + rank as f64 + 1.0);
+        }
+        candidate.fused_score = fused;
+        let snippet_lower = candidate.snippet.to_ascii_lowercase();
+        let chunk_terms = snippet_lower.split_whitespace().collect::<Vec<_>>();
+        let overlap = query_terms
+            .iter()
+            .filter(|term| chunk_terms.contains(&term.as_str()))
+            .count() as f64;
+        candidate.rerank_score = fused + overlap * 0.02 + candidate.vector_score * 0.05 + candidate.bm25_score * 0.05;
+    }
+    candidates.sort_by(|a, b| b.rerank_score.total_cmp(&a.rerank_score));
+    let candidates = candidates.into_iter().take(top_k).collect::<Vec<_>>();
+    let article_ids = candidates
+        .iter()
+        .map(|item| item.article_id.clone())
+        .collect::<Vec<_>>();
+
+    let tag_rows = if article_ids.is_empty() {
+        vec![]
+    } else {
+        sqlx::query(
+            "SELECT src.article_id, t.id, t.tenant_id, t.name, t.color, t.description, t.created_at \
+             FROM ( \
+                SELECT kat.article_id, kat.tag_id FROM kb_article_tags kat WHERE kat.article_id = ANY($1) \
+                UNION \
+                SELECT a.id AS article_id, kct.tag_id \
+                FROM kb_articles a \
+                INNER JOIN kb_collection_tags kct ON kct.collection_id = a.collection_id \
+                WHERE a.id = ANY($1) \
+             ) src \
+             INNER JOIN kb_tags t ON t.id = src.tag_id \
+             WHERE t.tenant_id = $2",
+        )
+        .bind(&article_ids)
+        .bind(&tenant_id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+    };
+    let mut tags_by_article = HashMap::<String, Vec<KbTag>>::new();
+    for row in tag_rows {
+        let article_id: String = row.get("article_id");
+        let tag = KbTag {
+            id: row.get("id"),
+            tenant_id: row.get("tenant_id"),
+            name: row.get("name"),
+            color: row.get("color"),
+            description: row.get("description"),
+            created_at: row.get("created_at"),
+        };
+        tags_by_article.entry(article_id).or_default().push(tag);
+    }
+
+    let hits = candidates
+        .into_iter()
+        .map(|candidate| {
+            let snippet = candidate
+                .snippet
+                .chars()
+                .take(280)
+                .collect::<String>()
+                .trim()
+                .to_string();
+            KbSearchHit {
+                article_id: candidate.article_id.clone(),
+                article_title: candidate.article_title,
+                article_slug: candidate.article_slug,
+                collection_id: candidate.collection_id,
+                collection_name: candidate.collection_name,
+                chunk_id: candidate.chunk_id,
+                chunk_index: candidate.chunk_index,
+                snippet,
+                score: candidate.fused_score,
+                rerank_score: candidate.rerank_score,
+                tags: tags_by_article
+                    .remove(&candidate.article_id)
+                    .unwrap_or_default(),
+            }
+        })
+        .collect::<Vec<_>>();
+    (StatusCode::OK, Json(json!({ "hits": hits }))).into_response()
+}
+
 // ── Custom Attribute Definitions CRUD ───────────────────────────────
 async fn get_attribute_definitions(
     State(state): State<Arc<AppState>>,
@@ -12074,6 +13215,37 @@ pub async fn run() {
             "/api/tags/{tag_id}",
             axum::routing::delete(delete_tag).patch(update_tag),
         )
+        .route(
+            "/api/kb/collections",
+            get(get_kb_collections).post(create_kb_collection),
+        )
+        .route(
+            "/api/kb/collections/{collection_id}",
+            patch(patch_kb_collection).delete(delete_kb_collection),
+        )
+        .route("/api/kb/articles", get(get_kb_articles).post(create_kb_article))
+        .route(
+            "/api/kb/articles/{article_id}",
+            get(get_kb_article).patch(patch_kb_article).delete(delete_kb_article),
+        )
+        .route(
+            "/api/kb/articles/{article_id}/publish",
+            post(publish_kb_article),
+        )
+        .route(
+            "/api/kb/articles/{article_id}/unpublish",
+            post(unpublish_kb_article),
+        )
+        .route("/api/kb/tags", get(get_kb_tags).post(create_kb_tag))
+        .route(
+            "/api/kb/collections/{collection_id}/tags/{tag_id}",
+            post(attach_kb_collection_tag).delete(detach_kb_collection_tag),
+        )
+        .route(
+            "/api/kb/articles/{article_id}/tags/{tag_id}",
+            post(attach_kb_article_tag).delete(detach_kb_article_tag),
+        )
+        .route("/api/kb/search", post(kb_search))
         .route(
             "/api/attribute-definitions",
             get(get_attribute_definitions).post(create_attribute_definition),

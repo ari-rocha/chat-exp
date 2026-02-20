@@ -316,6 +316,73 @@ pub struct Tag {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct KbCollection {
+    pub id: String,
+    pub tenant_id: String,
+    pub name: String,
+    pub description: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KbArticle {
+    pub id: String,
+    pub tenant_id: String,
+    pub collection_id: String,
+    pub title: String,
+    pub slug: String,
+    pub markdown: String,
+    pub plain_text: String,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub published_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KbChunk {
+    pub id: String,
+    pub tenant_id: String,
+    pub article_id: String,
+    pub chunk_index: i32,
+    pub content_text: String,
+    pub token_count: i32,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KbTag {
+    pub id: String,
+    pub tenant_id: String,
+    pub name: String,
+    pub color: String,
+    pub description: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KbSearchHit {
+    pub article_id: String,
+    pub article_title: String,
+    pub article_slug: String,
+    pub collection_id: String,
+    pub collection_name: String,
+    pub chunk_id: String,
+    pub chunk_index: i32,
+    pub snippet: String,
+    pub score: f64,
+    pub rerank_score: f64,
+    #[serde(default)]
+    pub tags: Vec<KbTag>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContactAttribute {
     pub id: String,
     pub contact_id: String,
@@ -610,6 +677,75 @@ pub struct UpdateTagBody {
     pub name: Option<String>,
     pub color: Option<String>,
     pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateKbCollectionBody {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateKbCollectionBody {
+    pub name: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListKbArticlesQuery {
+    #[serde(default)]
+    pub collection_id: String,
+    #[serde(default)]
+    pub status: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateKbArticleBody {
+    pub collection_id: String,
+    pub title: String,
+    #[serde(default)]
+    pub markdown: String,
+    #[serde(default)]
+    pub status: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateKbArticleBody {
+    pub collection_id: Option<String>,
+    pub title: Option<String>,
+    pub markdown: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateKbTagBody {
+    pub name: String,
+    #[serde(default = "default_tag_color")]
+    pub color: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KbSearchRequest {
+    pub query: String,
+    #[serde(default = "default_kb_top_k")]
+    pub top_k: i32,
+    #[serde(default)]
+    pub tag_ids: Vec<String>,
+    #[serde(default)]
+    pub collection_ids: Vec<String>,
+}
+
+fn default_kb_top_k() -> i32 {
+    8
 }
 
 fn default_tag_color() -> String {

@@ -11,19 +11,22 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import {
   ArrowLeft,
+  BookOpenText,
   Bot,
   ChevronRight,
   CircleUserRound,
+  FileText,
   Globe,
   MessageSquareText,
   Pencil,
+  Search,
   Settings2,
   Tag,
   Trash2,
   UserPlus,
   Users,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 /* ──────────────────────────────────────── constants ──────── */
 const NAV_SECTIONS = [
@@ -37,6 +40,7 @@ const NAV_SECTIONS = [
       { key: "general", label: "General", icon: Settings2 },
       { key: "bot", label: "Bot", icon: Bot },
       { key: "channels", label: "Channels", icon: Globe },
+      { key: "knowledge", label: "Knowledge Base", icon: BookOpenText },
       { key: "canned", label: "Canned Responses", icon: MessageSquareText },
       { key: "tags", label: "Tags", icon: Tag },
       { key: "teams", label: "Teams", icon: Users },
@@ -110,6 +114,28 @@ export default function CustomizationView({
   const [editingTag, setEditingTag] = useState(null);
   const [showTagDialog, setShowTagDialog] = useState(false);
 
+  // Knowledge base
+  const [kbLoaded, setKbLoaded] = useState(false);
+  const [kbLoading, setKbLoading] = useState(false);
+  const [kbError, setKbError] = useState("");
+  const [kbCollections, setKbCollections] = useState([]);
+  const [kbArticles, setKbArticles] = useState([]);
+  const [kbTags, setKbTags] = useState([]);
+  const [kbCollectionName, setKbCollectionName] = useState("");
+  const [kbCollectionDescription, setKbCollectionDescription] = useState("");
+  const [kbSelectedCollectionId, setKbSelectedCollectionId] = useState("");
+  const [kbArticleTitle, setKbArticleTitle] = useState("");
+  const [kbArticleMarkdown, setKbArticleMarkdown] = useState("");
+  const [kbSelectedArticleId, setKbSelectedArticleId] = useState("");
+  const [kbSavingArticle, setKbSavingArticle] = useState(false);
+  const [kbTagName, setKbTagName] = useState("");
+  const [kbTagColor, setKbTagColor] = useState("#3b82f6");
+  const [kbTagDescription, setKbTagDescription] = useState("");
+  const [kbAttachTagId, setKbAttachTagId] = useState("");
+  const [kbSearchQuery, setKbSearchQuery] = useState("");
+  const [kbSearchResults, setKbSearchResults] = useState([]);
+  const [kbSearching, setKbSearching] = useState(false);
+
   const isOwner = agent?.role === "owner";
   const isAdmin = agent?.role === "admin";
   const canManage = isOwner || isAdmin;
@@ -120,9 +146,43 @@ export default function CustomizationView({
     setEditingChannel(null);
     setRoutingError("");
     if (key === "members" && !membersLoaded) loadMembers();
+    if (key === "knowledge" && !kbLoaded) loadKnowledgeBase();
   };
 
   /* ── api helpers ── */
+  const loadKnowledgeBase = async () => {
+    if (!token) return;
+    setKbLoading(true);
+    setKbError("");
+    try {
+      const [collectionsRes, articlesRes, tagsRes] = await Promise.all([
+        apiFetch("/api/kb/collections", token),
+        apiFetch("/api/kb/articles", token),
+        apiFetch("/api/kb/tags", token),
+      ]);
+      const collections = collectionsRes.collections ?? [];
+      const articles = articlesRes.articles ?? [];
+      setKbCollections(collections);
+      setKbArticles(articles);
+      setKbTags(tagsRes.tags ?? []);
+      if (collections.length > 0 && !kbSelectedCollectionId) {
+        setKbSelectedCollectionId(collections[0].id);
+      }
+      setKbLoaded(true);
+    } catch (e) {
+      setKbError(e.message || "Failed to load knowledge base");
+    } finally {
+      setKbLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    if (page === "knowledge" && !kbLoaded && !kbLoading) {
+      loadKnowledgeBase();
+    }
+  }, [open, page]);
+
   const loadMembers = async () => {
     if (!token) return;
     try {
@@ -491,6 +551,274 @@ export default function CustomizationView({
         },
       },
     );
+  };
+
+  const kbSelectedArticle = useMemo(
+    () =>
+      (kbArticles || []).find((article) => article.id === kbSelectedArticleId) ||
+      null,
+    [kbArticles, kbSelectedArticleId],
+  );
+
+  const kbCollectionArticles = useMemo(() => {
+    if (!kbSelectedCollectionId) return kbArticles || [];
+    return (kbArticles || []).filter(
+      (article) => article.collectionId === kbSelectedCollectionId,
+    );
+  }, [kbArticles, kbSelectedCollectionId]);
+
+  const kbOpenArticle = async (articleId) => {
+    if (!articleId) return;
+    try {
+      const res = await apiFetch(`/api/kb/articles/${articleId}`, token);
+      const article = res.article;
+      if (!article) return;
+      setKbSelectedArticleId(article.id);
+      setKbSelectedCollectionId(article.collectionId || "");
+      setKbArticleTitle(article.title || "");
+      setKbArticleMarkdown(article.markdown || "");
+      setKbArticles((prev) =>
+        prev.map((item) => (item.id === article.id ? article : item)),
+      );
+    } catch (err) {
+      setKbError(err.message);
+    }
+  };
+
+  const kbCreateCollection = async (e) => {
+    e.preventDefault();
+    if (!kbCollectionName.trim()) return;
+    setKbError("");
+    try {
+      const res = await apiFetch("/api/kb/collections", token, {
+        method: "POST",
+        body: JSON.stringify({
+          name: kbCollectionName.trim(),
+          description: kbCollectionDescription.trim(),
+        }),
+      });
+      const collection = res.collection;
+      if (!collection) return;
+      setKbCollections((prev) => [...prev, collection]);
+      setKbSelectedCollectionId(collection.id);
+      setKbCollectionName("");
+      setKbCollectionDescription("");
+    } catch (err) {
+      setKbError(err.message);
+    }
+  };
+
+  const kbDeleteCollection = async (collectionId) => {
+    if (!collectionId || !confirm("Delete this collection and all its articles?")) return;
+    setKbError("");
+    try {
+      await apiFetch(`/api/kb/collections/${collectionId}`, token, {
+        method: "DELETE",
+      });
+      setKbCollections((prev) => prev.filter((item) => item.id !== collectionId));
+      setKbArticles((prev) =>
+        prev.filter((article) => article.collectionId !== collectionId),
+      );
+      if (kbSelectedCollectionId === collectionId) {
+        setKbSelectedCollectionId("");
+      }
+      if (kbSelectedArticle && kbSelectedArticle.collectionId === collectionId) {
+        setKbSelectedArticleId("");
+        setKbArticleTitle("");
+        setKbArticleMarkdown("");
+      }
+    } catch (err) {
+      setKbError(err.message);
+    }
+  };
+
+  const kbCreateArticle = async () => {
+    if (!kbSelectedCollectionId || !kbArticleTitle.trim()) return;
+    setKbSavingArticle(true);
+    setKbError("");
+    try {
+      const res = await apiFetch("/api/kb/articles", token, {
+        method: "POST",
+        body: JSON.stringify({
+          collectionId: kbSelectedCollectionId,
+          title: kbArticleTitle.trim(),
+          markdown: kbArticleMarkdown,
+          status: "draft",
+        }),
+      });
+      const article = res.article;
+      if (!article) return;
+      setKbArticles((prev) => [article, ...prev]);
+      setKbSelectedArticleId(article.id);
+    } catch (err) {
+      setKbError(err.message);
+    } finally {
+      setKbSavingArticle(false);
+    }
+  };
+
+  const kbSaveArticle = async () => {
+    if (!kbSelectedArticleId) return;
+    setKbSavingArticle(true);
+    setKbError("");
+    try {
+      const res = await apiFetch(`/api/kb/articles/${kbSelectedArticleId}`, token, {
+        method: "PATCH",
+        body: JSON.stringify({
+          collectionId: kbSelectedCollectionId,
+          title: kbArticleTitle.trim(),
+          markdown: kbArticleMarkdown,
+        }),
+      });
+      const article = res.article;
+      if (!article) return;
+      setKbArticles((prev) =>
+        prev.map((item) => (item.id === article.id ? article : item)),
+      );
+    } catch (err) {
+      setKbError(err.message);
+    } finally {
+      setKbSavingArticle(false);
+    }
+  };
+
+  const kbPublishArticle = async () => {
+    if (!kbSelectedArticleId) return;
+    setKbSavingArticle(true);
+    setKbError("");
+    try {
+      const res = await apiFetch(
+        `/api/kb/articles/${kbSelectedArticleId}/publish`,
+        token,
+        { method: "POST" },
+      );
+      const article = res.article;
+      if (!article) return;
+      setKbArticles((prev) =>
+        prev.map((item) => (item.id === article.id ? article : item)),
+      );
+    } catch (err) {
+      setKbError(err.message);
+    } finally {
+      setKbSavingArticle(false);
+    }
+  };
+
+  const kbUnpublishArticle = async () => {
+    if (!kbSelectedArticleId) return;
+    setKbSavingArticle(true);
+    setKbError("");
+    try {
+      const res = await apiFetch(
+        `/api/kb/articles/${kbSelectedArticleId}/unpublish`,
+        token,
+        { method: "POST" },
+      );
+      const article = res.article;
+      if (!article) return;
+      setKbArticles((prev) =>
+        prev.map((item) => (item.id === article.id ? article : item)),
+      );
+    } catch (err) {
+      setKbError(err.message);
+    } finally {
+      setKbSavingArticle(false);
+    }
+  };
+
+  const kbDeleteArticle = async () => {
+    if (!kbSelectedArticleId || !confirm("Delete this article?")) return;
+    setKbSavingArticle(true);
+    setKbError("");
+    try {
+      await apiFetch(`/api/kb/articles/${kbSelectedArticleId}`, token, {
+        method: "DELETE",
+      });
+      const deletedId = kbSelectedArticleId;
+      setKbArticles((prev) => prev.filter((item) => item.id !== deletedId));
+      setKbSelectedArticleId("");
+      setKbArticleTitle("");
+      setKbArticleMarkdown("");
+    } catch (err) {
+      setKbError(err.message);
+    } finally {
+      setKbSavingArticle(false);
+    }
+  };
+
+  const kbCreateTag = async (e) => {
+    e.preventDefault();
+    if (!kbTagName.trim()) return;
+    setKbError("");
+    try {
+      const res = await apiFetch("/api/kb/tags", token, {
+        method: "POST",
+        body: JSON.stringify({
+          name: kbTagName.trim(),
+          color: kbTagColor,
+          description: kbTagDescription.trim(),
+        }),
+      });
+      if (res.tag) {
+        setKbTags((prev) => [...prev, res.tag]);
+        setKbTagName("");
+        setKbTagDescription("");
+      }
+    } catch (err) {
+      setKbError(err.message);
+    }
+  };
+
+  const kbAttachTagToCollection = async () => {
+    if (!kbSelectedCollectionId || !kbAttachTagId) return;
+    setKbError("");
+    try {
+      await apiFetch(
+        `/api/kb/collections/${kbSelectedCollectionId}/tags/${kbAttachTagId}`,
+        token,
+        { method: "POST" },
+      );
+    } catch (err) {
+      setKbError(err.message);
+    }
+  };
+
+  const kbAttachTagToArticle = async () => {
+    if (!kbSelectedArticleId || !kbAttachTagId) return;
+    setKbError("");
+    try {
+      await apiFetch(
+        `/api/kb/articles/${kbSelectedArticleId}/tags/${kbAttachTagId}`,
+        token,
+        { method: "POST" },
+      );
+    } catch (err) {
+      setKbError(err.message);
+    }
+  };
+
+  const kbRunSearch = async (e) => {
+    e.preventDefault();
+    if (!kbSearchQuery.trim()) return;
+    setKbSearching(true);
+    setKbError("");
+    try {
+      const res = await apiFetch("/api/kb/search", token, {
+        method: "POST",
+        body: JSON.stringify({
+          query: kbSearchQuery.trim(),
+          topK: 8,
+          collectionIds: kbSelectedCollectionId ? [kbSelectedCollectionId] : [],
+          tagIds: [],
+        }),
+      });
+      setKbSearchResults(res.hits ?? []);
+    } catch (err) {
+      setKbError(err.message);
+      setKbSearchResults([]);
+    } finally {
+      setKbSearching(false);
+    }
   };
 
   /* ═══════════════════════════════════════════════════════════
@@ -1814,6 +2142,324 @@ export default function CustomizationView({
     </div>
   );
 
+  const renderKnowledgePage = () => (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="text-base font-semibold text-slate-900">
+          Knowledge Base
+        </h2>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={loadKnowledgeBase}
+          disabled={kbLoading}
+        >
+          {kbLoading ? "Refreshing…" : "Refresh"}
+        </Button>
+      </div>
+      <p className="mb-6 text-sm text-slate-500">
+        Create collections and markdown articles, publish them, and test retrieval.
+      </p>
+
+      {kbError ? <p className="mb-3 text-xs text-red-600">{kbError}</p> : null}
+
+      <div className="grid gap-4 lg:grid-cols-12">
+        <div className="lg:col-span-3 space-y-3">
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Collections
+            </p>
+            <div className="space-y-1 max-h-48 overflow-auto">
+              {(kbCollections || []).map((collection) => (
+                <button
+                  key={collection.id}
+                  type="button"
+                  onClick={() => setKbSelectedCollectionId(collection.id)}
+                  className={`w-full rounded-md px-2 py-1.5 text-left text-sm ${
+                    kbSelectedCollectionId === collection.id
+                      ? "bg-blue-50 text-blue-700"
+                      : "text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  {collection.name}
+                </button>
+              ))}
+              {(kbCollections || []).length === 0 ? (
+                <p className="text-xs text-slate-400">No collections yet.</p>
+              ) : null}
+            </div>
+            <form onSubmit={kbCreateCollection} className="mt-3 space-y-2">
+              <Input
+                value={kbCollectionName}
+                onChange={(e) => setKbCollectionName(e.target.value)}
+                placeholder="New collection"
+              />
+              <Input
+                value={kbCollectionDescription}
+                onChange={(e) => setKbCollectionDescription(e.target.value)}
+                placeholder="Description"
+              />
+              <div className="flex gap-2">
+                <Button type="submit" size="sm" className={PRIMARY_BUTTON_CLASS}>
+                  Add
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={!kbSelectedCollectionId}
+                  onClick={() => kbDeleteCollection(kbSelectedCollectionId)}
+                >
+                  Delete
+                </Button>
+              </div>
+            </form>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              KB Tags
+            </p>
+            <div className="flex flex-wrap gap-1 mb-2">
+              {(kbTags || []).map((tag) => (
+                <span
+                  key={tag.id}
+                  className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] ring-1 ring-black/5"
+                  style={{
+                    color: tag.color || "#334155",
+                    backgroundColor: `${tag.color || "#cbd5e1"}15`,
+                  }}
+                >
+                  {tag.name}
+                </span>
+              ))}
+            </div>
+            <form onSubmit={kbCreateTag} className="space-y-2">
+              <Input
+                value={kbTagName}
+                onChange={(e) => setKbTagName(e.target.value)}
+                placeholder="Tag name"
+              />
+              <div className="flex gap-2">
+                <Input
+                  value={kbTagDescription}
+                  onChange={(e) => setKbTagDescription(e.target.value)}
+                  placeholder="Tag description"
+                />
+                <input
+                  type="color"
+                  value={kbTagColor}
+                  onChange={(e) => setKbTagColor(e.target.value)}
+                  className="h-9 w-12 rounded border border-slate-200"
+                />
+              </div>
+              <Button type="submit" size="sm" className={PRIMARY_BUTTON_CLASS}>
+                Add Tag
+              </Button>
+            </form>
+          </div>
+        </div>
+
+        <div className="lg:col-span-3">
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Articles
+            </p>
+            <div className="space-y-1 max-h-[460px] overflow-auto">
+              {(kbCollectionArticles || []).map((article) => (
+                <button
+                  key={article.id}
+                  type="button"
+                  onClick={() => kbOpenArticle(article.id)}
+                  className={`w-full rounded-md border px-2 py-2 text-left ${
+                    kbSelectedArticleId === article.id
+                      ? "border-blue-200 bg-blue-50"
+                      : "border-transparent hover:border-slate-200 hover:bg-slate-50"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium text-slate-800 truncate">
+                      {article.title}
+                    </p>
+                    <span
+                      className={`text-[10px] rounded px-1.5 py-0.5 ${
+                        article.status === "published"
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-slate-100 text-slate-600"
+                      }`}
+                    >
+                      {article.status}
+                    </span>
+                  </div>
+                </button>
+              ))}
+              {(kbCollectionArticles || []).length === 0 ? (
+                <div className="rounded-md border border-dashed border-slate-200 p-3 text-xs text-slate-400">
+                  No articles in this collection.
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+
+        <div className="lg:col-span-6 space-y-3">
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Article Editor
+            </p>
+            <div className="space-y-2">
+              <Input
+                value={kbArticleTitle}
+                onChange={(e) => setKbArticleTitle(e.target.value)}
+                placeholder="Article title"
+              />
+              <Textarea
+                rows={12}
+                value={kbArticleMarkdown}
+                onChange={(e) => setKbArticleMarkdown(e.target.value)}
+                placeholder="Write markdown content..."
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={kbSelectedCollectionId}
+                  onChange={(e) => setKbSelectedCollectionId(e.target.value)}
+                  className="rounded-md border border-slate-200 px-2 py-1.5 text-sm"
+                >
+                  <option value="">Select collection</option>
+                  {(kbCollections || []).map((collection) => (
+                    <option key={collection.id} value={collection.id}>
+                      {collection.name}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  type="button"
+                  size="sm"
+                  className={PRIMARY_BUTTON_CLASS}
+                  disabled={kbSavingArticle || !kbSelectedCollectionId || !kbArticleTitle.trim()}
+                  onClick={kbSelectedArticleId ? kbSaveArticle : kbCreateArticle}
+                >
+                  {kbSavingArticle
+                    ? "Saving…"
+                    : kbSelectedArticleId
+                      ? "Save"
+                      : "Create Draft"}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={!kbSelectedArticleId || kbSavingArticle}
+                  onClick={kbPublishArticle}
+                >
+                  Publish
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={!kbSelectedArticleId || kbSavingArticle}
+                  onClick={kbUnpublishArticle}
+                >
+                  Unpublish
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="text-red-600"
+                  disabled={!kbSelectedArticleId || kbSavingArticle}
+                  onClick={kbDeleteArticle}
+                >
+                  Delete
+                </Button>
+              </div>
+              <div className="flex items-center gap-2 pt-1">
+                <select
+                  value={kbAttachTagId}
+                  onChange={(e) => setKbAttachTagId(e.target.value)}
+                  className="rounded-md border border-slate-200 px-2 py-1.5 text-sm"
+                >
+                  <option value="">Attach KB tag...</option>
+                  {(kbTags || []).map((tag) => (
+                    <option key={tag.id} value={tag.id}>
+                      {tag.name}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={!kbAttachTagId || !kbSelectedCollectionId}
+                  onClick={kbAttachTagToCollection}
+                >
+                  Tag Collection
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={!kbAttachTagId || !kbSelectedArticleId}
+                  onClick={kbAttachTagToArticle}
+                >
+                  Tag Article
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <form onSubmit={kbRunSearch} className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                RAG Search Test
+              </label>
+              <div className="flex gap-2">
+                <Input
+                  value={kbSearchQuery}
+                  onChange={(e) => setKbSearchQuery(e.target.value)}
+                  placeholder="Ask a question to test retrieval"
+                />
+                <Button
+                  type="submit"
+                  size="sm"
+                  className={PRIMARY_BUTTON_CLASS}
+                  disabled={kbSearching || !kbSearchQuery.trim()}
+                >
+                  <Search size={14} className="mr-1.5" />
+                  {kbSearching ? "Searching…" : "Search"}
+                </Button>
+              </div>
+            </form>
+            <div className="mt-3 space-y-2 max-h-56 overflow-auto">
+              {(kbSearchResults || []).map((hit) => (
+                <article
+                  key={hit.chunkId}
+                  className="rounded-md border border-slate-200 p-2.5"
+                >
+                  <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <FileText size={12} />
+                    <span className="font-medium text-slate-700">
+                      {hit.articleTitle}
+                    </span>
+                    <span>· {hit.collectionName}</span>
+                  </div>
+                  <p className="mt-1 text-sm text-slate-700">{hit.snippet}</p>
+                </article>
+              ))}
+              {(kbSearchResults || []).length === 0 ? (
+                <p className="text-xs text-slate-400">
+                  No search results yet.
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
   /* ──────────── Content Router ──────────── */
   const renderContent = () => {
     if (editingChannel) return renderChannelEditorPage();
@@ -1826,6 +2472,8 @@ export default function CustomizationView({
         return renderBotPage();
       case "channels":
         return renderChannelsListPage();
+      case "knowledge":
+        return renderKnowledgePage();
       case "canned":
         return renderCannedPage();
       case "tags":
