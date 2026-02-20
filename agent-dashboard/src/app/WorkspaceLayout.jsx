@@ -14,6 +14,7 @@ import {
   Smile,
   UserRound,
   Workflow,
+  X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -108,6 +109,7 @@ export default function WorkspaceLayout({
     if (typeof window === "undefined") return 1440;
     return window.innerWidth;
   });
+  const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -116,6 +118,11 @@ export default function WorkspaceLayout({
     return () => window.removeEventListener("resize", onResize);
   }, []);
   const isMobileLayout = viewportWidth <= 1024;
+  useEffect(() => {
+    if (!isMobileLayout || !activeId) {
+      setMobileDetailsOpen(false);
+    }
+  }, [isMobileLayout, activeId]);
   const showDesktopDetailsPanel = viewportWidth > 1280 && Boolean(detailsPanel);
   const showDesktopSidebar = showConversationPanels && !isMobileLayout && viewportWidth > 1280;
   const surfaceGridClass = (() => {
@@ -273,8 +280,40 @@ export default function WorkspaceLayout({
         {showConversationPanels ? (
           isMobileLayout ? (
           activeId ? (
-            <div className="flex h-full min-h-0 flex-col bg-white">
+            <div className="relative flex h-full min-h-0 flex-col bg-white">
+              {detailsPanel ? (
+                <button
+                  type="button"
+                  onClick={() => setMobileDetailsOpen(true)}
+                  className="absolute right-3 top-3 z-20 inline-flex h-8 items-center rounded-md border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700 shadow-sm"
+                >
+                  Contact
+                </button>
+              ) : null}
               <div className="min-h-0 flex-1">{mainPanel}</div>
+              {detailsPanel && mobileDetailsOpen ? (
+                <div className="absolute inset-0 z-40 flex bg-black/35">
+                  <button
+                    type="button"
+                    className="flex-1"
+                    onClick={() => setMobileDetailsOpen(false)}
+                    aria-label="Close contact panel"
+                  />
+                  <div className="h-full w-[min(92vw,380px)] border-l border-slate-200 bg-white shadow-xl">
+                    <div className="flex items-center justify-end border-b border-slate-200 p-2">
+                      <button
+                        type="button"
+                        onClick={() => setMobileDetailsOpen(false)}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-600"
+                        aria-label="Close contact panel"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                    <div className="h-[calc(100%-49px)]">{detailsPanel}</div>
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="flex h-full min-h-0 flex-col bg-white">
