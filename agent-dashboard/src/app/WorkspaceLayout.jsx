@@ -22,7 +22,7 @@ import {
   Workflow,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const NAV_ITEMS = [
   { id: "conversations", icon: MessageSquare, title: "Conversations" },
@@ -46,6 +46,12 @@ const AGENT_INBOX_ITEMS = [
   { id: "unassigned", label: "Unassigned", icon: UserMinus },
   { id: "mentions", label: "Mentions", icon: AtSign },
   { id: "all", label: "All", icon: Inbox },
+];
+
+const AGENT_STATUS_OPTIONS = [
+  { id: "online", label: "Online", color: "bg-emerald-500" },
+  { id: "away", label: "Away", color: "bg-amber-500" },
+  { id: "paused", label: "Paused", color: "bg-slate-400" },
 ];
 
 function titleCase(value) {
@@ -116,6 +122,9 @@ export default function WorkspaceLayout({
   channelScope = "all",
   setChannelScope,
   channelFilters = [],
+  tagScope = "all",
+  setTagScope,
+  tagFilters = [],
   agent,
   updateAgentStatus,
   filteredSessions,
@@ -137,8 +146,11 @@ export default function WorkspaceLayout({
   const [sidebarSections, setSidebarSections] = useState({
     teams: true,
     channel: true,
+    tags: false,
     agent: true,
   });
+  const [agentStatusMenuOpen, setAgentStatusMenuOpen] = useState(false);
+  const agentStatusMenuRef = useRef(null);
   const [collapsedPanels, setCollapsedPanels] = useState({
     workspaceSidebar: false,
     conversationList: false,
@@ -157,6 +169,17 @@ export default function WorkspaceLayout({
       setMobileDetailsOpen(false);
     }
   }, [isMobileLayout, activeId]);
+  useEffect(() => {
+    if (!agentStatusMenuOpen || typeof window === "undefined") return undefined;
+    const onClickOutside = (event) => {
+      if (!agentStatusMenuRef.current) return;
+      if (!agentStatusMenuRef.current.contains(event.target)) {
+        setAgentStatusMenuOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onClickOutside);
+    return () => window.removeEventListener("mousedown", onClickOutside);
+  }, [agentStatusMenuOpen]);
   const showDesktopDetailsPanel = viewportWidth > 1280 && Boolean(detailsPanel);
   const showDesktopSidebar =
     showConversationPanels &&
@@ -165,6 +188,9 @@ export default function WorkspaceLayout({
     !collapsedPanels.workspaceSidebar;
   const showDesktopConversationList = !collapsedPanels.conversationList;
   const showDesktopDetails = showDesktopDetailsPanel && !collapsedPanels.details;
+  const activeAgentStatus =
+    AGENT_STATUS_OPTIONS.find((item) => item.id === (agent?.status || "online")) ||
+    AGENT_STATUS_OPTIONS[0];
   const surfaceGridClass = (() => {
     if (showConversationPanels) {
       if (isMobileLayout) return "grid-cols-[1fr]";
@@ -358,6 +384,54 @@ export default function WorkspaceLayout({
                 <button
                   type="button"
                   className="mb-2 flex w-full items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-slate-500"
+                  onClick={() => toggleSidebarSection("tags")}
+                >
+                  <span>Tags</span>
+                  {sidebarSections.tags ? (
+                    <ChevronDown size={14} className="text-slate-400" />
+                  ) : (
+                    <ChevronRight size={14} className="text-slate-400" />
+                  )}
+                </button>
+                {sidebarSections.tags ? (
+                  <div className="space-y-1.5">
+                    {tagFilters.map((tag) => {
+                      const isActive = tagScope === tag.id;
+                      return (
+                        <button
+                          key={tag.id}
+                          type="button"
+                          onClick={() => setTagScope?.(tag.id)}
+                          className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-left text-xs ${
+                            isActive
+                              ? "border-blue-200 bg-blue-50 text-blue-700"
+                              : "border-slate-200 bg-white text-slate-600"
+                          }`}
+                        >
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span
+                              className="h-2 w-2 shrink-0 rounded-full"
+                              style={{ backgroundColor: tag.color || "#94a3b8" }}
+                            />
+                            <span className="truncate">{tag.name}</span>
+                          </span>
+                          <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
+                            {Number(tag.count || 0)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    {tagFilters.length === 0 ? (
+                      <p className="text-xs text-slate-400">No tags</p>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+
+              <div>
+                <button
+                  type="button"
+                  className="mb-2 flex w-full items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-slate-500"
                   onClick={() => toggleSidebarSection("channel")}
                 >
                   <span>Channel</span>
@@ -410,15 +484,50 @@ export default function WorkspaceLayout({
                   )}
                 </button>
                 {sidebarSections.agent ? (
-                  <select
-                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700"
-                    value={agent?.status || "online"}
-                    onChange={(e) => updateAgentStatus(e.target.value)}
-                  >
-                    <option value="online">online</option>
-                    <option value="away">away</option>
-                    <option value="paused">paused</option>
-                  </select>
+                  <div className="relative" ref={agentStatusMenuRef}>
+                    <button
+                      type="button"
+                      onClick={() => setAgentStatusMenuOpen((prev) => !prev)}
+                      className="inline-flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 hover:bg-slate-50"
+                    >
+                      <span className="flex items-center gap-2">
+                        <span
+                          className={`h-2.5 w-2.5 rounded-full ${activeAgentStatus.color}`}
+                        />
+                        {activeAgentStatus.label}
+                      </span>
+                      <ChevronDown size={13} className="text-slate-500" />
+                    </button>
+                    {agentStatusMenuOpen ? (
+                      <div className="absolute z-30 mt-1 w-full rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
+                        {AGENT_STATUS_OPTIONS.map((option) => (
+                          <button
+                            key={option.id}
+                            type="button"
+                            onClick={() => {
+                              updateAgentStatus(option.id);
+                              setAgentStatusMenuOpen(false);
+                            }}
+                            className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
+                              option.id === activeAgentStatus.id
+                                ? "bg-blue-50 text-blue-700"
+                                : "text-slate-700 hover:bg-slate-50"
+                            }`}
+                          >
+                            <span className="flex items-center gap-2">
+                              <span
+                                className={`h-2.5 w-2.5 rounded-full ${option.color}`}
+                              />
+                              {option.label}
+                            </span>
+                            {option.id === activeAgentStatus.id ? (
+                              <span className="text-[10px] font-medium">Selected</span>
+                            ) : null}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
             </div>

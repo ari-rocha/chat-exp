@@ -282,6 +282,9 @@ export default function ConversationsView({
   channelScope,
   setChannelScope,
   channelFilters,
+  tagScope,
+  setTagScope,
+  tagFilters,
   agent,
   updateAgentStatus,
   filteredSessions,
@@ -848,6 +851,9 @@ export default function ConversationsView({
       channelScope={channelScope}
       setChannelScope={setChannelScope}
       channelFilters={channelFilters}
+      tagScope={tagScope}
+      setTagScope={setTagScope}
+      tagFilters={tagFilters}
       teams={teams}
       agent={agent}
       updateAgentStatus={updateAgentStatus}

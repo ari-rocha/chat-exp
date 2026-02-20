@@ -306,6 +306,7 @@ export default function App() {
   const [inboxScope, setInboxScope] = useState("mine");
   const [teamScope, setTeamScope] = useState("all");
   const [channelScope, setChannelScope] = useState("all");
+  const [tagScope, setTagScope] = useState("all");
   const [visitorDraftBySession, setVisitorDraftBySession] = useState({});
   const [cannedReplies, setCannedReplies] = useState([]);
   const [cannedPanelOpen, setCannedPanelOpen] = useState(false);
@@ -437,9 +438,17 @@ export default function App() {
     );
   }, [sessionsByTeamScope, channelScopeType]);
 
+  const sessionsByTagScope = useMemo(() => {
+    if (tagScope === "all") return sessionsByChannelScope;
+    return sessionsByChannelScope.filter((session) =>
+      Array.isArray(session.tags) &&
+      session.tags.some((tag) => String(tag.id) === String(tagScope)),
+    );
+  }, [sessionsByChannelScope, tagScope]);
+
   const sessionsByInboxScope = useMemo(() => {
     const myAgentId = String(agent?.id || "").trim();
-    return sessionsByChannelScope.filter((session) => {
+    return sessionsByTagScope.filter((session) => {
       const assignee = String(session.assigneeAgentId || "").trim();
       const isUnassigned = !assignee || assignee === "__bot__";
       if (inboxScope === "mine") {
@@ -453,7 +462,7 @@ export default function App() {
       }
       return true;
     });
-  }, [sessionsByChannelScope, inboxScope, agent?.id, unreadMentionSessionIds]);
+  }, [sessionsByTagScope, inboxScope, agent?.id, unreadMentionSessionIds]);
 
   const filteredSessions = useMemo(() => {
     const query = conversationSearch.trim().toLowerCase();
@@ -476,23 +485,23 @@ export default function App() {
 
   const inboxCounts = useMemo(() => {
     const myAgentId = String(agent?.id || "").trim();
-    const mine = sessionsByChannelScope.filter(
+    const mine = sessionsByTagScope.filter(
       (session) => String(session.assigneeAgentId || "").trim() === myAgentId,
     ).length;
-    const unassigned = sessionsByChannelScope.filter((session) => {
+    const unassigned = sessionsByTagScope.filter((session) => {
       const assignee = String(session.assigneeAgentId || "").trim();
       return !assignee || assignee === "__bot__";
     }).length;
-    const mentions = sessionsByChannelScope.filter((session) =>
+    const mentions = sessionsByTagScope.filter((session) =>
       unreadMentionSessionIds.has(session.id),
     ).length;
     return {
       mine,
       unassigned,
       mentions,
-      all: sessionsByChannelScope.length,
+      all: sessionsByTagScope.length,
     };
-  }, [sessionsByChannelScope, unreadMentionSessionIds, agent?.id]);
+  }, [sessionsByTagScope, unreadMentionSessionIds, agent?.id]);
 
   const teamCounts = useMemo(() => {
     const counts = {};
@@ -581,11 +590,45 @@ export default function App() {
     ];
   }, [channelRecords, sessionsByTeamScope]);
 
+  const tagFilters = useMemo(() => {
+    const counts = new Map();
+    for (const session of sessionsByChannelScope) {
+      for (const tag of Array.isArray(session.tags) ? session.tags : []) {
+        const id = String(tag.id || "");
+        if (!id) continue;
+        counts.set(id, (counts.get(id) || 0) + 1);
+      }
+    }
+    const items = (tags || [])
+      .map((tag) => ({
+        id: tag.id,
+        name: tag.name,
+        color: tag.color || "#94a3b8",
+        count: counts.get(String(tag.id)) || 0,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return [
+      {
+        id: "all",
+        name: "All tags",
+        color: "#94a3b8",
+        count: sessionsByChannelScope.length,
+      },
+      ...items,
+    ];
+  }, [tags, sessionsByChannelScope]);
+
   useEffect(() => {
     if (channelScope === "all") return;
     const exists = channelFilters.some((item) => item.id === channelScope);
     if (!exists) setChannelScope("all");
   }, [channelScope, channelFilters]);
+
+  useEffect(() => {
+    if (tagScope === "all") return;
+    const exists = tagFilters.some((item) => item.id === tagScope);
+    if (!exists) setTagScope("all");
+  }, [tagScope, tagFilters]);
 
   const slashQuery = useMemo(() => {
     const trimmed = text.trimStart();
@@ -1849,6 +1892,9 @@ export default function App() {
           channelScope={channelScope}
           setChannelScope={setChannelScope}
           channelFilters={channelFilters}
+          tagScope={tagScope}
+          setTagScope={setTagScope}
+          tagFilters={tagFilters}
           agent={agent}
           updateAgentStatus={updateAgentStatus}
           filteredSessions={filteredSessions}
@@ -2038,6 +2084,9 @@ export default function App() {
         channelScope={channelScope}
         setChannelScope={setChannelScope}
         channelFilters={channelFilters}
+        tagScope={tagScope}
+        setTagScope={setTagScope}
+        tagFilters={tagFilters}
         agent={agent}
         updateAgentStatus={updateAgentStatus}
         filteredSessions={filteredSessions}
