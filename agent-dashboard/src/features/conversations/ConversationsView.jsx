@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  ArrowLeft,
   AtSign,
   Building2,
   ChevronDown,
@@ -507,6 +508,14 @@ export default function ConversationsView({
         <section className="crm-main grid h-full min-h-0 overflow-hidden grid-rows-[56px_minmax(0,1fr)_auto] bg-[#f8f9fb]">
           <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4">
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setActiveId("")}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 min-[1025px]:hidden"
+                aria-label="Back to conversation list"
+              >
+                <ArrowLeft size={14} />
+              </button>
               <div className="flex h-7 w-7 items-center justify-center rounded-full bg-fuchsia-100 text-[10px] font-semibold text-fuchsia-700">
                 {sessionInitials(activeSession, sessionContact)}
               </div>
@@ -523,6 +532,21 @@ export default function ConversationsView({
             </div>
 
             <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 rounded-md px-2 text-[11px]"
+                onClick={() =>
+                  patchActiveSession("assignee", { agentId: agent?.id || "" })
+                }
+                disabled={
+                  !activeId ||
+                  !agent?.id ||
+                  activeSession?.assigneeAgentId === agent?.id
+                }
+              >
+                Assign to me
+              </Button>
               <Button
                 size="sm"
                 variant="outline"
