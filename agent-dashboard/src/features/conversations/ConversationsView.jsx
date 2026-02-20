@@ -14,7 +14,6 @@ import {
   ChevronRight,
   CirclePause,
   ClipboardList,
-  Image,
   Mail,
   MapPin,
   MessageCircle,
@@ -974,6 +973,32 @@ export default function ConversationsView({
             )}
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-2.5 shadow-[0_1px_0_rgba(15,23,42,0.04)]">
+              <div className="mb-2 flex items-center justify-start">
+                <div className="inline-flex rounded-md border border-slate-300 bg-white p-0.5">
+                  <button
+                    type="button"
+                    className={`rounded px-2 py-1 text-xs font-medium transition ${
+                      messageAudience === "user"
+                        ? "bg-slate-100 text-slate-900"
+                        : "text-slate-600"
+                    }`}
+                    onClick={() => setMessageAudience("user")}
+                  >
+                    Reply
+                  </button>
+                  <button
+                    type="button"
+                    className={`rounded px-2 py-1 text-xs font-medium transition ${
+                      messageAudience === "team"
+                        ? "bg-amber-100 text-amber-900"
+                        : "text-slate-600"
+                    }`}
+                    onClick={() => setMessageAudience("team")}
+                  >
+                    Note
+                  </button>
+                </div>
+              </div>
               {pendingAttachment ? (
                 <div className="mb-2 rounded-xl border border-slate-200 bg-white p-2">
                   <div className="flex items-start justify-between gap-2">
@@ -1111,44 +1136,6 @@ export default function ConversationsView({
                         ))}
                       </div>
                     ) : null}
-                  </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 w-7 rounded-full p-0 text-slate-500 hover:text-slate-700"
-                    disabled={
-                      !activeId ||
-                      (isActiveSessionClosed && messageAudience === "user") ||
-                      isUserReplyBlockedByBot
-                    }
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    <Image size={14} />
-                  </Button>
-                  <div className="ml-1 inline-flex rounded-md border border-slate-300 bg-white p-0.5">
-                    <button
-                      type="button"
-                      className={`rounded px-2 py-1 text-xs font-medium transition ${
-                        messageAudience === "user"
-                          ? "bg-slate-100 text-slate-900"
-                          : "text-slate-600"
-                      }`}
-                      onClick={() => setMessageAudience("user")}
-                    >
-                      Reply
-                    </button>
-                    <button
-                      type="button"
-                      className={`rounded px-2 py-1 text-xs font-medium transition ${
-                        messageAudience === "team"
-                          ? "bg-amber-100 text-amber-900"
-                          : "text-slate-600"
-                      }`}
-                      onClick={() => setMessageAudience("team")}
-                    >
-                      Note
-                    </button>
                   </div>
                 </div>
 

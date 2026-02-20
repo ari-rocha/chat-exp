@@ -350,13 +350,15 @@ export default function WorkspaceLayout({
           isMobileLayout ? (
           activeId ? (
             <div className="relative flex h-full min-h-0 flex-col bg-white">
-              {detailsPanel ? (
+              {detailsPanel && !mobileDetailsOpen ? (
                 <button
                   type="button"
                   onClick={() => setMobileDetailsOpen(true)}
-                  className="absolute right-3 top-3 z-20 inline-flex h-8 items-center rounded-md border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700 shadow-sm"
+                  className="absolute right-3 top-1/2 z-30 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-lg"
+                  title="Open contact panel"
+                  aria-label="Open contact panel"
                 >
-                  Contact
+                  <CircleUserRound size={16} />
                 </button>
               ) : null}
               <div className="min-h-0 flex-1">{mainPanel}</div>
