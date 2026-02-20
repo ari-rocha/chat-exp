@@ -403,6 +403,8 @@ export default function App() {
       if (text.includes("reopened")) return false;
       if (text.includes("ended the chat")) return true;
       if (text.includes("conversation closed")) return true;
+      if (text.includes("conversation resolved")) return true;
+      if (text.includes("resolved by agent")) return true;
     }
     return false;
   }, [messages]);

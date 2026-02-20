@@ -1886,6 +1886,8 @@ fn is_visitor_visible_system_msg(text: &str) -> bool {
     let lower = text.to_lowercase();
     lower.contains("ended the chat")
         || lower.contains("conversation closed")
+        || lower.contains("conversation resolved")
+        || lower.contains("resolved by agent")
         || lower.contains("reopened")
 }
 
@@ -7535,7 +7537,7 @@ async fn patch_session_assignee(
 
 async fn session_allows_human_reply(state: &Arc<AppState>, session_id: &str) -> bool {
     let row = sqlx::query(
-        "SELECT handover_active, assignee_agent_id FROM sessions WHERE id = $1 LIMIT 1",
+        "SELECT channel, handover_active, assignee_agent_id FROM sessions WHERE id = $1 LIMIT 1",
     )
     .bind(session_id)
     .fetch_optional(&state.db)
@@ -7545,6 +7547,10 @@ async fn session_allows_human_reply(state: &Arc<AppState>, session_id: &str) -> 
     let Some(row) = row else {
         return false;
     };
+    let channel: String = row.get("channel");
+    if channel != "whatsapp" {
+        return true;
+    }
     let handover_active: bool = row.get("handover_active");
     if !handover_active {
         return false;
