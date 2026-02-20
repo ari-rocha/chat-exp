@@ -109,9 +109,15 @@ export default function WorkspaceLayout({
   inboxScope = "mine",
   setInboxScope,
   inboxCounts = {},
+  teamScope = "all",
+  setTeamScope,
+  teamCounts = {},
+  teams = [],
+  channelScope = "all",
+  setChannelScope,
+  channelFilters = [],
   agent,
   updateAgentStatus,
-  channelCounts,
   filteredSessions,
   activeId,
   setActiveId,
@@ -129,8 +135,7 @@ export default function WorkspaceLayout({
   });
   const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false);
   const [sidebarSections, setSidebarSections] = useState({
-    inbox: true,
-    status: false,
+    teams: true,
     channel: true,
     agent: true,
   });
@@ -175,13 +180,6 @@ export default function WorkspaceLayout({
     return "grid-cols-[64px_1fr]";
   })();
 
-  const statusCount = {
-    active: openCount + waitingCount,
-    all: sessions.length,
-    open: openCount,
-    awaiting: waitingCount,
-    closed: closedCount,
-  };
   const toggleSidebarSection = (key) => {
     setSidebarSections((prev) => ({ ...prev, [key]: !prev[key] }));
   };
@@ -306,80 +304,52 @@ export default function WorkspaceLayout({
                 <button
                   type="button"
                   className="mb-2 flex w-full items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-slate-500"
-                  onClick={() => toggleSidebarSection("inbox")}
+                  onClick={() => toggleSidebarSection("teams")}
                 >
-                  <span>Inbox</span>
-                  {sidebarSections.inbox ? (
+                  <span>Teams</span>
+                  {sidebarSections.teams ? (
                     <ChevronDown size={14} className="text-slate-400" />
                   ) : (
                     <ChevronRight size={14} className="text-slate-400" />
                   )}
                 </button>
-                {sidebarSections.inbox ? (
+                {sidebarSections.teams ? (
                   <div className="space-y-1.5">
-                    {AGENT_INBOX_ITEMS.map((item) => {
-                      const Icon = item.icon;
-                      const count =
-                        Number(inboxCounts?.[item.id] ?? 0) ||
-                        (item.id === "all" ? sessions.length : 0);
-                      const isActive = inboxScope === item.id;
+                    <button
+                      type="button"
+                      onClick={() => setTeamScope?.("all")}
+                      className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-left text-xs ${
+                        teamScope === "all"
+                          ? "border-blue-200 bg-blue-50 text-blue-700"
+                          : "border-slate-200 bg-white text-slate-600"
+                      }`}
+                    >
+                      <span>All teams</span>
+                      <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
+                        {Number(teamCounts?.all ?? sessions.length)}
+                      </span>
+                    </button>
+                    {teams.map((team) => {
+                      const count = Number(teamCounts?.[team.id] ?? 0);
+                      const isActive = teamScope === team.id;
                       return (
                         <button
-                          key={item.id}
+                          key={team.id}
                           type="button"
-                          onClick={() => setInboxScope?.(item.id)}
+                          onClick={() => setTeamScope?.(team.id)}
                           className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-left text-xs ${
                             isActive
                               ? "border-blue-200 bg-blue-50 text-blue-700"
                               : "border-slate-200 bg-white text-slate-600"
                           }`}
                         >
-                          <span className="flex items-center gap-1.5">
-                            <Icon size={12} />
-                            {item.label}
-                          </span>
+                          <span className="truncate">{team.name}</span>
                           <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
                             {count}
                           </span>
                         </button>
                       );
                     })}
-                  </div>
-                ) : null}
-              </div>
-
-              <div>
-                <button
-                  type="button"
-                  className="mb-2 flex w-full items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-slate-500"
-                  onClick={() => toggleSidebarSection("status")}
-                >
-                  <span>Status</span>
-                  {sidebarSections.status ? (
-                    <ChevronDown size={14} className="text-slate-400" />
-                  ) : (
-                    <ChevronRight size={14} className="text-slate-400" />
-                  )}
-                </button>
-                {sidebarSections.status ? (
-                  <div className="space-y-1.5">
-                    {STATUS_ITEMS.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => setConversationFilter(item.id)}
-                        className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-left text-xs ${
-                          conversationFilter === item.id
-                            ? "border-blue-200 bg-blue-50 text-blue-700"
-                            : "border-slate-200 bg-white text-slate-600"
-                        }`}
-                      >
-                        <span>{item.label}</span>
-                        <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
-                          {statusCount[item.id] ?? 0}
-                        </span>
-                      </button>
-                    ))}
                   </div>
                 ) : null}
               </div>
@@ -399,16 +369,27 @@ export default function WorkspaceLayout({
                 </button>
                 {sidebarSections.channel ? (
                   <div className="space-y-1.5">
-                    {channelCounts.map(([channel, count]) => (
-                      <div
-                        key={channel}
-                        className="flex items-center justify-between rounded-lg px-2 py-1.5 text-xs text-slate-600"
-                      >
-                        <span className="capitalize">{channel}</span>
-                        <span>{count}</span>
-                      </div>
-                    ))}
-                    {channelCounts.length === 0 ? (
+                    {channelFilters.map((channel) => {
+                      const isActive = channelScope === channel.id;
+                      return (
+                        <button
+                          key={channel.id}
+                          type="button"
+                          onClick={() => setChannelScope?.(channel.id)}
+                          className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-left text-xs ${
+                            isActive
+                              ? "border-blue-200 bg-blue-50 text-blue-700"
+                              : "border-slate-200 bg-white text-slate-600"
+                          }`}
+                        >
+                          <span className="truncate">{channel.name}</span>
+                          <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
+                            {Number(channel.count || 0)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    {channelFilters.length === 0 ? (
                       <p className="text-xs text-slate-400">No channels</p>
                     ) : null}
                   </div>

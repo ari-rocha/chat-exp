@@ -304,6 +304,8 @@ export default function App() {
   const [conversationSearch, setConversationSearch] = useState("");
   const [conversationFilter, setConversationFilter] = useState("active");
   const [inboxScope, setInboxScope] = useState("mine");
+  const [teamScope, setTeamScope] = useState("all");
+  const [channelScope, setChannelScope] = useState("all");
   const [visitorDraftBySession, setVisitorDraftBySession] = useState({});
   const [cannedReplies, setCannedReplies] = useState([]);
   const [cannedPanelOpen, setCannedPanelOpen] = useState(false);
@@ -414,9 +416,30 @@ export default function App() {
     );
   }, [notifications]);
 
+  const sessionsByTeamScope = useMemo(() => {
+    if (teamScope === "all") return sessionsByStatus;
+    return sessionsByStatus.filter(
+      (session) => String(session.teamId || "") === String(teamScope),
+    );
+  }, [sessionsByStatus, teamScope]);
+
+  const channelScopeType = useMemo(() => {
+    if (channelScope === "all") return "all";
+    const selected = (channelRecords || []).find((rec) => rec.id === channelScope);
+    return String(selected?.channelType || selected?.channel_type || "").toLowerCase() || "all";
+  }, [channelScope, channelRecords]);
+
+  const sessionsByChannelScope = useMemo(() => {
+    if (channelScopeType === "all") return sessionsByTeamScope;
+    return sessionsByTeamScope.filter(
+      (session) =>
+        String(session.channel || "").toLowerCase() === String(channelScopeType),
+    );
+  }, [sessionsByTeamScope, channelScopeType]);
+
   const sessionsByInboxScope = useMemo(() => {
     const myAgentId = String(agent?.id || "").trim();
-    return sessionsByStatus.filter((session) => {
+    return sessionsByChannelScope.filter((session) => {
       const assignee = String(session.assigneeAgentId || "").trim();
       const isUnassigned = !assignee || assignee === "__bot__";
       if (inboxScope === "mine") {
@@ -430,7 +453,7 @@ export default function App() {
       }
       return true;
     });
-  }, [sessionsByStatus, inboxScope, agent?.id, unreadMentionSessionIds]);
+  }, [sessionsByChannelScope, inboxScope, agent?.id, unreadMentionSessionIds]);
 
   const filteredSessions = useMemo(() => {
     const query = conversationSearch.trim().toLowerCase();
@@ -453,23 +476,38 @@ export default function App() {
 
   const inboxCounts = useMemo(() => {
     const myAgentId = String(agent?.id || "").trim();
-    const mine = sessionsByStatus.filter(
+    const mine = sessionsByChannelScope.filter(
       (session) => String(session.assigneeAgentId || "").trim() === myAgentId,
     ).length;
-    const unassigned = sessionsByStatus.filter((session) => {
+    const unassigned = sessionsByChannelScope.filter((session) => {
       const assignee = String(session.assigneeAgentId || "").trim();
       return !assignee || assignee === "__bot__";
     }).length;
-    const mentions = sessionsByStatus.filter((session) =>
+    const mentions = sessionsByChannelScope.filter((session) =>
       unreadMentionSessionIds.has(session.id),
     ).length;
     return {
       mine,
       unassigned,
       mentions,
-      all: sessionsByStatus.length,
+      all: sessionsByChannelScope.length,
     };
-  }, [sessionsByStatus, unreadMentionSessionIds, agent?.id]);
+  }, [sessionsByChannelScope, unreadMentionSessionIds, agent?.id]);
+
+  const teamCounts = useMemo(() => {
+    const counts = {};
+    for (const team of teams) counts[team.id] = 0;
+    for (const session of sessionsByStatus) {
+      const teamId = String(session.teamId || "");
+      if (teamId && Object.hasOwn(counts, teamId)) {
+        counts[teamId] += 1;
+      }
+    }
+    return {
+      all: sessionsByStatus.length,
+      ...counts,
+    };
+  }, [sessionsByStatus, teams]);
 
   const openCount = useMemo(
     () =>
@@ -489,20 +527,65 @@ export default function App() {
         .length,
     [sessions],
   );
-  const channelCounts = useMemo(() => {
-    const map = new Map();
-    // Seed with all registered channel types so they always appear
-    for (const rec of channelRecords) {
-      const key = rec.channelType || rec.channel_type;
-      if (key && !map.has(key)) map.set(key, 0);
+  const channelFilters = useMemo(() => {
+    const countByType = new Map();
+    for (const session of sessionsByTeamScope) {
+      const key = String(session.channel || "").toLowerCase();
+      if (!key) continue;
+      countByType.set(key, (countByType.get(key) || 0) + 1);
     }
-    for (const session of sessions) {
-      if (session.channel) {
-        map.set(session.channel, (map.get(session.channel) || 0) + 1);
-      }
+
+    const fromRecords = (channelRecords || [])
+      .filter((rec) => rec.enabled !== false)
+      .map((rec) => {
+        const type = String(rec.channelType || rec.channel_type || "").toLowerCase();
+        const fallbackName = type
+          ? `${type.charAt(0).toUpperCase()}${type.slice(1)} Channel`
+          : "Channel";
+        return {
+          id: rec.id,
+          name: rec.name || fallbackName,
+          channelType: type || "unknown",
+          count: countByType.get(type) || 0,
+        };
+      });
+
+    if (fromRecords.length > 0) {
+      return [
+        {
+          id: "all",
+          name: "All channels",
+          channelType: "all",
+          count: sessionsByTeamScope.length,
+        },
+        ...fromRecords,
+      ];
     }
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [sessions, channelRecords]);
+
+    const fromSessions = Array.from(countByType.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([type, count]) => ({
+        id: `type:${type}`,
+        name: `${type.charAt(0).toUpperCase()}${type.slice(1)} Channel`,
+        channelType: type,
+        count,
+      }));
+    return [
+      {
+        id: "all",
+        name: "All channels",
+        channelType: "all",
+        count: sessionsByTeamScope.length,
+      },
+      ...fromSessions,
+    ];
+  }, [channelRecords, sessionsByTeamScope]);
+
+  useEffect(() => {
+    if (channelScope === "all") return;
+    const exists = channelFilters.some((item) => item.id === channelScope);
+    if (!exists) setChannelScope("all");
+  }, [channelScope, channelFilters]);
 
   const slashQuery = useMemo(() => {
     const trimmed = text.trimStart();
@@ -1760,9 +1843,14 @@ export default function App() {
           inboxScope={inboxScope}
           setInboxScope={setInboxScope}
           inboxCounts={inboxCounts}
+          teamScope={teamScope}
+          setTeamScope={setTeamScope}
+          teamCounts={teamCounts}
+          channelScope={channelScope}
+          setChannelScope={setChannelScope}
+          channelFilters={channelFilters}
           agent={agent}
           updateAgentStatus={updateAgentStatus}
-          channelCounts={channelCounts}
           filteredSessions={filteredSessions}
           activeId={activeId}
           setActiveId={setActiveId}
@@ -1944,9 +2032,14 @@ export default function App() {
         closedCount={closedCount}
         conversationFilter={conversationFilter}
         setConversationFilter={setConversationFilter}
+        teamScope={teamScope}
+        setTeamScope={setTeamScope}
+        teamCounts={teamCounts}
+        channelScope={channelScope}
+        setChannelScope={setChannelScope}
+        channelFilters={channelFilters}
         agent={agent}
         updateAgentStatus={updateAgentStatus}
-        channelCounts={channelCounts}
         filteredSessions={filteredSessions}
         activeId={activeId}
         setActiveId={setActiveId}

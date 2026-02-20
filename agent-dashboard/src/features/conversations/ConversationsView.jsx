@@ -276,9 +276,14 @@ export default function ConversationsView({
   inboxScope,
   setInboxScope,
   inboxCounts,
+  teamScope,
+  setTeamScope,
+  teamCounts,
+  channelScope,
+  setChannelScope,
+  channelFilters,
   agent,
   updateAgentStatus,
-  channelCounts,
   filteredSessions,
   activeId,
   setActiveId,
@@ -837,9 +842,15 @@ export default function ConversationsView({
       inboxScope={inboxScope}
       setInboxScope={setInboxScope}
       inboxCounts={inboxCounts}
+      teamScope={teamScope}
+      setTeamScope={setTeamScope}
+      teamCounts={teamCounts}
+      channelScope={channelScope}
+      setChannelScope={setChannelScope}
+      channelFilters={channelFilters}
+      teams={teams}
       agent={agent}
       updateAgentStatus={updateAgentStatus}
-      channelCounts={channelCounts}
       filteredSessions={filteredSessions}
       activeId={activeId}
       setActiveId={setActiveId}
