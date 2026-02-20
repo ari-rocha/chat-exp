@@ -537,10 +537,6 @@ export default function App() {
     });
   };
 
-  const setHandover = async (active) => {
-    await patchActiveSession("handover", { active });
-  };
-
   const loadBootstrap = async (authToken) => {
     const [
       meRes,
@@ -1613,7 +1609,6 @@ export default function App() {
           channels={channels}
           flows={flows}
           patchActiveSession={patchActiveSession}
-          setHandover={setHandover}
           noteText={noteText}
           setNoteText={setNoteText}
           saveNote={saveNote}

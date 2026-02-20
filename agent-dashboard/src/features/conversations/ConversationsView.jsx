@@ -187,7 +187,6 @@ export default function ConversationsView({
   teams,
   channels,
   patchActiveSession,
-  setHandover,
   noteText,
   setNoteText,
   saveNote,
@@ -256,9 +255,31 @@ export default function ConversationsView({
     return () => document.removeEventListener("mousedown", onDocPointer);
   }, []);
 
+  const botAssigneeId = "__bot__";
+  const botName = String(tenantSettings?.botName || "").trim() || "Bot";
+  const botAvatarUrl = String(tenantSettings?.botAvatarUrl || "").trim();
+  const isBotAssigned = Boolean(activeSession) && (
+    activeSession?.assigneeAgentId === botAssigneeId ||
+    ((!activeSession?.assigneeAgentId ||
+      !String(activeSession.assigneeAgentId).trim()) &&
+      !Boolean(activeSession?.handoverActive))
+  );
+  const isUserReplyBlockedByBot = isBotAssigned && messageAudience === "user";
+  const assigneeAgent = agents.find(
+    (item) => item.id === activeSession?.assigneeAgentId,
+  );
+  const assigneeName =
+    activeSession?.assigneeAgentId === botAssigneeId ||
+    (!activeSession?.assigneeAgentId && !activeSession?.handoverActive)
+      ? botName
+      : assigneeAgent?.name || "Unassigned";
+  const assigneeAvatarUrl =
+    assigneeName === botName ? botAvatarUrl : assigneeAgent?.avatarUrl || "";
+
   const canSendNow =
     Boolean(activeId) &&
     !(isActiveSessionClosed && messageAudience === "user") &&
+    !isUserReplyBlockedByBot &&
     (Boolean(pendingAttachment) || Boolean(text.trim()));
 
   const submitComposerPayload = async () => {
@@ -410,7 +431,7 @@ export default function ConversationsView({
   };
 
   const canUseTemplates =
-    activeSession?.channel === "whatsapp" && messageAudience === "user";
+                  activeSession?.channel === "whatsapp" && messageAudience === "user";
   const filteredWaTemplates = waTemplates.filter((tpl) => {
     const q = waTemplateQuery.trim().toLowerCase();
     if (!q) return true;
@@ -808,6 +829,8 @@ export default function ConversationsView({
                   activeId
                     ? isActiveSessionClosed && messageAudience === "user"
                       ? "This conversation is closed. Reopen to send a user message."
+                      : isUserReplyBlockedByBot
+                        ? `${botName} is assigned. Change assignee to reply as an agent.`
                       : "Type your message"
                     : "Select a conversation"
                 }
@@ -820,7 +843,8 @@ export default function ConversationsView({
                 onKeyDown={handleComposerKeyDown}
                 disabled={
                   !activeId ||
-                  (isActiveSessionClosed && messageAudience === "user")
+                  (isActiveSessionClosed && messageAudience === "user") ||
+                  isUserReplyBlockedByBot
                 }
                 rows={2}
                 className="min-h-20 resize-none border-0 bg-transparent px-1 py-1.5 text-[13px] shadow-none focus-visible:ring-0"
@@ -839,7 +863,11 @@ export default function ConversationsView({
                     size="sm"
                     variant="ghost"
                     className="h-7 w-7 rounded-full p-0 text-slate-500 hover:text-slate-700"
-                    disabled={!activeId}
+                    disabled={
+                      !activeId ||
+                      (isActiveSessionClosed && messageAudience === "user") ||
+                      isUserReplyBlockedByBot
+                    }
                     onClick={() => fileInputRef.current?.click()}
                   >
                     <Paperclip size={14} />
@@ -850,7 +878,11 @@ export default function ConversationsView({
                       size="sm"
                       variant="ghost"
                       className="h-7 w-7 rounded-full p-0 text-slate-500 hover:text-slate-700"
-                      disabled={!activeId}
+                      disabled={
+                        !activeId ||
+                        (isActiveSessionClosed && messageAudience === "user") ||
+                        isUserReplyBlockedByBot
+                      }
                       onClick={() => setEmojiOpen((v) => !v)}
                     >
                       <Smile size={14} />
@@ -888,7 +920,11 @@ export default function ConversationsView({
                     size="sm"
                     variant="ghost"
                     className="h-7 w-7 rounded-full p-0 text-slate-500 hover:text-slate-700"
-                    disabled={!activeId}
+                    disabled={
+                      !activeId ||
+                      (isActiveSessionClosed && messageAudience === "user") ||
+                      isUserReplyBlockedByBot
+                    }
                     onClick={() => fileInputRef.current?.click()}
                   >
                     <Image size={14} />
@@ -920,16 +956,6 @@ export default function ConversationsView({
                 </div>
 
                 <div className="flex items-center gap-1.5">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-8 rounded-lg px-2 text-[11px]"
-                    onClick={() => setCannedPanelOpen((v) => !v)}
-                    disabled={!activeId}
-                  >
-                    <ClipboardList size={13} /> Assign to Form
-                  </Button>
                   {canUseTemplates ? (
                     <div className="relative" ref={templatePanelRef}>
                       <Button
@@ -946,6 +972,7 @@ export default function ConversationsView({
                         }}
                         disabled={!activeId || waTemplateSending}
                       >
+                        <ClipboardList size={13} className="mr-1" />
                         WhatsApp Template
                       </Button>
                       {waTemplatesOpen ? (
@@ -1060,26 +1087,12 @@ export default function ConversationsView({
                     </div>
                   ) : null}
                   <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-8 rounded-lg px-2 text-[11px]"
-                    onClick={() =>
-                      setHandover(!Boolean(activeSession?.handoverActive))
-                    }
-                    disabled={!activeId}
-                  >
-                    <Users size={13} />{" "}
-                    {activeSession?.handoverActive
-                      ? "Return to Bot"
-                      : "Take Over"}
-                  </Button>
-                  <Button
                     type="submit"
                     disabled={
                       !activeId ||
                       (!text.trim() && !pendingAttachment) ||
-                      (isActiveSessionClosed && messageAudience === "user")
+                      (isActiveSessionClosed && messageAudience === "user") ||
+                      isUserReplyBlockedByBot
                     }
                     className="h-8 rounded-lg bg-orange-500 px-3 text-white hover:bg-orange-600"
                   >
@@ -1166,15 +1179,15 @@ export default function ConversationsView({
                       </label>
                       <select
                         className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
-                        value={activeSession?.assigneeAgentId || ""}
+                        value={activeSession?.assigneeAgentId || botAssigneeId}
                         onChange={(e) =>
                           patchActiveSession("assignee", {
-                            agentId: e.target.value || null,
+                            agentId: e.target.value || botAssigneeId,
                           })
                         }
                         disabled={!activeId}
                       >
-                        <option value="">Unassigned</option>
+                        <option value={botAssigneeId}>{botName}</option>
                         {agents.map((item) => (
                           <option key={item.id} value={item.id}>
                             {item.name}
@@ -1357,11 +1370,20 @@ export default function ConversationsView({
                     <p className="text-[10px] uppercase tracking-wide text-slate-400">
                       Assignee
                     </p>
-                    <p className="text-slate-900">
-                      {agents.find(
-                        (item) => item.id === activeSession?.assigneeAgentId,
-                      )?.name || "Unassigned"}
-                    </p>
+                    <div className="mt-0.5 flex items-center gap-1.5">
+                      {assigneeAvatarUrl ? (
+                        <img
+                          src={assigneeAvatarUrl}
+                          alt={assigneeName}
+                          className="h-4 w-4 rounded-full object-cover"
+                        />
+                      ) : (
+                        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-slate-200 text-[9px] font-semibold text-slate-600">
+                          {(assigneeName || "?").slice(0, 1).toUpperCase()}
+                        </span>
+                      )}
+                      <p className="text-slate-900">{assigneeName}</p>
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-start gap-2">

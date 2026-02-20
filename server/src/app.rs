@@ -6647,9 +6647,43 @@ async fn patch_session_assignee(
     if let Err(err) = auth_agent_from_headers(&state, &headers).await {
         return err.into_response();
     }
-    let affected =
-        sqlx::query("UPDATE sessions SET assignee_agent_id = $1, updated_at = $2 WHERE id = $3")
-            .bind(&body.agent_id)
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let requested = body
+        .agent_id
+        .as_deref()
+        .unwrap_or("__bot__")
+        .trim()
+        .to_string();
+    let (assignee_agent_id, handover_active) = if requested.is_empty() || requested == "__bot__" {
+        (Some("__bot__".to_string()), false)
+    } else {
+        let exists = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(1) FROM agents WHERE id = $1 AND tenant_id = $2",
+        )
+        .bind(&requested)
+        .bind(&tenant_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0)
+            > 0;
+        if !exists {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "assignee not found" })),
+            )
+                .into_response();
+        }
+        (Some(requested), true)
+    };
+
+    let affected = sqlx::query(
+        "UPDATE sessions SET assignee_agent_id = $1, handover_active = $2, updated_at = $3 WHERE id = $4",
+    )
+            .bind(&assignee_agent_id)
+            .bind(handover_active)
             .bind(now_iso())
             .bind(&session_id)
             .execute(&state.db)
@@ -6672,6 +6706,32 @@ async fn patch_session_assignee(
             .into_response();
     };
     (StatusCode::OK, Json(json!({ "session": summary }))).into_response()
+}
+
+async fn session_allows_human_reply(state: &Arc<AppState>, session_id: &str) -> bool {
+    let row = sqlx::query(
+        "SELECT handover_active, assignee_agent_id FROM sessions WHERE id = $1 LIMIT 1",
+    )
+    .bind(session_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let Some(row) = row else {
+        return false;
+    };
+    let handover_active: bool = row.get("handover_active");
+    if !handover_active {
+        return false;
+    }
+    let assignee: Option<String> = row.get("assignee_agent_id");
+    match assignee {
+        Some(id) => {
+            let value = id.trim();
+            !value.is_empty() && value != "__bot__"
+        }
+        None => false,
+    }
 }
 
 async fn patch_session_channel(
@@ -10558,6 +10618,16 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     .unwrap_or(false);
                 if let (Some(session_id), Some(text)) = (session_id, text) {
                     set_agent_human_typing(state.clone(), client_id, session_id, false).await;
+                    if !internal && !session_allows_human_reply(&state, session_id).await {
+                        emit_to_client(
+                            &state,
+                            client_id,
+                            "agent:send-blocked",
+                            json!({ "sessionId": session_id, "reason": "bot_assigned" }),
+                        )
+                        .await;
+                        continue;
+                    }
                     let sender = if internal { "team" } else { "agent" };
                     let agent_profile = {
                         let rt = state.realtime.lock().await;
@@ -10611,6 +10681,16 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     .unwrap_or(false);
 
                 if let Some(session_id) = session_id {
+                    if !internal && !session_allows_human_reply(&state, session_id).await {
+                        emit_to_client(
+                            &state,
+                            client_id,
+                            "agent:send-blocked",
+                            json!({ "sessionId": session_id, "reason": "bot_assigned" }),
+                        )
+                        .await;
+                        continue;
+                    }
                     let sender = if internal { "team" } else { "agent" };
                     let inferred_type = if attachment_type.trim().is_empty() {
                         attachment_type_from_mime(mime_type)
