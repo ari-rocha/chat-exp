@@ -1146,7 +1146,7 @@ export default function ConversationsView({
         </section>
       }
       detailsPanel={
-        <aside className="crm-details flex min-h-0 flex-col border-l border-slate-200 bg-white text-slate-900">
+        <aside className="crm-details flex h-full min-h-0 flex-col border-l border-slate-200 bg-white text-slate-900">
           <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
             <p className="text-sm font-semibold">Contact</p>
             <span className="text-[10px] text-slate-500">

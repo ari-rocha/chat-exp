@@ -310,7 +310,9 @@ export default function WorkspaceLayout({
                         <X size={14} />
                       </button>
                     </div>
-                    <div className="h-[calc(100%-49px)]">{detailsPanel}</div>
+                    <div className="h-[calc(100%-49px)] min-h-0 overflow-hidden">
+                      {detailsPanel}
+                    </div>
                   </div>
                 </div>
               ) : null}
