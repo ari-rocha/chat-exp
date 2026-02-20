@@ -105,17 +105,34 @@ export default function WorkspaceLayout({
   showConversationPanels = true,
   onOpenSettings,
 }) {
-  const [isMobileLayout, setIsMobileLayout] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.innerWidth <= 1024;
+  const [viewportWidth, setViewportWidth] = useState(() => {
+    if (typeof window === "undefined") return 1440;
+    return window.innerWidth;
   });
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
-    const onResize = () => setIsMobileLayout(window.innerWidth <= 1024);
+    const onResize = () => setViewportWidth(window.innerWidth);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+  const isMobileLayout = viewportWidth <= 1024;
+  const showDesktopDetailsPanel = viewportWidth > 1280 && Boolean(detailsPanel);
+  const showDesktopSidebar = showConversationPanels && !isMobileLayout && viewportWidth > 1280;
+  const surfaceGridClass = (() => {
+    if (showConversationPanels) {
+      if (isMobileLayout) return "grid-cols-[1fr]";
+      return showDesktopSidebar
+        ? "grid-cols-[64px_250px_1fr]"
+        : "grid-cols-[64px_1fr]";
+    }
+    if (detailsPanel) {
+      return viewportWidth > 1280
+        ? "grid-cols-[64px_1fr_300px]"
+        : "grid-cols-[64px_1fr]";
+    }
+    return "grid-cols-[64px_1fr]";
+  })();
 
   const statusCount = {
     active: openCount + waitingCount,
@@ -128,13 +145,7 @@ export default function WorkspaceLayout({
   return (
     <div className="conversation-workspace h-full w-full">
       <div
-        className={`crm-surface grid h-full min-h-0 overflow-hidden bg-white max-[1024px]:grid-cols-[1fr] ${
-          showConversationPanels
-            ? "grid-cols-[64px_250px_1fr] max-[1280px]:grid-cols-[64px_240px_1fr]"
-            : detailsPanel
-              ? "grid-cols-[64px_1fr_300px] max-[1280px]:grid-cols-[64px_1fr]"
-              : "grid-cols-[64px_1fr]"
-        }`}
+        className={`crm-surface grid h-full min-h-0 overflow-hidden bg-white ${surfaceGridClass}`}
       >
         <aside className="crm-rail flex min-h-0 flex-col items-center justify-between border-r border-slate-200 py-3 max-[1024px]:hidden">
           <div className="flex flex-col items-center gap-2">
@@ -173,8 +184,8 @@ export default function WorkspaceLayout({
           </button>
         </aside>
 
-        {showConversationPanels ? (
-          <aside className="crm-sidebar-panel flex min-h-0 flex-col border-r border-slate-200 bg-[#fbfcfe] max-[1280px]:hidden">
+        {showDesktopSidebar ? (
+          <aside className="crm-sidebar-panel flex min-h-0 flex-col border-r border-slate-200 bg-[#fbfcfe]">
             <div className="border-b border-slate-200 p-4">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-slate-900">Chat</h2>
@@ -427,20 +438,20 @@ export default function WorkspaceLayout({
             <ResizableHandle withHandle />
 
             <ResizablePanel
-              defaultSize={detailsPanel ? 45 : 68}
+              defaultSize={showDesktopDetailsPanel ? 45 : 68}
               minSize={30}
               className="min-h-0"
             >
               {mainPanel}
             </ResizablePanel>
 
-            {detailsPanel ? (
+            {showDesktopDetailsPanel ? (
               <>
                 <ResizableHandle withHandle />
                 <ResizablePanel
                   defaultSize={23}
                   minSize={16}
-                  className="min-h-0 max-[1280px]:hidden"
+                  className="min-h-0"
                 >
                   {detailsPanel}
                 </ResizablePanel>
