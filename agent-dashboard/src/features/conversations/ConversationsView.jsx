@@ -224,7 +224,6 @@ export default function ConversationsView({
   const [waTemplateParams, setWaTemplateParams] = useStateReact([]);
   const [sidebarPanels, setSidebarPanels] = useStateReact({
     actions: true,
-    macros: false,
     conversationInfo: false,
     contactAttrs: false,
     previousConversations: false,
@@ -1340,7 +1339,6 @@ export default function ConversationsView({
               </section>
 
               {[
-                ["macros", "Macros"],
                 ["conversationInfo", "Conversation Information"],
                 ["contactAttrs", "Contact Attributes"],
                 ["previousConversations", "Previous Conversations"],
@@ -1367,19 +1365,6 @@ export default function ConversationsView({
                   </button>
                   {sidebarPanels[key] ? (
                     <div className="border-t border-slate-200 px-3 pb-3 pt-2">
-                      {key === "macros" ? (
-                        <div className="space-y-2">
-                          <p className="text-xs text-slate-500">
-                            No macros found.
-                          </p>
-                          <button
-                            type="button"
-                            className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-blue-600 hover:bg-slate-50"
-                          >
-                            + Add a new macro
-                          </button>
-                        </div>
-                      ) : null}
                       {key === "conversationInfo" ? (
                         <div className="space-y-2 text-xs text-slate-700">
                           <div className="flex items-start gap-2">
