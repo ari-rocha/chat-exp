@@ -1442,6 +1442,289 @@ async fn whatsapp_block_users_request_for_session(
     Err(format!("{} {}: {}", status.as_u16(), status, body))
 }
 
+async fn whatsapp_calls_request(
+    state: &Arc<AppState>,
+    channel: &Channel,
+    payload: Value,
+) -> Result<Value, String> {
+    let access_token = config_text(&channel.config, "accessToken");
+    let phone_number_id = config_text(&channel.config, "phoneNumberId");
+    if access_token.is_empty() || phone_number_id.is_empty() {
+        return Err("missing whatsapp accessToken or phoneNumberId".to_string());
+    }
+    let url = format!("https://graph.facebook.com/v21.0/{phone_number_id}/calls");
+    let response = state
+        .ai_client
+        .post(url)
+        .bearer_auth(&access_token)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    let parsed = serde_json::from_str::<Value>(&body).unwrap_or_else(|_| json!({ "raw": body }));
+    if status.is_success() {
+        return Ok(parsed);
+    }
+    Err(format!("{} {}: {}", status.as_u16(), status, body))
+}
+
+async fn upsert_whatsapp_call_incoming(
+    state: &Arc<AppState>,
+    tenant_id: &str,
+    session_id: &str,
+    call_id: &str,
+    direction: &str,
+) {
+    let now = now_iso();
+    let _ = sqlx::query(
+        "INSERT INTO whatsapp_call_logs (call_id, tenant_id, session_id, direction, state, started_at_ms, ended_at_ms, duration_sec, created_at, updated_at) \
+         VALUES ($1, $2, $3, $4, 'INCOMING', NULL, NULL, 0, $5, $5) \
+         ON CONFLICT (call_id) DO UPDATE \
+         SET tenant_id = EXCLUDED.tenant_id, \
+             session_id = EXCLUDED.session_id, \
+             direction = CASE WHEN EXCLUDED.direction = '' THEN whatsapp_call_logs.direction ELSE EXCLUDED.direction END, \
+             state = CASE WHEN whatsapp_call_logs.ended_at_ms IS NULL THEN 'INCOMING' ELSE whatsapp_call_logs.state END, \
+             updated_at = EXCLUDED.updated_at",
+    )
+    .bind(call_id)
+    .bind(tenant_id)
+    .bind(session_id)
+    .bind(direction)
+    .bind(&now)
+    .execute(&state.db)
+    .await;
+}
+
+async fn mark_whatsapp_call_active(
+    state: &Arc<AppState>,
+    tenant_id: &str,
+    session_id: &str,
+    call_id: &str,
+) -> i64 {
+    let now_ms = Utc::now().timestamp_millis();
+    let now = now_iso();
+    let started = sqlx::query(
+        "UPDATE whatsapp_call_logs \
+         SET state = 'ACTIVE', started_at_ms = COALESCE(started_at_ms, $1), updated_at = $2 \
+         WHERE call_id = $3 AND ended_at_ms IS NULL \
+         RETURNING started_at_ms",
+    )
+    .bind(now_ms)
+    .bind(&now)
+    .bind(call_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|row| row.get::<Option<i64>, _>("started_at_ms"));
+    if let Some(ms) = started {
+        return ms;
+    }
+    let _ = sqlx::query(
+        "INSERT INTO whatsapp_call_logs (call_id, tenant_id, session_id, direction, state, started_at_ms, ended_at_ms, duration_sec, created_at, updated_at) \
+         VALUES ($1, $2, $3, '', 'ACTIVE', $4, NULL, 0, $5, $5) \
+         ON CONFLICT (call_id) DO NOTHING",
+    )
+    .bind(call_id)
+    .bind(tenant_id)
+    .bind(session_id)
+    .bind(now_ms)
+    .bind(&now)
+    .execute(&state.db)
+    .await;
+    now_ms
+}
+
+async fn mark_whatsapp_call_ended(
+    state: &Arc<AppState>,
+    tenant_id: &str,
+    session_id: &str,
+    call_id: &str,
+    terminal_state: &str,
+) -> Option<i64> {
+    let now_ms = Utc::now().timestamp_millis();
+    let now = now_iso();
+    let updated = sqlx::query(
+        "UPDATE whatsapp_call_logs \
+         SET state = $1, ended_at_ms = $2, \
+             duration_sec = CASE \
+                 WHEN started_at_ms IS NOT NULL THEN GREATEST(0, (($2 - started_at_ms) / 1000)::INT) \
+                 ELSE 0 \
+             END, \
+             updated_at = $3 \
+         WHERE call_id = $4 AND ended_at_ms IS NULL \
+         RETURNING duration_sec",
+    )
+    .bind(terminal_state)
+    .bind(now_ms)
+    .bind(&now)
+    .bind(call_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|row| row.get::<Option<i32>, _>("duration_sec").map(|v| v as i64));
+    if updated.is_some() {
+        return updated;
+    }
+    let existed = sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM whatsapp_call_logs WHERE call_id = $1")
+        .bind(call_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0)
+        > 0;
+    if existed {
+        return None;
+    }
+    let _ = sqlx::query(
+        "INSERT INTO whatsapp_call_logs (call_id, tenant_id, session_id, direction, state, started_at_ms, ended_at_ms, duration_sec, created_at, updated_at) \
+         VALUES ($1, $2, $3, '', $4, NULL, $5, 0, $6, $6) \
+         ON CONFLICT (call_id) DO NOTHING",
+    )
+    .bind(call_id)
+    .bind(tenant_id)
+    .bind(session_id)
+    .bind(terminal_state)
+    .bind(now_ms)
+    .bind(&now)
+    .execute(&state.db)
+    .await;
+    Some(0)
+}
+
+async fn whatsapp_call_action(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<WhatsappCallActionBody>,
+) -> impl IntoResponse {
+    let agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(agent) => agent,
+        Err(err) => return err.into_response(),
+    };
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let session_tenant = tenant_for_session(&state, &session_id).await.unwrap_or_default();
+    if session_tenant != tenant_id {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "session not in active workspace" })),
+        )
+            .into_response();
+    }
+
+    let (channel, to_phone) = match whatsapp_channel_and_recipient_for_session(&state, &session_id).await
+    {
+        Ok(v) => v,
+        Err(err) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": err }))).into_response(),
+    };
+
+    let action = body.action.trim().to_ascii_lowercase();
+    let allowed = ["connect", "pre_accept", "accept", "reject", "terminate"];
+    if !allowed.iter().any(|v| *v == action) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invalid action" })),
+        )
+            .into_response();
+    }
+    if action != "connect" && body.call_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "callId is required for this action" })),
+        )
+            .into_response();
+    }
+
+    let mut payload = json!({
+        "messaging_product": "whatsapp",
+        "action": action,
+    });
+    if action == "connect" {
+        payload["to"] = json!(if body.to.trim().is_empty() {
+            to_phone
+        } else {
+            body.to.trim().to_string()
+        });
+    } else {
+        payload["call_id"] = json!(body.call_id.trim().to_string());
+    }
+    if !body.biz_opaque_callback_data.trim().is_empty() {
+        payload["biz_opaque_callback_data"] = json!(body.biz_opaque_callback_data.trim().to_string());
+    }
+    if let Some(session) = body.session.as_ref() {
+        if !session.sdp_type.trim().is_empty() && !session.sdp.trim().is_empty() {
+            payload["session"] = json!({
+                "sdp_type": session.sdp_type.trim().to_string(),
+                "sdp": session.sdp,
+            });
+        }
+    }
+
+    let res = match whatsapp_calls_request(&state, &channel, payload).await {
+        Ok(v) => v,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": format!("whatsapp call action error: {err}") })),
+            )
+                .into_response();
+        }
+    };
+
+    let call_id = body.call_id.trim().to_string();
+    if action == "accept" && !call_id.is_empty() {
+        let started_at_ms = mark_whatsapp_call_active(&state, &tenant_id, &session_id, &call_id).await;
+        let _ = upsert_whatsapp_call_message(
+            state.clone(),
+            &session_id,
+            "WhatsApp call in progress",
+            json!({
+                "type": "whatsapp_call",
+                "callId": call_id.clone(),
+                "status": "ACTIVE",
+                "startedAtMs": started_at_ms,
+            }),
+        )
+        .await;
+    } else if (action == "reject" || action == "terminate") && !call_id.is_empty() {
+        if let Some(duration_sec) =
+            mark_whatsapp_call_ended(&state, &tenant_id, &session_id, &call_id, "ENDED").await
+        {
+            let _ = upsert_whatsapp_call_message(
+                state.clone(),
+                &session_id,
+                "WhatsApp call ended",
+                json!({
+                    "type": "whatsapp_call",
+                    "callId": call_id.clone(),
+                    "status": "ENDED",
+                    "durationSec": duration_sec,
+                }),
+            )
+            .await;
+        }
+    } else if action == "connect" {
+        let mut info = format!("{} started a WhatsApp call", agent.name);
+        if let Some(id) = res
+            .get("calls")
+            .and_then(Value::as_array)
+            .and_then(|list| list.first())
+            .and_then(|first| first.get("id"))
+            .and_then(Value::as_str)
+        {
+            info.push_str(&format!(" ({id})"));
+        }
+        let _ = add_message(state.clone(), &session_id, "system", &info, None, None, None).await;
+    }
+
+    (StatusCode::OK, Json(json!({ "ok": true, "result": res }))).into_response()
+}
+
 async fn whatsapp_block_status(
     Path(session_id): Path<String>,
     State(state): State<Arc<AppState>>,
@@ -2873,6 +3156,95 @@ async fn resolve_visitor_target_session(
     }
 
     (new_session_id, true)
+}
+
+async fn upsert_whatsapp_call_message(
+    state: Arc<AppState>,
+    session_id: &str,
+    text: &str,
+    widget: Value,
+) -> Option<ChatMessage> {
+    let call_id = widget
+        .get("callId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if call_id.is_empty() {
+        return add_message(state, session_id, "system", text, None, Some(widget), None).await;
+    }
+    let existing_id = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM chat_messages \
+         WHERE session_id = $1 \
+           AND sender = 'system' \
+           AND widget IS NOT NULL \
+           AND (widget::jsonb->>'type') = 'whatsapp_call' \
+           AND (widget::jsonb->>'callId') = $2 \
+         ORDER BY created_at DESC \
+         LIMIT 1",
+    )
+    .bind(session_id)
+    .bind(&call_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let Some(message_id) = existing_id else {
+        return add_message(state, session_id, "system", text, None, Some(widget), None).await;
+    };
+
+    let widget_text = json_text(&widget);
+    let row = sqlx::query(
+        "UPDATE chat_messages \
+         SET text = $1, widget = $2 \
+         WHERE id = $3 \
+         RETURNING id, session_id, sender, text, suggestions, widget, created_at, agent_id, agent_name, agent_avatar_url",
+    )
+    .bind(text.trim())
+    .bind(widget_text)
+    .bind(&message_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()?;
+
+    let message = ChatMessage {
+        id: row.get("id"),
+        session_id: row.get("session_id"),
+        sender: row.get("sender"),
+        text: row.get("text"),
+        suggestions: row
+            .get::<Option<String>, _>("suggestions")
+            .map(|v| {
+                serde_json::from_str::<Vec<String>>(&v)
+                    .ok()
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default(),
+        widget: row
+            .get::<Option<String>, _>("widget")
+            .map(|v| parse_json_text(&v)),
+        created_at: row.get("created_at"),
+        agent_id: row.get("agent_id"),
+        agent_name: row.get("agent_name"),
+        agent_avatar_url: row.get("agent_avatar_url"),
+    };
+
+    let summary = get_session_summary_db(&state.db, session_id).await?;
+    let watchers = {
+        let rt = state.realtime.lock().await;
+        rt.session_watchers
+            .get(session_id)
+            .map(|ids| ids.iter().copied().collect::<Vec<_>>())
+            .unwrap_or_default()
+    };
+    let agents = agent_clients_for_tenant(&state, &summary.tenant_id).await;
+    emit_to_clients(&state, &agents, "message:updated", message.clone()).await;
+    if is_visitor_visible_system_msg(&message.text) {
+        emit_to_clients(&state, &watchers, "message:updated", message.clone()).await;
+    }
+    emit_to_clients(&state, &agents, "session:updated", summary).await;
+    Some(message)
 }
 
 async fn add_message(
@@ -6618,6 +6990,90 @@ async fn send_whatsapp_template(
     (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
 }
 
+async fn start_whatsapp_call(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<StartWhatsappCallBody>,
+) -> impl IntoResponse {
+    let _agent = match auth_agent_from_headers(&state, &headers).await {
+        Ok(agent) => agent,
+        Err(err) => return err.into_response(),
+    };
+    let tenant_id = match auth_tenant_from_headers(&state, &headers).await {
+        Ok(id) => id,
+        Err(err) => return err.into_response(),
+    };
+    let session_tenant_id = tenant_for_session(&state, &session_id)
+        .await
+        .unwrap_or_default();
+    if session_tenant_id.is_empty() || session_tenant_id != tenant_id {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "session not in active workspace" })),
+        )
+            .into_response();
+    }
+
+    if let Err(err) = whatsapp_channel_and_recipient_for_session(&state, &session_id).await {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": err }))).into_response();
+    }
+
+    let call_id = Uuid::new_v4().to_string();
+    let join_url = if !body.join_url.trim().is_empty() {
+        body.join_url.trim().to_string()
+    } else {
+        let base = env::var("WHATSAPP_CALL_JOIN_BASE_URL").unwrap_or_default();
+        if base.trim().is_empty() {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "joinUrl is required (or set WHATSAPP_CALL_JOIN_BASE_URL)"
+                })),
+            )
+                .into_response();
+        }
+        let base = base.trim_end_matches('/');
+        format!("{base}?sessionId={session_id}&callId={call_id}&role=visitor")
+    };
+
+    let note = body.note.trim();
+    let invite_text = if note.is_empty() {
+        format!("Join the call: {join_url}")
+    } else {
+        format!("{note}\n\nJoin the call: {join_url}")
+    };
+
+    let send_res = match send_whatsapp_message_for_session(
+        state.clone(),
+        session_id.clone(),
+        invite_text,
+        None,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(err) => {
+            return (StatusCode::BAD_GATEWAY, Json(json!({ "error": err }))).into_response();
+        }
+    };
+
+    if let Some(summary) = get_session_summary_db(&state.db, &session_id).await {
+        emit_session_update(&state, summary).await;
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "ok": true,
+            "callId": call_id,
+            "joinUrl": join_url,
+            "result": send_res
+        })),
+    )
+        .into_response()
+}
+
 async fn close_session_by_visitor(
     Path(session_id): Path<String>,
     State(state): State<Arc<AppState>>,
@@ -8775,6 +9231,13 @@ async fn whatsapp_webhook_event(
     }
 
     let payload = serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| json!({}));
+    let webhook_debug = env::var("WHATSAPP_WEBHOOK_DEBUG")
+        .ok()
+        .map(|v| {
+            let normalized = v.trim().to_ascii_lowercase();
+            normalized == "1" || normalized == "true" || normalized == "yes"
+        })
+        .unwrap_or(false);
     let expected_phone_number_id = config_text(&channel.config, "phoneNumberId");
     let entries = payload
         .get("entry")
@@ -8792,6 +9255,13 @@ async fn whatsapp_webhook_event(
 
         for change in changes {
             let value = change.get("value").cloned().unwrap_or_else(|| json!({}));
+            if webhook_debug {
+                eprintln!(
+                    "[whatsapp:webhook] change value:\n{}",
+                    serde_json::to_string_pretty(&value)
+                        .unwrap_or_else(|_| value.to_string())
+                );
+            }
             let contact_profile_names = whatsapp_contact_profile_names(&value);
             let metadata_phone_id = value
                 .get("metadata")
@@ -8810,6 +9280,258 @@ async fn whatsapp_webhook_event(
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
+            let calls = value
+                .get("calls")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let statuses = value
+                .get("statuses")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+
+            for call in calls {
+                if webhook_debug {
+                    eprintln!(
+                        "[whatsapp:webhook] call payload:\n{}",
+                        serde_json::to_string_pretty(&call)
+                            .unwrap_or_else(|_| call.to_string())
+                    );
+                }
+                let call_id = call
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if call_id.is_empty() {
+                    continue;
+                }
+                let direction = call
+                    .get("direction")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_ascii_uppercase();
+                let event_name = call
+                    .get("event")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                let from = call
+                    .get("from")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let to = call
+                    .get("to")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let user_phone = if direction == "BUSINESS_INITIATED" {
+                    to.clone()
+                } else {
+                    from.clone()
+                };
+                let Some(visitor_id) = whatsapp_visitor_id(&user_phone) else {
+                    continue;
+                };
+                let Some(session_id) =
+                    find_or_create_whatsapp_session(&state, &channel.tenant_id, &visitor_id).await
+                else {
+                    continue;
+                };
+                let profile_name = contact_profile_names
+                    .get(&normalize_whatsapp_phone(&user_phone).unwrap_or_default())
+                    .cloned()
+                    .unwrap_or_default();
+                if let Some(contact_id) = ensure_whatsapp_contact_for_visitor(
+                    &state,
+                    &channel.tenant_id,
+                    &visitor_id,
+                    &user_phone,
+                    &profile_name,
+                    &channel.id,
+                )
+                .await
+                {
+                    let _ = sqlx::query(
+                        "UPDATE sessions SET contact_id = $1 WHERE visitor_id = $2 AND visitor_id != ''",
+                    )
+                    .bind(&contact_id)
+                    .bind(&visitor_id)
+                    .execute(&state.db)
+                    .await;
+                }
+
+                let _ = sqlx::query(
+                    "UPDATE sessions SET channel = 'whatsapp', visitor_id = $1, updated_at = $2 WHERE id = $3",
+                )
+                .bind(&visitor_id)
+                .bind(now_iso())
+                .bind(&session_id)
+                .execute(&state.db)
+                .await;
+
+                if event_name == "connect" {
+                    upsert_whatsapp_call_incoming(
+                        &state,
+                        &channel.tenant_id,
+                        &session_id,
+                        &call_id,
+                        &direction,
+                    )
+                    .await;
+                    let _ = upsert_whatsapp_call_message(
+                        state.clone(),
+                        &session_id,
+                        "Incoming WhatsApp call",
+                        json!({
+                            "type": "whatsapp_call",
+                            "callId": call_id.clone(),
+                            "status": "INCOMING",
+                            "remoteOffer": call.get("session").and_then(|v| v.get("sdp")).and_then(Value::as_str).unwrap_or(""),
+                        }),
+                    )
+                    .await;
+                } else if event_name == "terminate" {
+                    if let Some(duration_sec) = mark_whatsapp_call_ended(
+                        &state,
+                        &channel.tenant_id,
+                        &session_id,
+                        &call_id,
+                        "ENDED",
+                    )
+                    .await
+                    {
+                        let _ = upsert_whatsapp_call_message(
+                            state.clone(),
+                            &session_id,
+                            "WhatsApp call ended",
+                            json!({
+                                "type": "whatsapp_call",
+                                "callId": call_id.clone(),
+                                "status": "ENDED",
+                                "durationSec": duration_sec,
+                            }),
+                        )
+                        .await;
+                    }
+                }
+
+                let agents = agent_clients_for_tenant(&state, &channel.tenant_id).await;
+                emit_to_clients(
+                    &state,
+                    &agents,
+                    "whatsapp:call:event",
+                    json!({
+                        "sessionId": session_id,
+                        "callId": call_id,
+                        "event": event_name,
+                        "direction": direction,
+                        "from": from,
+                        "to": to,
+                        "timestamp": call.get("timestamp").cloned().unwrap_or(Value::Null),
+                        "status": call.get("status").cloned().unwrap_or(Value::Null),
+                        "session": call.get("session").cloned().unwrap_or(Value::Null),
+                        "connection": call.get("connection").cloned().unwrap_or(Value::Null),
+                        "raw": call,
+                    }),
+                )
+                .await;
+                processed += 1;
+            }
+
+            for status in statuses {
+                if webhook_debug {
+                    eprintln!(
+                        "[whatsapp:webhook] status payload:\n{}",
+                        serde_json::to_string_pretty(&status)
+                            .unwrap_or_else(|_| status.to_string())
+                    );
+                }
+                if status
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    != "call"
+                {
+                    continue;
+                }
+                let call_id = status
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if call_id.is_empty() {
+                    continue;
+                }
+                let recipient = status
+                    .get("recipient_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let Some(visitor_id) = whatsapp_visitor_id(&recipient) else {
+                    continue;
+                };
+                let Some(session_id) =
+                    find_or_create_whatsapp_session(&state, &channel.tenant_id, &visitor_id).await
+                else {
+                    continue;
+                };
+                let status_name = status
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_ascii_uppercase();
+
+                if status_name == "REJECTED" || status_name == "TERMINATED" || status_name == "ENDED"
+                {
+                    if let Some(duration_sec) = mark_whatsapp_call_ended(
+                        &state,
+                        &channel.tenant_id,
+                        &session_id,
+                        &call_id,
+                        &status_name,
+                    )
+                    .await
+                    {
+                        let _ = upsert_whatsapp_call_message(
+                            state.clone(),
+                            &session_id,
+                            "WhatsApp call ended",
+                            json!({
+                                "type": "whatsapp_call",
+                                "callId": call_id.clone(),
+                                "status": "ENDED",
+                                "durationSec": duration_sec,
+                            }),
+                        )
+                        .await;
+                    }
+                }
+
+                let agents = agent_clients_for_tenant(&state, &channel.tenant_id).await;
+                emit_to_clients(
+                    &state,
+                    &agents,
+                    "whatsapp:call:status",
+                    json!({
+                        "sessionId": session_id,
+                        "callId": call_id,
+                        "status": status_name,
+                        "timestamp": status.get("timestamp").cloned().unwrap_or(Value::Null),
+                        "raw": status,
+                    }),
+                )
+                .await;
+                processed += 1;
+            }
 
             for message in messages {
                 let from = message
@@ -13028,6 +13750,59 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     emit_visitor_typing(&state, session_id, text, active).await;
                 }
             }
+            "widget:webrtc-signal" => {
+                let session_id = envelope
+                    .data
+                    .get("sessionId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let call_id = envelope
+                    .data
+                    .get("callId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let signal_type = envelope
+                    .data
+                    .get("signalType")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let payload = envelope
+                    .data
+                    .get("payload")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
+
+                if session_id.is_empty() || call_id.is_empty() || signal_type.is_empty() {
+                    continue;
+                }
+
+                let recipients = session_realtime_recipients(&state, &session_id)
+                    .await
+                    .into_iter()
+                    .filter(|id| *id != client_id)
+                    .collect::<Vec<_>>();
+                if recipients.is_empty() {
+                    continue;
+                }
+                emit_to_clients(
+                    &state,
+                    &recipients,
+                    "webrtc:signal",
+                    json!({
+                        "sessionId": session_id,
+                        "callId": call_id,
+                        "signalType": signal_type,
+                        "payload": payload,
+                    }),
+                )
+                .await;
+            }
             "agent:watch-session" => {
                 if let Some(session_id) = envelope.data.get("sessionId").and_then(Value::as_str) {
                     let client_tenant_id = {
@@ -13284,6 +14059,72 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     }
                 }
             }
+            "agent:webrtc-signal" => {
+                let session_id = envelope
+                    .data
+                    .get("sessionId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let call_id = envelope
+                    .data
+                    .get("callId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let signal_type = envelope
+                    .data
+                    .get("signalType")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let payload = envelope
+                    .data
+                    .get("payload")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
+
+                if session_id.is_empty() || call_id.is_empty() || signal_type.is_empty() {
+                    continue;
+                }
+
+                let client_tenant_id = {
+                    let rt = state.realtime.lock().await;
+                    rt.agent_tenant_by_client.get(&client_id).cloned()
+                };
+                if let Some(client_tenant_id) = client_tenant_id {
+                    let session_tenant_id = tenant_for_session(&state, &session_id)
+                        .await
+                        .unwrap_or_default();
+                    if session_tenant_id != client_tenant_id {
+                        continue;
+                    }
+                }
+
+                let recipients = session_realtime_recipients(&state, &session_id)
+                    .await
+                    .into_iter()
+                    .filter(|id| *id != client_id)
+                    .collect::<Vec<_>>();
+                if recipients.is_empty() {
+                    continue;
+                }
+                emit_to_clients(
+                    &state,
+                    &recipients,
+                    "webrtc:signal",
+                    json!({
+                        "sessionId": session_id,
+                        "callId": call_id,
+                        "signalType": signal_type,
+                        "payload": payload,
+                    }),
+                )
+                .await;
+            }
             _ => {}
         }
     }
@@ -13524,6 +14365,14 @@ pub async fn run() {
         .route(
             "/api/session/{session_id}/whatsapp/template",
             post(send_whatsapp_template),
+        )
+        .route(
+            "/api/session/{session_id}/whatsapp/call/action",
+            post(whatsapp_call_action),
+        )
+        .route(
+            "/api/session/{session_id}/whatsapp/call/start",
+            post(start_whatsapp_call),
         )
         .route(
             "/api/session/{session_id}/whatsapp/block-status",

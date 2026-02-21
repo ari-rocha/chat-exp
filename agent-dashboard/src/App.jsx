@@ -351,6 +351,9 @@ export default function App() {
   const [notifications, setNotifications] = useState([]);
   const [notificationsUnreadCount, setNotificationsUnreadCount] = useState(0);
   const [whatsappSendFailures, setWhatsappSendFailures] = useState({});
+  const [lastWhatsappCallEvent, setLastWhatsappCallEvent] = useState(null);
+  const [whatsappIncomingCallsBySession, setWhatsappIncomingCallsBySession] =
+    useState({});
 
   const [flows, setFlows] = useState([]);
   const [activeFlowId, setActiveFlowId] = useState("");
@@ -821,6 +824,13 @@ export default function App() {
         } catch {
           return;
         }
+        if (typeof envelope?.data === "string") {
+          try {
+            envelope = { ...envelope, data: JSON.parse(envelope.data) };
+          } catch {
+            // Keep original payload when it's a plain string.
+          }
+        }
 
         if (envelope?.event === "auth:error") {
           localStorage.removeItem(TOKEN_KEY);
@@ -859,6 +869,14 @@ export default function App() {
               return next;
             });
           }
+        }
+
+        if (envelope?.event === "message:updated") {
+          const message = envelope.data;
+          if (!message || message.sessionId !== activeIdRef.current) return;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === message.id ? message : m)),
+          );
         }
 
         if (envelope?.event === "visitor:typing") {
@@ -924,6 +942,115 @@ export default function App() {
               return { ...prev, [sessionId]: sessionFailures };
             });
           }
+        }
+
+        if (
+          envelope?.event === "whatsapp:call:event" ||
+          envelope?.event === "whatsapp:call:status"
+        ) {
+          const payload = envelope.data ?? {};
+          if (!payload?.sessionId || !payload?.callId) return;
+          const sessionId = String(payload.sessionId);
+          setSessions((prev) => {
+            if (prev.some((s) => String(s.id) === sessionId)) return prev;
+            const now = new Date().toISOString();
+            return [
+              {
+                id: sessionId,
+                tenantId: agent?.tenantId || "",
+                createdAt: now,
+                updatedAt: now,
+                lastMessage: {
+                  id: `tmp-call-${payload.callId}`,
+                  sessionId,
+                  sender: "system",
+                  text: "WhatsApp call incoming/connecting",
+                  createdAt: now,
+                },
+                messageCount: 0,
+                channel: "whatsapp",
+                assigneeAgentId: null,
+                teamId: null,
+                flowId: null,
+                contactId: null,
+                tags: [],
+                visitorId: String(payload.from || ""),
+                handoverActive: false,
+                status: "open",
+                priority: "normal",
+              },
+              ...prev,
+            ];
+          });
+          if (
+            envelope?.event === "whatsapp:call:event" &&
+            String(payload?.event || "").toLowerCase() === "connect"
+          ) {
+            setViewRaw("conversations");
+            setActiveId(sessionId);
+          }
+          const nextEvent = {
+            type: envelope.event,
+            ...payload,
+            at: Date.now(),
+          };
+          if (envelope?.event === "whatsapp:call:event") {
+            const eventName = String(payload?.event || "").toLowerCase();
+            if (eventName === "connect") {
+              setWhatsappIncomingCallsBySession((prev) => ({
+                ...prev,
+                [sessionId]: nextEvent,
+              }));
+            } else if (eventName === "terminate") {
+              setWhatsappIncomingCallsBySession((prev) => {
+                const existing = prev[sessionId];
+                if (!existing) return prev;
+                if (
+                  String(existing.callId || "") &&
+                  String(existing.callId || "") !== String(payload.callId || "")
+                ) {
+                  return prev;
+                }
+                const next = { ...prev };
+                delete next[sessionId];
+                return next;
+              });
+            }
+          } else if (envelope?.event === "whatsapp:call:status") {
+            const statusName = String(payload?.status || "").toUpperCase();
+            if (statusName === "REJECTED" || statusName === "TERMINATED" || statusName === "ENDED") {
+              setWhatsappIncomingCallsBySession((prev) => {
+                const existing = prev[sessionId];
+                if (!existing) return prev;
+                if (
+                  String(existing.callId || "") &&
+                  String(existing.callId || "") !== String(payload.callId || "")
+                ) {
+                  return prev;
+                }
+                const next = { ...prev };
+                delete next[sessionId];
+                return next;
+              });
+            }
+          }
+          setLastWhatsappCallEvent((prev) => {
+            // Keep an incoming connect event briefly so the conversation view can
+            // render accept/reject controls before rapid follow-up updates replace it.
+            const prevIsFreshConnect =
+              prev &&
+              String(prev.type || "") === "whatsapp:call:event" &&
+              String(prev.event || "").toLowerCase() === "connect" &&
+              String(prev.callId || "") === String(payload.callId || "") &&
+              nextEvent.at - Number(prev.at || 0) < 1500;
+            const nextIsConnectEvent =
+              envelope?.event === "whatsapp:call:event" &&
+              String(payload?.event || "").toLowerCase() === "connect";
+            if (prevIsFreshConnect && !nextIsConnectEvent) {
+              return prev;
+            }
+            return nextEvent;
+          });
         }
       });
 
@@ -1247,6 +1374,14 @@ export default function App() {
         languageCode,
         parameters: Array.isArray(parameters) ? parameters : [],
       }),
+    });
+  };
+
+  const whatsappCallAction = async (sessionId, payload) => {
+    if (!token || !sessionId) return null;
+    return apiFetch(`/api/session/${sessionId}/whatsapp/call/action`, token, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
     });
   };
 
@@ -1935,6 +2070,11 @@ export default function App() {
           sendAttachment={sendAttachment}
           listWhatsappTemplates={listWhatsappTemplates}
           sendWhatsappTemplate={sendWhatsappTemplate}
+          whatsappCallAction={whatsappCallAction}
+          whatsappCallEvent={lastWhatsappCallEvent}
+          whatsappIncomingCall={
+            activeId ? (whatsappIncomingCallsBySession[activeId] ?? null) : null
+          }
           getWhatsappBlockStatus={getWhatsappBlockStatus}
           blockWhatsappContact={blockWhatsappContact}
           unblockWhatsappContact={unblockWhatsappContact}

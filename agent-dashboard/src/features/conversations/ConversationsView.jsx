@@ -20,6 +20,8 @@ import {
   MessageCircle,
   MoreVertical,
   Paperclip,
+  PhoneCall,
+  PhoneOff,
   Phone,
   Plus,
   Send,
@@ -27,12 +29,15 @@ import {
   Tag,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState as useStateReact } from "react";
+import { useEffect, useMemo, useRef, useState as useStateReact } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 const API_BASE = API_URL.replace(/\/+$/, "");
+const WEBRTC_CONFIG = {
+  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+};
 
 function resolveMediaUrl(url) {
   const value = String(url || "").trim();
@@ -84,6 +89,18 @@ function normalizeWhatsappMarkdown(raw) {
     return `~~${trimmed}~~`;
   });
   return out;
+}
+
+function normalizeIncomingSdp(raw) {
+  let sdp = String(raw || "").trim();
+  if (!sdp) return "";
+  // Some webhook payloads arrive double-escaped.
+  if (sdp.includes("\\r\\n")) sdp = sdp.replace(/\\r\\n/g, "\r\n");
+  if (sdp.includes("\\n")) sdp = sdp.replace(/\\n/g, "\n");
+  // Browser SDP parser is strict about line endings.
+  sdp = sdp.replace(/\r?\n/g, "\r\n");
+  if (!sdp.endsWith("\r\n")) sdp += "\r\n";
+  return sdp;
 }
 
 function MessageAvatar({ message, tenantSettings }) {
@@ -340,6 +357,9 @@ export default function ConversationsView({
   whatsappSendFailuresByMessage = {},
   listWhatsappTemplates,
   sendWhatsappTemplate,
+  whatsappCallAction,
+  whatsappCallEvent,
+  whatsappIncomingCall = null,
   getWhatsappBlockStatus,
   blockWhatsappContact,
   unblockWhatsappContact,
@@ -353,6 +373,10 @@ export default function ConversationsView({
   const [waTemplatesError, setWaTemplatesError] = useStateReact("");
   const [waTemplateQuery, setWaTemplateQuery] = useStateReact("");
   const [waTemplateSending, setWaTemplateSending] = useStateReact(false);
+  const [callState, setCallState] = useStateReact(null);
+  const [callError, setCallError] = useStateReact("");
+  const [callBusy, setCallBusy] = useStateReact(false);
+  const [callElapsedSec, setCallElapsedSec] = useStateReact(0);
   const [waSelectedTemplate, setWaSelectedTemplate] = useStateReact(null);
   const [waTemplateParams, setWaTemplateParams] = useStateReact([]);
   const [statusMenuOpen, setStatusMenuOpen] = useStateReact(false);
@@ -378,10 +402,69 @@ export default function ConversationsView({
   const emojiPanelRef = useRef(null);
   const mentionPanelRef = useRef(null);
   const textareaRef = useRef(null);
+  const peerRef = useRef(null);
+  const localStreamRef = useRef(null);
+  const remoteStreamRef = useRef(null);
+  const remoteAudioRef = useRef(null);
   const statusMenuRef = useRef(null);
   const snoozeMenuRef = useRef(null);
   const snoozeMenuPanelRef = useRef(null);
   const moreMenuRef = useRef(null);
+  const activeCallState = useMemo(() => {
+    if (callState && String(callState.sessionId || "") === String(activeId || "")) {
+      return callState;
+    }
+    const mapCallId = String(whatsappIncomingCall?.callId || "");
+    const mapSessionId = String(whatsappIncomingCall?.sessionId || "");
+    if (mapCallId && mapSessionId) {
+      return {
+        callId: mapCallId,
+        sessionId: mapSessionId,
+        status: "INCOMING",
+        remoteOffer: String(whatsappIncomingCall?.session?.sdp || ""),
+      };
+    }
+    if (
+      whatsappCallEvent &&
+      String(whatsappCallEvent.type || "") === "whatsapp:call:event" &&
+      String(whatsappCallEvent.event || "").toLowerCase() === "connect"
+    ) {
+      const callId = String(whatsappCallEvent.callId || "");
+      const sessionId = String(whatsappCallEvent.sessionId || "");
+      if (callId && sessionId) {
+        return {
+          callId,
+          sessionId,
+          status: "INCOMING",
+          remoteOffer: String(whatsappCallEvent.session?.sdp || ""),
+        };
+      }
+    }
+    return null;
+  }, [callState, activeId, whatsappIncomingCall, whatsappCallEvent]);
+
+  const formatCallDuration = (seconds) => {
+    const total = Math.max(0, Number(seconds || 0));
+    const mm = String(Math.floor(total / 60)).padStart(2, "0");
+    const ss = String(total % 60).padStart(2, "0");
+    return `${mm}:${ss}`;
+  };
+
+
+  const cleanupCallMedia = () => {
+    if (peerRef.current) {
+      peerRef.current.close();
+      peerRef.current = null;
+    }
+    if (localStreamRef.current) {
+      for (const track of localStreamRef.current.getTracks()) track.stop();
+      localStreamRef.current = null;
+    }
+    remoteStreamRef.current = null;
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = null;
+    }
+  };
 
   const clearPendingAttachment = () => {
     if (pendingAttachment?.previewUrl?.startsWith("blob:")) {
@@ -395,8 +478,201 @@ export default function ConversationsView({
       if (pendingAttachment?.previewUrl?.startsWith("blob:")) {
         URL.revokeObjectURL(pendingAttachment.previewUrl);
       }
+      cleanupCallMedia();
     };
   }, [pendingAttachment]);
+
+  useEffect(() => {
+    cleanupCallMedia();
+    setCallState(null);
+    setCallError("");
+    setCallBusy(false);
+    setCallElapsedSec(0);
+  }, [activeId]);
+
+  useEffect(() => {
+    if (!callState || String(callState.status || "") !== "ACTIVE") {
+      setCallElapsedSec(0);
+      return;
+    }
+    const startedAt = Number(callState.startedAt || Date.now());
+    const tick = () =>
+      setCallElapsedSec(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [callState?.status, callState?.startedAt]);
+
+  useEffect(() => {
+    if (!whatsappCallEvent) return;
+    const eventSessionId = String(whatsappCallEvent.sessionId || "");
+    if (!eventSessionId) return;
+
+    const run = async () => {
+      try {
+        const callId = String(whatsappCallEvent.callId || "");
+        if (!callId) return;
+        if (whatsappCallEvent.type === "whatsapp:call:status") {
+          const nextStatus = String(whatsappCallEvent.status || "").toUpperCase();
+          if (nextStatus === "REJECTED" || nextStatus === "TERMINATED" || nextStatus === "ENDED") {
+            cleanupCallMedia();
+            setCallState((prev) => (prev && prev.callId === callId ? null : prev));
+            setCallBusy(false);
+          }
+          return;
+        }
+        const eventName = String(whatsappCallEvent.event || "").toLowerCase();
+
+        if (eventName === "terminate") {
+          cleanupCallMedia();
+          setCallState((prev) => (prev && prev.callId === callId ? null : prev));
+          setCallBusy(false);
+          return;
+        }
+
+        if (eventName === "connect") {
+          setCallState({
+            callId,
+            sessionId: eventSessionId,
+            status: "INCOMING",
+            remoteOffer: String(whatsappCallEvent.session?.sdp || ""),
+          });
+        }
+      } catch (err) {
+        setCallError(err?.message || "Failed to process WhatsApp call event");
+      }
+    };
+
+    void run();
+  }, [whatsappCallEvent, activeId]);
+
+  const handleAnswerWhatsappCall = async (callOverride = null) => {
+    const currentCall = callOverride || activeCallState;
+    const targetSessionId = String(currentCall?.sessionId || activeId || "");
+    if (!targetSessionId || !whatsappCallAction || !currentCall?.callId) return;
+    setCallBusy(true);
+    setCallError("");
+    try {
+      let session;
+      const remoteOffer = normalizeIncomingSdp(currentCall?.remoteOffer || "");
+      if (!remoteOffer) {
+        throw new Error("Incoming call SDP offer was missing in webhook payload.");
+      }
+      if (
+        typeof RTCPeerConnection === "undefined" ||
+        typeof navigator === "undefined" ||
+        !navigator.mediaDevices ||
+        typeof navigator.mediaDevices.getUserMedia !== "function"
+      ) {
+        throw new Error("WebRTC is not supported in this browser.");
+      }
+      const pc = new RTCPeerConnection(WEBRTC_CONFIG);
+      peerRef.current = pc;
+      pc.ontrack = (event) => {
+        const incoming = event.streams?.[0] || null;
+        if (incoming) {
+          remoteStreamRef.current = incoming;
+        } else {
+          if (!remoteStreamRef.current) remoteStreamRef.current = new MediaStream();
+          remoteStreamRef.current.addTrack(event.track);
+        }
+        if (remoteAudioRef.current && remoteStreamRef.current) {
+          remoteAudioRef.current.srcObject = remoteStreamRef.current;
+          void remoteAudioRef.current.play().catch(() => {});
+        }
+      };
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: false,
+      });
+      localStreamRef.current = stream;
+      for (const track of stream.getTracks()) {
+        pc.addTrack(track, stream);
+      }
+      try {
+        await pc.setRemoteDescription(
+          new RTCSessionDescription({ type: "offer", sdp: remoteOffer }),
+        );
+      } catch {
+        // Fallback for provider SDP variants that Chromium rejects.
+        const relaxedOffer = remoteOffer
+          .split(/\r?\n/)
+          .filter((line) => line && !line.startsWith("a=ssrc:"))
+          .join("\r\n");
+        await pc.setRemoteDescription(
+          new RTCSessionDescription({
+            type: "offer",
+            sdp: relaxedOffer.endsWith("\r\n") ? relaxedOffer : `${relaxedOffer}\r\n`,
+          }),
+        );
+      }
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      session = {
+        sdpType: "answer",
+        sdp: String(answer.sdp || ""),
+      };
+      await whatsappCallAction(targetSessionId, {
+        action: "pre_accept",
+        callId: currentCall.callId,
+        session,
+      });
+      await whatsappCallAction(targetSessionId, {
+        action: "accept",
+        callId: currentCall.callId,
+        session,
+      });
+      const startedAt = Date.now();
+      setCallState({
+        callId: currentCall.callId,
+        sessionId: targetSessionId,
+        status: "ACTIVE",
+        startedAt,
+      });
+    } catch (err) {
+      setCallError(err?.message || "Failed to answer call");
+      cleanupCallMedia();
+    } finally {
+      setCallBusy(false);
+    }
+  };
+
+  const handleRejectWhatsappCall = async (callOverride = null) => {
+    const currentCall = callOverride || activeCallState;
+    const targetSessionId = String(currentCall?.sessionId || activeId || "");
+    if (!targetSessionId || !whatsappCallAction || !currentCall?.callId) return;
+    setCallBusy(true);
+    try {
+      await whatsappCallAction(targetSessionId, {
+        action: "reject",
+        callId: currentCall.callId,
+      });
+      cleanupCallMedia();
+      setCallState(null);
+      setCallError("");
+    } finally {
+      setCallBusy(false);
+    }
+  };
+
+  const handleHangupWhatsappCall = async (callOverride = null) => {
+    const currentCall = callOverride || activeCallState;
+    const targetSessionId = String(currentCall?.sessionId || activeId || "");
+    if (!targetSessionId || !whatsappCallAction || !currentCall?.callId) return;
+    setCallBusy(true);
+    try {
+      await whatsappCallAction(targetSessionId, {
+        action: "terminate",
+        callId: currentCall.callId,
+      });
+    } finally {
+      cleanupCallMedia();
+      setCallState(null);
+      setCallError("");
+      setCallBusy(false);
+      setCallElapsedSec(0);
+    }
+  };
 
   useEffect(() => {
     const onDocPointer = (event) => {
@@ -1237,9 +1513,90 @@ export default function ConversationsView({
               ) : null}
             </header>
             <ScrollArea className="conversation-thread h-full min-h-0 px-5 py-4">
+              <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
               <div className="flex flex-col">
                 {messages.map((message, index) => {
                   if (message.sender === "system") {
+                    const callWidget =
+                      message?.widget?.type === "whatsapp_call" ? message.widget : null;
+                    if (callWidget) {
+                      const widgetStatus = String(callWidget.status || "INCOMING").toUpperCase();
+                      const callCtx = {
+                        callId: String(callWidget.callId || ""),
+                        sessionId: String(message.sessionId || activeId || ""),
+                        remoteOffer: String(callWidget.remoteOffer || ""),
+                      };
+                      const isActiveThisCall =
+                        widgetStatus === "ACTIVE" &&
+                        callState &&
+                        String(callState.callId || "") === String(callCtx.callId || "");
+                      const startedAtMs = Number(callWidget.startedAtMs || 0);
+                      const persistedActiveSec = startedAtMs
+                        ? Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000))
+                        : 0;
+                      const durationText =
+                        widgetStatus === "ACTIVE"
+                          ? formatCallDuration(isActiveThisCall ? callElapsedSec : persistedActiveSec)
+                          : formatCallDuration(Number(callWidget.durationSec || 0));
+                      return (
+                        <div key={message.id} className="my-2 flex justify-center">
+                          <div className="w-full max-w-[520px] rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+                            <p className="text-[11px] font-semibold text-emerald-900">
+                              {widgetStatus === "ACTIVE"
+                                ? "WhatsApp call in progress"
+                                : widgetStatus === "ENDED"
+                                  ? "WhatsApp call ended"
+                                  : "Incoming WhatsApp call"}
+                            </p>
+                            {widgetStatus === "ACTIVE" || widgetStatus === "ENDED" ? (
+                              <p className="mt-1 text-[10px] text-emerald-800">
+                                {widgetStatus === "ACTIVE"
+                                  ? durationText
+                                  : `Duration: ${durationText}`}
+                              </p>
+                            ) : null}
+                            {callError ? (
+                              <p className="mt-1 text-[10px] text-red-600">{callError}</p>
+                            ) : null}
+                            {widgetStatus === "INCOMING" ? (
+                              <div className="mt-2 flex items-center justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void handleRejectWhatsappCall(callCtx)}
+                                  className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2.5 py-1 text-[11px] font-medium text-red-600 hover:bg-red-50"
+                                  disabled={callBusy}
+                                >
+                                  <PhoneOff size={12} />
+                                  Deny
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleAnswerWhatsappCall(callCtx)}
+                                  className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-white px-2.5 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-50"
+                                  disabled={callBusy}
+                                >
+                                  <PhoneCall size={12} />
+                                  Accept
+                                </button>
+                              </div>
+                            ) : null}
+                            {widgetStatus === "ACTIVE" ? (
+                              <div className="mt-2 flex items-center justify-end">
+                                <button
+                                  type="button"
+                                  onClick={() => void handleHangupWhatsappCall(callCtx)}
+                                  className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2.5 py-1 text-[11px] font-medium text-red-600 hover:bg-red-50"
+                                  disabled={callBusy}
+                                >
+                                  <PhoneOff size={12} />
+                                  Hang up
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    }
                     return (
                       <div
                         key={message.id}

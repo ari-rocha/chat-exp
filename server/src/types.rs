@@ -824,6 +824,36 @@ pub struct SessionMetaBody {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct StartWhatsappCallBody {
+    #[serde(default)]
+    pub join_url: String,
+    #[serde(default)]
+    pub note: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WhatsappCallSessionBody {
+    pub sdp_type: String,
+    pub sdp: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WhatsappCallActionBody {
+    #[serde(default)]
+    pub call_id: String,
+    pub action: String,
+    #[serde(default)]
+    pub to: String,
+    #[serde(default)]
+    pub biz_opaque_callback_data: String,
+    #[serde(default)]
+    pub session: Option<WhatsappCallSessionBody>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateCannedReplyBody {
     pub title: String,
     pub body: String,
